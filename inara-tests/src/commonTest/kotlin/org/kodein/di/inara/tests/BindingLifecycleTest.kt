@@ -22,10 +22,10 @@ class BindingLifecycleTest {
     }
 
     @Test
-    fun singleton_returnsSameInstanceEveryTime() {
+    fun single_returnsSameInstanceEveryTime() {
         val module = CounterModule(
             next = Binding.provider { 0 },
-            instance = Binding.singleton { Service(id = next()) },
+            instance = Binding.single { Service(id = next()) },
             keyed = Binding.multiplex { key -> Binding.provider { Service(key.length) } },
         )
 
@@ -39,7 +39,7 @@ class BindingLifecycleTest {
         val module = CounterModule(
             next = Binding.provider { 0 },
             instance = Binding.value(Service(0)),
-            keyed = Binding.multiplex { key -> Binding.singleton { Service(key.length) } },
+            keyed = Binding.multiplex { key -> Binding.single { Service(key.length) } },
         )
 
         val abc1 = module.keyed("abc")

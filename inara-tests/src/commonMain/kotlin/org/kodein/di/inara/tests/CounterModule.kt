@@ -5,7 +5,7 @@ import org.kodein.di.inara.DIModule
 public class Service(public val id: Int)
 
 /**
- * Used to assert lifecycle differences between `Binding.provider`, `Binding.singleton`, and
+ * Used to assert lifecycle differences between `Binding.provider`, `Binding.single`, and
  * `Binding.multiplex` through real Gradle/KSP-generated code.
  */
 @DIModule

@@ -16,6 +16,7 @@ import com.squareup.kotlinpoet.ksp.addOriginatingKSFile
 import com.squareup.kotlinpoet.ksp.toTypeName
 
 private val BINDING = ClassName("org.kodein.di.inara", "Binding")
+private val SUSPEND_BINDING = ClassName("org.kodein.di.inara", "SuspendBinding")
 
 /**
  * Emits the `Generated<Module>` private implementation and the `<Module>(...)` builder function
@@ -23,7 +24,8 @@ private val BINDING = ClassName("org.kodein.di.inara", "Binding")
  *
  * A member with a default implementation (see [MemberModel.hasDefaultImplementation]) gets a
  * nullable `Binding` that defaults to `null` in the builder function: `null` keeps the
- * interface's own default body, any other value overrides it.
+ * interface's own default body, any other value overrides it. A `suspend` member is backed by a
+ * `SuspendBinding` instead of a `Binding`, so its provider/factory/single body may itself suspend.
  */
 internal fun generateModuleFile(model: ModuleModel): FileSpec {
     val moduleClassName = model.moduleClassName
@@ -32,7 +34,8 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
     fun bindingTypeOf(member: MemberModel): TypeName {
         val argTypeName = member.argType?.toTypeName() ?: UNIT
         val returnTypeName = member.returnType.toTypeName()
-        val bindingType = BINDING.parameterizedBy(moduleClassName, argTypeName, returnTypeName)
+        val bindingClass = if (member.isSuspend) SUSPEND_BINDING else BINDING
+        val bindingType = bindingClass.parameterizedBy(moduleClassName, argTypeName, returnTypeName)
         return if (member.hasDefaultImplementation) bindingType.copy(nullable = true) else bindingType
     }
 

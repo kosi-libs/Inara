@@ -61,7 +61,9 @@ class DIModuleMemberSelectionTest {
 
             @DIModule
             interface SuspendModule {
+                val name: String
                 suspend fun loadData(): String
+                suspend fun loadKeyed(key: String): String
             }
             """
         )
@@ -70,7 +72,53 @@ class DIModuleMemberSelectionTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/selection", "GeneratedSuspendModule.kt")
+        assertTrue("private val nameBinding: Binding<SuspendModule, Unit, String>" in generated, generated)
+        assertTrue(
+            "private val loadDataBinding: SuspendBinding<SuspendModule, Unit, String>" in generated,
+            generated,
+        )
+        assertTrue(
+            "private val loadKeyedBinding: SuspendBinding<SuspendModule, String, String>" in generated,
+            generated,
+        )
         assertTrue("override suspend fun loadData(): String" in generated, generated)
+        assertTrue("this.loadDataBinding.get(this, Unit)" in generated, generated)
+        assertTrue(
+            "loadData: SuspendBinding<SuspendModule, Unit, String>" in generated,
+            generated,
+        )
+    }
+
+    @Test
+    fun suspendFunctionWithDefaultBody_getsOptionalSuspendBinding() {
+        val source = SourceFile.kotlin(
+            "SuspendDefaultModule.kt",
+            """
+            package sample.selection
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface SuspendDefaultModule {
+                suspend fun loadData(): String = "default"
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/selection", "GeneratedSuspendDefaultModule.kt")
+        assertTrue(
+            "private val loadDataBinding: SuspendBinding<SuspendDefaultModule, Unit, String>?" in generated,
+            generated,
+        )
+        assertTrue(
+            "loadData: SuspendBinding<SuspendDefaultModule, Unit, String>? = null" in generated,
+            generated,
+        )
+        assertTrue("override suspend fun loadData(): String" in generated, generated)
+        assertTrue("super<SuspendDefaultModule>.loadData()" in generated, generated)
         assertTrue("this.loadDataBinding.get(this, Unit)" in generated, generated)
     }
 }

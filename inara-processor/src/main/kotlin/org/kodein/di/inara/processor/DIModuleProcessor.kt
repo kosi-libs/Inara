@@ -13,8 +13,9 @@ private const val DI_MODULE_ANNOTATION = "org.kodein.di.inara.DIModule"
 
 /**
  * For every interface annotated with `@DIModule`, generates a private `Binding`-backed
- * implementation and a builder function named after the interface. See [parseModule] for the
- * validation rules and [generateModuleFile] for the generated shape.
+ * implementation (`SuspendBinding` for `suspend` members) and a builder function named after the
+ * interface. See [parseModule] for the validation rules and [generateModuleFile] for the
+ * generated shape.
  */
 public class DIModuleProcessor(
     private val codeGenerator: CodeGenerator,

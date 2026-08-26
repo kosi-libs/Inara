@@ -10,8 +10,8 @@ import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 
 /**
  * Compiles [sources] through kctfork with [DIModuleProcessorProvider] wired in, inheriting the
- * test classpath so sources can reference `org.kodein.di.inara.Binding` and `@DIModule` from
- * `inara-runtime`.
+ * test classpath so sources can reference `org.kodein.di.inara.Binding`,
+ * `org.kodein.di.inara.SuspendBinding`, and `@DIModule` from `inara-runtime`.
  */
 @OptIn(ExperimentalCompilerApi::class)
 internal fun compile(vararg sources: SourceFile): CompileTestResult {

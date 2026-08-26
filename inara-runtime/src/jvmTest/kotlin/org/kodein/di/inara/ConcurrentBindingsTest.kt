@@ -1,5 +1,6 @@
 package org.kodein.di.inara
 
+import org.kodein.di.inara.Binding.Bindings.SingleThreadSafety
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
@@ -18,7 +19,7 @@ private const val ITERATIONS = 200
 
 /**
  * Exercises the bindings under real concurrent contention. This is the whole reason
- * [Binding.Bindings.singleton], [Binding.Bindings.weakSingleton] and
+ * [Binding.Bindings.single], [Binding.Bindings.weakSingle] and
  * [Binding.Bindings.multiplex] have thread-safety knobs in the first place, so these
  * assertions run from multiple threads instead of sequentially.
  */
@@ -27,7 +28,7 @@ class ConcurrentBindingsTest {
     @Test
     fun singleton_synchronized_buildsExactlyOnceUnderContention() {
         val builds = AtomicInteger(0)
-        val binding = Binding.singleton<ConcurrentTestModule, Any>(Binding.Bindings.ThreadSafety.Synchronized) {
+        val binding = Binding.single<ConcurrentTestModule, Any>(SingleThreadSafety.Synchronized) {
             builds.incrementAndGet()
             Any()
         }
@@ -42,7 +43,7 @@ class ConcurrentBindingsTest {
     @Test
     fun singleton_publication_alwaysConvergesOnOneInstance() {
         val builds = AtomicInteger(0)
-        val binding = Binding.singleton<ConcurrentTestModule, Any>(Binding.Bindings.ThreadSafety.Publication) {
+        val binding = Binding.single<ConcurrentTestModule, Any>(SingleThreadSafety.Published) {
             builds.incrementAndGet()
             Any()
         }
@@ -60,7 +61,7 @@ class ConcurrentBindingsTest {
     @Test
     fun weakSingleton_synchronized_buildsExactlyOnceWhileStronglyReferenced() {
         val builds = AtomicInteger(0)
-        val binding = Binding.weakSingleton<ConcurrentTestModule, Any>(Binding.Bindings.ThreadSafety.Synchronized) {
+        val binding = Binding.weakSingle<ConcurrentTestModule, Any>(SingleThreadSafety.Synchronized) {
             builds.incrementAndGet()
             Any()
         }
@@ -76,7 +77,7 @@ class ConcurrentBindingsTest {
     fun multiplex_isolatesConcurrentArgs() {
         val argCount = 4
         val binding = Binding.multiplex<ConcurrentTestModule, Int, Any> { arg ->
-            Binding.singleton { arg }
+            Binding.single { arg }
         }
         val module = ConcurrentTestModule()
 

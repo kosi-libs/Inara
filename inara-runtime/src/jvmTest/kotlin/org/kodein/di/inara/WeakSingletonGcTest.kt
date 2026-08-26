@@ -1,5 +1,6 @@
 package org.kodein.di.inara
 
+import org.kodein.di.inara.Binding.Bindings.SingleThreadSafety
 import java.lang.ref.WeakReference
 import kotlin.test.Test
 import kotlin.test.assertNotEquals
@@ -14,8 +15,8 @@ private class GcTestModule
  *
  * This is a best-effort test: [System.gc] is only ever a hint, so the assertions are
  * skipped (never failed) if the JVM declines to collect within the attempt budget. The
- * `Publication` case is the direct regression test for the fix in
- * `BindingImpls.PublishedWeakSingleton.get`, which used to store the raw rebuilt value
+ * `Published` case is the direct regression test for the fix in
+ * `BindingImpls.PublishedWeakSingle.get`, which used to store the raw rebuilt value
  * instead of wrapping it in a new `WeakRef`, causing a `ClassCastException` on the read
  * that follows a successful rebuild.
  */
@@ -23,15 +24,15 @@ class WeakSingletonGcTest {
 
     @Test
     fun weakSingleton_synchronized_rebuildsAfterCollection() =
-        assertRebuildsAfterCollection(Binding.Bindings.ThreadSafety.Synchronized)
+        assertRebuildsAfterCollection(SingleThreadSafety.Synchronized)
 
     @Test
     fun weakSingleton_publication_rebuildsAfterCollection() =
-        assertRebuildsAfterCollection(Binding.Bindings.ThreadSafety.Publication)
+        assertRebuildsAfterCollection(SingleThreadSafety.Published)
 
-    private fun assertRebuildsAfterCollection(safety: Binding.Bindings.ThreadSafety) {
+    private fun assertRebuildsAfterCollection(safety: SingleThreadSafety) {
         var builds = 0
-        val binding = Binding.weakSingleton<GcTestModule, Any>(safety) {
+        val binding = Binding.weakSingle<GcTestModule, Any>(safety) {
             builds++
             Any()
         }

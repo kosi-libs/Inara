@@ -1,12 +1,12 @@
 package org.kodein.di.inara
 
-import org.kodein.di.inara.Binding.Bindings.ThreadSafety
+import org.kodein.di.inara.Binding.Bindings.SingleThreadSafety
 import org.kodein.di.inara.Binding.Bindings.factory
 import org.kodein.di.inara.Binding.Bindings.multiplex
 import org.kodein.di.inara.Binding.Bindings.provider
-import org.kodein.di.inara.Binding.Bindings.singleton
+import org.kodein.di.inara.Binding.Bindings.single
 import org.kodein.di.inara.Binding.Bindings.value
-import org.kodein.di.inara.Binding.Bindings.weakSingleton
+import org.kodein.di.inara.Binding.Bindings.weakSingle
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotSame
@@ -74,15 +74,15 @@ class BindingsTest {
 
     @Test
     fun singleton_synchronized_buildsOnceAndCaches() =
-        assertSingletonBuildsOnce(ThreadSafety.Synchronized)
+        assertSingletonBuildsOnce(SingleThreadSafety.Synchronized)
 
     @Test
     fun singleton_publication_buildsOnceAndCaches() =
-        assertSingletonBuildsOnce(ThreadSafety.Publication)
+        assertSingletonBuildsOnce(SingleThreadSafety.Published)
 
-    private fun assertSingletonBuildsOnce(safety: ThreadSafety) {
+    private fun assertSingletonBuildsOnce(safety: SingleThreadSafety) {
         var calls = 0
-        val binding = singleton<TestModule, String>(safety) {
+        val binding = single<TestModule, String>(safety) {
             calls++
             name
         }
@@ -100,15 +100,15 @@ class BindingsTest {
 
     @Test
     fun singleton_synchronized_memoizesNullResult() =
-        assertSingletonMemoizesNull(ThreadSafety.Synchronized)
+        assertSingletonMemoizesNull(SingleThreadSafety.Synchronized)
 
     @Test
     fun singleton_publication_memoizesNullResult() =
-        assertSingletonMemoizesNull(ThreadSafety.Publication)
+        assertSingletonMemoizesNull(SingleThreadSafety.Published)
 
-    private fun assertSingletonMemoizesNull(safety: ThreadSafety) {
+    private fun assertSingletonMemoizesNull(safety: SingleThreadSafety) {
         var calls = 0
-        val binding = singleton<TestModule, String?>(safety) {
+        val binding = single<TestModule, String?>(safety) {
             calls++
             null
         }
@@ -121,15 +121,15 @@ class BindingsTest {
 
     @Test
     fun weakSingleton_synchronized_cachesWhileStronglyReferenced() =
-        assertWeakSingletonCaches(ThreadSafety.Synchronized)
+        assertWeakSingletonCaches(SingleThreadSafety.Synchronized)
 
     @Test
     fun weakSingleton_publication_cachesWhileStronglyReferenced() =
-        assertWeakSingletonCaches(ThreadSafety.Publication)
+        assertWeakSingletonCaches(SingleThreadSafety.Published)
 
-    private fun assertWeakSingletonCaches(safety: ThreadSafety) {
+    private fun assertWeakSingletonCaches(safety: SingleThreadSafety) {
         var calls = 0
-        val binding = weakSingleton<TestModule, Any>(safety) {
+        val binding = weakSingle<TestModule, Any>(safety) {
             calls++
             Any()
         }
@@ -148,7 +148,7 @@ class BindingsTest {
         var delegateBuilds = 0
         val binding = multiplex<TestModule, Key, Any> {
             delegateBuilds++
-            singleton { Any() }
+            single { Any() }
         }
         val module = TestModule()
         val keyA = Key(1)
@@ -167,7 +167,7 @@ class BindingsTest {
     fun multiplex_perArgBindingIsItselfCached() {
         var innerBuilds = 0
         val binding = multiplex<TestModule, Int, Any> {
-            singleton {
+            single {
                 innerBuilds++
                 Any()
             }

@@ -1,5 +1,6 @@
 package org.kodein.di.inara
 
+import org.kodein.di.inara.BindingImpls.Uninitialized.ifInitialized
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -12,23 +13,23 @@ public interface Binding<M, A, T> {
         public fun <M, T> value(value: T) : Binding<M, Unit, T> = BindingImpls.Value(value)
         public fun <M, T> provider(provider: M.() -> T) : Binding<M, Unit, T> = BindingImpls.Provider(provider)
         public fun <M, A, T> factory(factory: M.(A) -> T) : Binding<M, A, T> = BindingImpls.Factory(factory)
-        public enum class ThreadSafety {
+        public enum class SingleThreadSafety {
             Synchronized,
-            Publication,
+            Published,
         }
-        public fun <M, T> singleton(
-            safety: ThreadSafety = ThreadSafety.Synchronized,
+        public fun <M, T> single(
+            safety: SingleThreadSafety = SingleThreadSafety.Synchronized,
             builder: M.() -> T
         ) : Binding<M, Unit, T> = when (safety) {
-            ThreadSafety.Synchronized -> BindingImpls.SynchronizedSingleton(builder)
-            ThreadSafety.Publication -> BindingImpls.PublishedSingleton(builder)
+            SingleThreadSafety.Synchronized -> BindingImpls.SynchronizedSingle(builder)
+            SingleThreadSafety.Published -> BindingImpls.PublishedSingle(builder)
         }
-        public fun <M, T : Any> weakSingleton(
-            safety: ThreadSafety = ThreadSafety.Synchronized,
+        public fun <M, T : Any> weakSingle(
+            safety: SingleThreadSafety = SingleThreadSafety.Synchronized,
             builder: M.() -> T
         ) : Binding<M, Unit, T> = when (safety) {
-            ThreadSafety.Synchronized -> BindingImpls.SynchronizedWeakSingleton(builder)
-            ThreadSafety.Publication -> BindingImpls.PublishedWeakSingleton(builder)
+            SingleThreadSafety.Synchronized -> BindingImpls.SynchronizedWeakSingle(builder)
+            SingleThreadSafety.Published -> BindingImpls.PublishedWeakSingle(builder)
         }
         public fun <M, A, T> multiplex(builder: (A) -> Binding<M, Unit, T>) : Binding<M, A, T> = BindingImpls.Multiplex(builder)
     }
@@ -36,110 +37,86 @@ public interface Binding<M, A, T> {
 
 @InternalDIBindings
 public class BindingImpls {
-    internal class Value<M, Unit, T>(private val value: T) : Binding<M, Unit, T> { override fun get(module: M, arg: Unit): T = value }
+    internal class Value<M, T>(private val value: T) : Binding<M, Unit, T> { override fun get(module: M, arg: Unit): T = value }
 
-    internal class Provider<M, Unit, T>(private val provider: M.() -> T) : Binding<M, Unit, T> { override fun get(module: M, arg: Unit): T = provider(module) }
+    internal class Provider<M, T>(private val provider: M.() -> T) : Binding<M, Unit, T> { override fun get(module: M, arg: Unit): T = provider(module) }
 
     internal class Factory<M, A, T>(private val factory: M.(A) -> T) : Binding<M, A, T> { override fun get(module: M, arg: A): T = factory(module, arg) }
 
     // Same as Factory, but exists for Copies.
     internal class Delegate<M, A, T>(private val delegate: M.(A) -> T) : Binding<M, A, T> { override fun get(module: M, arg: A): T = delegate(module, arg) }
 
-    private object Uninitialized
+    internal object Uninitialized {
+        inline fun <T> Any?.ifInitialized(then: (T) -> Unit) {
+            @Suppress("UNCHECKED_CAST")
+            if (this !== Uninitialized) then(this as T)
+        }
+    }
 
-    @OptIn(ExperimentalAtomicApi::class)
-    internal class SynchronizedSingleton<M, T>(builder: M.() -> T) : Binding<M, Unit, T> {
+    internal class SynchronizedSingle<M, T>(builder: M.() -> T) : Binding<M, Unit, T> {
         private var builder: (M.() -> T)? = builder
-        private var valueRef: AtomicReference<Any?> = AtomicReference(Uninitialized)
+        @Volatile private var value: Any? = Uninitialized
         private val lock = Lock()
 
         override fun get(module: M, arg: Unit): T {
-            val v1 = valueRef.load()
-            if (v1 !== Uninitialized) {
-                @Suppress("UNCHECKED_CAST") return v1 as T
-            }
+            value.ifInitialized<T> { return it }
             return locked(lock) {
-                val v2 = valueRef.load()
-                if (v2 !== Uninitialized) {
-                    @Suppress("UNCHECKED_CAST") return v2 as T
+                value.ifInitialized<T> { return it }
+                builder!!(module).also {
+                    builder = null
+                    value = it
                 }
-                val value = builder!!(module)
-                builder = null
-                valueRef.store(value)
-                value
             }
         }
     }
 
     @OptIn(ExperimentalAtomicApi::class)
-    internal class PublishedSingleton<M, T>(builder: M.() -> T) : Binding<M, Unit, T> {
+    internal class PublishedSingle<M, T>(builder: M.() -> T) : Binding<M, Unit, T> {
         @Volatile private var builder: (M.() -> T)? = builder
-        private val valueRef: AtomicReference<Any?> = AtomicReference(Uninitialized)
+        private val ref: AtomicReference<Any?> = AtomicReference(Uninitialized)
 
         override fun get(module: M, arg: Unit): T {
-            val value = valueRef.load()
-            if (value !== Uninitialized) {
-                @Suppress("UNCHECKED_CAST") return value as T
-            }
+            ref.load().ifInitialized<T> { return it }
             val builder = this.builder
             if (builder != null) {
-                val newValue = builder(module)
-                if (valueRef.compareAndSet(Uninitialized, newValue)) {
-                    this.builder = null
-                    return newValue
+                builder(module).also {
+                    if (ref.compareAndSet(Uninitialized, it)) {
+                        this.builder = null
+                        return it
+                    }
                 }
             }
-            @Suppress("UNCHECKED_CAST") return valueRef.load() as T
+            @Suppress("UNCHECKED_CAST") return ref.load() as T
         }
     }
 
-    @OptIn(ExperimentalAtomicApi::class)
-    internal class SynchronizedWeakSingleton<M, T : Any>(val builder: M.() -> T) : Binding<M, Unit, T> {
-        private var valueRef: AtomicReference<Any?> = AtomicReference(Uninitialized)
+    internal class SynchronizedWeakSingle<M, T : Any>(val builder: M.() -> T) : Binding<M, Unit, T> {
+        @Volatile private var ref: Any? = Uninitialized
         private val lock = Lock()
 
         override fun get(module: M, arg: Unit): T {
-            val ref = valueRef.load()
-            if (ref !== Uninitialized) {
-                @Suppress("UNCHECKED_CAST")
-                val value = (ref as WeakRef<T>).value
-                if (value != null) {
-                    return value
-                }
-            }
+            ref.ifInitialized<WeakRef<T>> { r -> r.value?.let { return it } }
             return locked(lock) {
-                val ref = valueRef.load()
-                if (ref !== Uninitialized) {
-                    @Suppress("UNCHECKED_CAST")
-                    val value = (ref as WeakRef<T>).value
-                    if (value != null) {
-                        return value
-                    }
+                ref.ifInitialized<WeakRef<T>> { r -> r.value?.let { return it } }
+                builder(module).also {
+                    ref = WeakRef(it)
                 }
-                val value = builder(module)
-                valueRef.store(WeakRef(value))
-                value
             }
         }
     }
 
     @OptIn(ExperimentalAtomicApi::class)
-    internal class PublishedWeakSingleton<M, T : Any>(val builder: M.() -> T) : Binding<M, Unit, T> {
-        private val valueRef: AtomicReference<Any?> = AtomicReference(Uninitialized)
+    internal class PublishedWeakSingle<M, T : Any>(val builder: M.() -> T) : Binding<M, Unit, T> {
+        private val refRef: AtomicReference<Any?> = AtomicReference(Uninitialized)
 
         override fun get(module: M, arg: Unit): T {
             while (true) {
-                val ref = valueRef.load()
-                if (ref !== Uninitialized) {
-                    @Suppress("UNCHECKED_CAST")
-                    val value = (ref as WeakRef<T>).value
-                    if (value != null) {
-                        return value
+                val ref = refRef.load()
+                ref.ifInitialized<WeakRef<T>> { r -> r.value?.let { return it } }
+                builder(module).also {
+                    if (refRef.compareAndSet(ref, WeakRef(it))) {
+                        return it
                     }
-                }
-                val newValue = builder(module)
-                if (valueRef.compareAndSet(ref, WeakRef(newValue))) {
-                    return newValue
                 }
             }
         }
@@ -150,19 +127,19 @@ public class BindingImpls {
         private val bindingsRef: AtomicReference<Map<A, Binding<M, Unit, T>>> = AtomicReference(HashMap())
 
         override fun get(module: M, arg: A): T {
-            var binding: Binding<M, Unit, T>? = null
-            while (binding == null) {
+            while (true) {
                 val map = bindingsRef.load()
-                binding = map[arg]
-                if (binding == null) {
-                    val newBinding = delegate(arg)
-                    val newMap = map + (arg to newBinding)
+                val binding = map[arg]
+                if (binding != null) {
+                    return binding.get(module, Unit)
+                }
+                delegate(arg).also {
+                    val newMap = map + (arg to it)
                     if (bindingsRef.compareAndSet(map, newMap)) {
-                        binding = newBinding
+                        return it.get(module, Unit)
                     }
                 }
             }
-            return binding.get(module, Unit)
         }
     }
 }
