@@ -10,11 +10,11 @@ import com.google.devtools.ksp.validate
 import com.squareup.kotlinpoet.ksp.writeTo
 
 /**
- * For every interface annotated with `@DIModule`, generates a private `Binding`-backed
- * implementation (`SuspendBinding` for `suspend` members) and a builder function named after the
- * interface. A module that extends other `@DIModule` interfaces gets a second, delegated
- * implementation/builder pair as well. See [parseModule] for the validation rules and
- * [generateModuleFile] for the generated shape(s).
+ * For every interface annotated with `@DIModule` or `@ComposedDIModule`, generates a private
+ * `Binding`-backed implementation (`SuspendBinding` for `suspend` members) and a builder function
+ * named after the interface. A `@ComposedDIModule` interface additionally gets a second, delegated
+ * implementation/builder/`copy` set for its `@DIModule` parents. See [parseModule] for the
+ * validation rules and [generateModuleFile] for the generated shape(s).
  */
 public class DIModuleProcessor(
     private val codeGenerator: CodeGenerator,
@@ -23,7 +23,15 @@ public class DIModuleProcessor(
     override fun process(resolver: Resolver): List<KSAnnotated> {
         val deferred = mutableListOf<KSAnnotated>()
 
-        for (symbol in resolver.getSymbolsWithAnnotation(DI_MODULE_ANNOTATION)) {
+        // An interface annotated with both @DIModule and @ComposedDIModule shows up under both
+        // annotations - dedupe by qualified name (falling back to identity for anything that isn't
+        // a KSClassDeclaration, so it is at least never silently dropped) so it is processed once.
+        val symbols = (
+            resolver.getSymbolsWithAnnotation(DI_MODULE_ANNOTATION) +
+                resolver.getSymbolsWithAnnotation(COMPOSED_DI_MODULE_ANNOTATION)
+            ).distinctBy { (it as? KSClassDeclaration)?.qualifiedName?.asString() ?: it }
+
+        for (symbol in symbols) {
             if (!symbol.validate()) {
                 deferred += symbol
                 continue
@@ -31,7 +39,7 @@ public class DIModuleProcessor(
 
             val classDecl = symbol as? KSClassDeclaration
             if (classDecl == null) {
-                logger.error("@DIModule can only be applied to interfaces.", symbol)
+                logger.error("@DIModule / @ComposedDIModule can only be applied to interfaces.", symbol)
                 continue
             }
 

@@ -191,6 +191,7 @@ class DIModuleCopyTest {
             """
             package sample.copy.inheritance
 
+            import org.kodein.di.inara.ComposedDIModule
             import org.kodein.di.inara.DIModule
 
             class TypeA
@@ -203,7 +204,7 @@ class DIModuleCopyTest {
             @DIModule
             interface Module2 { val b: TypeB }
 
-            @DIModule
+            @ComposedDIModule
             interface Module3 : Module1, Module2 { val c: TypeC }
             """
         )
@@ -239,5 +240,52 @@ class DIModuleCopyTest {
         assertTrue("module1 = module1," in moduleOverrideCall, generated)
         assertTrue("module2 = module2," in moduleOverrideCall, generated)
         assertTrue("cBinding = BindingImpls.Delegate { this@copy.c }" in moduleOverrideCall, generated)
+    }
+
+    @Test
+    fun plainModule_generatesOnlyTwoCopyOverloads() {
+        val source = SourceFile.kotlin(
+            "PlainInheritance.kt",
+            """
+            package sample.copy.inheritance
+
+            import org.kodein.di.inara.DIModule
+
+            class TypeA
+            class TypeB
+            class TypeC
+
+            @DIModule
+            interface Module1 { val a: TypeA }
+
+            @DIModule
+            interface Module2 { val b: TypeB }
+
+            @DIModule
+            interface Module3 : Module1, Module2 { val c: TypeC }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/copy/inheritance", "GeneratedModule3.kt")
+
+        assertTrue("GeneratedDelegatedModule3" !in generated, generated)
+        assertEquals(2, Regex("""fun Module3\.copy\(""").findAll(generated).count(), generated)
+
+        assertTrue("public fun Module3.copy(): Module3 = this" in generated, generated)
+        assertTrue(
+            "a: Binding<Module3, Unit, TypeA> = BindingImpls.Delegate { this@copy.a }" in generated,
+            generated,
+        )
+        assertTrue(
+            "b: Binding<Module3, Unit, TypeB> = BindingImpls.Delegate { this@copy.b }" in generated,
+            generated,
+        )
+        assertTrue(
+            "c: Binding<Module3, Unit, TypeC> = BindingImpls.Delegate { this@copy.c }" in generated,
+            generated,
+        )
     }
 }

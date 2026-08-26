@@ -60,13 +60,16 @@ private fun copyDelegateDefaultCode(member: MemberModel): CodeBlock {
 
 /**
  * Emits the implementation class(es), builder function(s), and `copy` function(s) for [model], as
- * described on `@DIModule`.
+ * described on `@DIModule` / `@ComposedDIModule`.
  *
- * A module with no `@DIModule` parents gets exactly one `Generated<Module>` implementation and one
- * `<Module>(...)` builder taking a `Binding` (`SuspendBinding` for a `suspend` member) per member -
- * unchanged from before module inheritance existed.
+ * A module that isn't `@ComposedDIModule` (see [ModuleModel.isComposed]) gets exactly one
+ * `Generated<Module>` implementation and one `<Module>(...)` builder taking a `Binding`
+ * (`SuspendBinding` for a `suspend` member) per member in the consolidated interface - inherited
+ * members included, so a `@DIModule` interface that merely extends other `@DIModule` interfaces
+ * (without composing them) still gets a binding for everything it inherits, exactly as if those
+ * members had been declared directly on it.
  *
- * A module that extends other `@DIModule` interfaces gets two pairs instead:
+ * A `@ComposedDIModule` interface gets two pairs instead:
  * - `GeneratedDelegated<Module>` / a builder taking one already-built parent module instance per
  *   `@DIModule` parent (`Module1 by module1`-style delegation) plus a binding per member declared
  *   directly on this interface.
@@ -89,13 +92,13 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
 
     val fileBuilder = FileSpec.builder(moduleClassName.packageName, generatedClassName)
 
-    if (model.parents.isEmpty()) {
+    if (!model.isComposed) {
         val (typeSpec, builderFun) = buildModuleType(
             generatedClassName = generatedClassName,
             builderName = model.simpleName,
             moduleClassName = moduleClassName,
             visibility = model.visibility,
-            members = model.ownMembers,
+            members = model.allMembers,
             parents = emptyList(),
             originatingFiles = originatingFiles,
         )
@@ -264,10 +267,10 @@ private fun buildModuleType(
  *   member - with none, it would take no parameters and collide with the no-arg overload. See
  *   [buildMemberOverrideCopyFunction] for how each parameter's default differs depending on whether
  *   the member has a default implementation.
- * - if [ModuleModel.parents] isn't empty, an extra `copy(...)` taking one already-built module
- *   instance per `@DIModule` parent (each defaulting to the receiver itself), building through the
- *   "delegated" `GeneratedDelegated<Module>` class - lets a caller swap out a whole parent module at
- *   once instead of rebinding its members individually.
+ * - if [ModuleModel.isComposed], an extra `copy(...)` taking one already-built module instance per
+ *   `@DIModule` parent (each defaulting to the receiver itself), building through the "delegated"
+ *   `GeneratedDelegated<Module>` class - lets a caller swap out a whole parent module at once
+ *   instead of rebinding its members individually.
  */
 internal fun buildCopyFunctions(model: ModuleModel): List<FunSpec> {
     val moduleClassName = model.moduleClassName
@@ -286,7 +289,7 @@ internal fun buildCopyFunctions(model: ModuleModel): List<FunSpec> {
         copyFunctions += buildMemberOverrideCopyFunction(moduleClassName, generatedClassName, model.allMembers, model.visibility)
     }
 
-    if (model.parents.isNotEmpty()) {
+    if (model.isComposed) {
         val delegatedClassName = "GeneratedDelegated${model.generatedBaseName}"
         copyFunctions += buildModuleOverrideCopyFunction(moduleClassName, delegatedClassName, model.ownMembers, model.parents, model.visibility)
     }

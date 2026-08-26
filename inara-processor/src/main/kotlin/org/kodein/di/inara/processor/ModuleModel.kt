@@ -15,6 +15,7 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.ksp.toClassName
 
 internal const val DI_MODULE_ANNOTATION = "org.kodein.di.inara.DIModule"
+internal const val COMPOSED_DI_MODULE_ANNOTATION = "org.kodein.di.inara.ComposedDIModule"
 
 /**
  * A single member of a `@DIModule` interface that will be backed by a `Binding`.
@@ -55,6 +56,10 @@ internal data class ParentModel(
  * [ancestorDeclarations] is every `@DIModule` interface transitively reachable through [parents]
  * (deduplicated, [parents] included) - used only so the generator can register each of their
  * source files as an incremental-build dependency of the generated code.
+ *
+ * [isComposed] is true when the interface is annotated `@ComposedDIModule` - it alone decides
+ * whether the generator emits the delegated implementation/builder/`copy` set on top of the plain
+ * one; [parents] is populated regardless of its value.
  */
 internal data class ModuleModel(
     val declaration: KSClassDeclaration,
@@ -66,6 +71,7 @@ internal data class ModuleModel(
     val allMembers: List<MemberModel>,
     val parents: List<ParentModel>,
     val ancestorDeclarations: List<KSClassDeclaration>,
+    val isComposed: Boolean,
 )
 
 /**
@@ -84,8 +90,16 @@ private fun KSClassDeclaration.generatedBaseName(): String {
     return names.joinToString("")
 }
 
+private fun KSClassDeclaration.hasAnnotation(qualifiedName: String): Boolean =
+    annotations.any { it.annotationType.resolve().declaration.qualifiedName?.asString() == qualifiedName }
+
+/** True for `@DIModule` *or* `@ComposedDIModule` - the latter implies the former. */
 private fun KSClassDeclaration.isDIModule(): Boolean =
-    annotations.any { it.annotationType.resolve().declaration.qualifiedName?.asString() == DI_MODULE_ANNOTATION }
+    hasAnnotation(DI_MODULE_ANNOTATION) || hasAnnotation(COMPOSED_DI_MODULE_ANNOTATION)
+
+/** True only for `@ComposedDIModule` - drives whether the delegated variant is generated. */
+private fun KSClassDeclaration.isComposedDIModule(): Boolean =
+    hasAnnotation(COMPOSED_DI_MODULE_ANNOTATION)
 
 /**
  * The direct `@DIModule` supertypes of this interface. A supertype that isn't a `@DIModule`
@@ -175,9 +189,11 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
     }
 
     if (classDecl.classKind != ClassKind.INTERFACE) {
-        reportError("Only interfaces may be annotated with @DIModule.", classDecl)
+        reportError("Only interfaces may be annotated with @DIModule / @ComposedDIModule.", classDecl)
         return null
     }
+
+    val isComposed = classDecl.isComposedDIModule()
 
     if (classDecl.typeParameters.isNotEmpty()) {
         reportError("A @DIModule interface may not have type parameters.", classDecl)
@@ -201,10 +217,19 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
     }
     if (!parentsValid) return null
 
+    if (isComposed && parentDecls.isEmpty()) {
+        reportError(
+            "@ComposedDIModule requires the interface to extend at least one @DIModule interface.",
+            classDecl,
+        )
+    }
+
     // Diamond inheritance: two direct parents that both reach the same @DIModule ancestor. Kotlin
     // would need an explicit override for that ancestor's members in the delegated implementation,
-    // which the generator does not attempt, so this is rejected outright.
-    if (parentDecls.size > 1) {
+    // which the generator does not attempt, so this is rejected for a @ComposedDIModule interface
+    // outright. A plain @DIModule interface has no delegated implementation to trip over this, so
+    // its shared ancestor's members are simply folded in once (see the member-closure loop below).
+    if (isComposed && parentDecls.size > 1) {
         val closures = parentDecls.map { it to diModuleClosure(it) }
         for (i in closures.indices) {
             for (j in i + 1 until closures.size) {
@@ -233,23 +258,31 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
 
     for (parent in parentDecls) {
         val paramName = parent.generatedBaseName().replaceFirstChar(Char::lowercaseChar)
-        parentModels.find { it.paramName == paramName }?.let { clashing ->
-            reportError(
-                "Parent modules '${clashing.declaration.simpleName.asString()}' and " +
-                    "'${parent.simpleName.asString()}' would both bind to the parameter name '$paramName'.",
-                classDecl,
-            )
+        if (isComposed) {
+            parentModels.find { it.paramName == paramName }?.let { clashing ->
+                reportError(
+                    "Parent modules '${clashing.declaration.simpleName.asString()}' and " +
+                        "'${parent.simpleName.asString()}' would both bind to the parameter name '$paramName'.",
+                    classDecl,
+                )
+            }
         }
         parentModels += ParentModel(parent, parent.toClassName(), paramName)
 
         for (closureMember in collectAllMembers(parent)) {
             val existingOwner = nameOwners[closureMember.member.name]
             if (existingOwner != null) {
-                reportError(
-                    "A member named '${closureMember.member.name}' is already declared in " +
-                        "'${existingOwner.simpleName.asString()}'.",
-                    classDecl,
-                )
+                // Same ancestor reached through two parents (diamond inheritance): its member was
+                // already folded into `allMembers` via the other parent, not a real clash. Only
+                // reachable for a non-composed module - a composed one already failed the diamond
+                // check above. A clash between two *different* owners is still an error.
+                if (existingOwner.qualifiedName?.asString() != closureMember.owner.qualifiedName?.asString()) {
+                    reportError(
+                        "A member named '${closureMember.member.name}' is already declared in " +
+                            "'${existingOwner.simpleName.asString()}'.",
+                        classDecl,
+                    )
+                }
                 continue
             }
             nameOwners[closureMember.member.name] = closureMember.owner
@@ -356,14 +389,17 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
     }
 
     // A @DIModule parent's parameter name may not collide with any member name in the
-    // consolidated interface (checked last, since own member names are only known by now).
-    for (parentModel in parentModels) {
-        if (parentModel.paramName in nameOwners) {
-            reportError(
-                "Parent module '${parentModel.declaration.simpleName.asString()}' binds to the parameter name " +
-                    "'${parentModel.paramName}', which collides with a member name.",
-                classDecl,
-            )
+    // consolidated interface (checked last, since own member names are only known by now). Only
+    // relevant to a @ComposedDIModule interface - a plain @DIModule interface has no such parameter.
+    if (isComposed) {
+        for (parentModel in parentModels) {
+            if (parentModel.paramName in nameOwners) {
+                reportError(
+                    "Parent module '${parentModel.declaration.simpleName.asString()}' binds to the parameter name " +
+                        "'${parentModel.paramName}', which collides with a member name.",
+                    classDecl,
+                )
+            }
         }
     }
 
@@ -387,5 +423,6 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
         allMembers = allMembers,
         parents = parentModels,
         ancestorDeclarations = ancestorDeclarations,
+        isComposed = isComposed,
     )
 }

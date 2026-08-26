@@ -146,12 +146,13 @@ class DIModuleValidationTest {
     }
 
     @Test
-    fun diamondInheritance_isRejected() {
+    fun diamondInheritance_isRejectedForComposedModule() {
         assertRejected(
             "is inherited more than once",
             """
             package sample.validation
 
+            import org.kodein.di.inara.ComposedDIModule
             import org.kodein.di.inara.DIModule
 
             @DIModule
@@ -165,12 +166,186 @@ class DIModuleValidationTest {
             @DIModule
             interface Module2 : BaseModule
 
-            @DIModule
+            @ComposedDIModule
             interface DiamondModule : Module1, Module2 {
                 val value: String
             }
             """
         )
+    }
+
+    @Test
+    fun diamondInheritance_isAllowedForPlainModule() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
+
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface BaseModule {
+                    val base: String
+                }
+
+                @DIModule
+                interface Module1 : BaseModule
+
+                @DIModule
+                interface Module2 : BaseModule
+
+                @DIModule
+                interface DiamondModule : Module1, Module2 {
+                    val value: String
+                }
+                """
+            )
+        )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+    }
+
+    @Test
+    fun composedModuleWithoutParents_isRejected() {
+        assertRejected(
+            "requires the interface to extend at least one @DIModule interface",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.ComposedDIModule
+
+            @ComposedDIModule
+            interface StandaloneModule {
+                val value: String
+            }
+            """
+        )
+    }
+
+    @Test
+    fun sameParamNameParents_isRejectedForComposedModule() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
+
+                import org.kodein.di.inara.ComposedDIModule
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface Foo {
+                    val a: String
+                }
+
+                @ComposedDIModule
+                interface Combined : Foo, other.Foo {
+                    val b: Int
+                }
+                """
+            ),
+            SourceFile.kotlin(
+                "OtherFoo.kt",
+                """
+                package other
+
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface Foo {
+                    val c: Long
+                }
+                """
+            ),
+        )
+        assertEquals(ExitCode.COMPILATION_ERROR, compilation.exitCode, compilation.messages)
+        assertTrue("would both bind to the parameter name" in compilation.messages, compilation.messages)
+    }
+
+    @Test
+    fun sameParamNameParents_isAllowedForPlainModule() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
+
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface Foo {
+                    val a: String
+                }
+
+                @DIModule
+                interface Combined : Foo, other.Foo {
+                    val b: Int
+                }
+                """
+            ),
+            SourceFile.kotlin(
+                "OtherFoo.kt",
+                """
+                package other
+
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface Foo {
+                    val c: Long
+                }
+                """
+            ),
+        )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+    }
+
+    @Test
+    fun parentParamNameCollidesWithMemberName_isRejectedForComposedModule() {
+        assertRejected(
+            "collides with a member name",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.ComposedDIModule
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface Foo {
+                val a: String
+            }
+
+            @ComposedDIModule
+            interface Combined : Foo {
+                val foo: Int
+            }
+            """
+        )
+    }
+
+    @Test
+    fun parentParamNameCollidesWithMemberName_isAllowedForPlainModule() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
+
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface Foo {
+                    val a: String
+                }
+
+                @DIModule
+                interface Combined : Foo {
+                    val foo: Int
+                }
+                """
+            )
+        )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
     }
 
     @Test
