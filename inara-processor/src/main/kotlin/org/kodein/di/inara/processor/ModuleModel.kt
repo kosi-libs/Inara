@@ -19,6 +19,10 @@ import com.squareup.kotlinpoet.ksp.toClassName
  *
  * A `val` property is modeled as a function with no parameter: [paramName] and [argType]
  * are null, and the corresponding `Binding`'s argument type is `Unit`.
+ *
+ * [hasDefaultImplementation] is true when the member carries a body in the interface (a default
+ * property getter or function body). Its `Binding` parameter is then optional and nullable:
+ * `null` means the interface's own default implementation is kept, any other value overrides it.
  */
 internal data class MemberModel(
     val name: String,
@@ -27,6 +31,7 @@ internal data class MemberModel(
     val paramName: String?,
     val argType: KSType?,
     val returnType: KSType,
+    val hasDefaultImplementation: Boolean,
 )
 
 internal data class ModuleModel(
@@ -89,7 +94,7 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
     for (decl in classDecl.declarations) {
         when (decl) {
             is KSPropertyDeclaration -> {
-                if (!decl.isAbstract()) continue
+                val hasDefault = !decl.isAbstract()
                 val name = decl.simpleName.asString()
                 var valid = true
 
@@ -124,11 +129,12 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
                     paramName = null,
                     argType = null,
                     returnType = decl.type.resolve(),
+                    hasDefaultImplementation = hasDefault,
                 )
             }
 
             is KSFunctionDeclaration -> {
-                if (!decl.isAbstract) continue
+                val hasDefault = !decl.isAbstract
                 val name = decl.simpleName.asString()
                 var valid = true
 
@@ -172,6 +178,7 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
                     paramName = param?.name?.asString(),
                     argType = param?.type?.resolve(),
                     returnType = decl.returnType!!.resolve(),
+                    hasDefaultImplementation = hasDefault,
                 )
             }
 

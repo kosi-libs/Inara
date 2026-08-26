@@ -178,4 +178,130 @@ class DIModuleValidationTest {
             """
         )
     }
+
+    // Every rule above also applies to a member with a default implementation - it is still a
+    // bindable member, just with an optional Binding, so its shape must be just as constrained.
+
+    @Test
+    fun defaultBodyMember_nonPublic_isRejected() {
+        assertRejected(
+            "Non-public members are not supported",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface NonPublicDefaultModule {
+                val name: String
+                private fun greeting(): String = "Hello, ${'$'}name"
+            }
+            """
+        )
+    }
+
+    @Test
+    fun defaultBodyMember_extension_isRejected() {
+        assertRejected(
+            "Extension members are not supported",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface ExtensionDefaultModule {
+                fun String.shout(): String = uppercase()
+            }
+            """
+        )
+    }
+
+    @Test
+    fun defaultBodyMember_generic_isRejected() {
+        assertRejected(
+            "Generic members are not supported",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GenericDefaultModule {
+                fun <T> identity(value: T): T = value
+            }
+            """
+        )
+    }
+
+    @Test
+    fun defaultBodyMember_varProperty_isRejected() {
+        assertRejected(
+            "var properties are not supported",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface VarDefaultModule {
+                var value: String
+                    get() = "default"
+                    set(_) {}
+            }
+            """
+        )
+    }
+
+    @Test
+    fun defaultBodyMember_vararg_isRejected() {
+        assertRejected(
+            "vararg parameters are not supported",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface VarargDefaultModule {
+                fun join(vararg parts: String): String = parts.joinToString()
+            }
+            """
+        )
+    }
+
+    @Test
+    fun defaultBodyMember_twoParameters_isRejected() {
+        assertRejected(
+            "more than one parameter",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface TwoParamDefaultModule {
+                fun combine(a: Int, b: Int): Int = a + b
+            }
+            """
+        )
+    }
+
+    @Test
+    fun abstractMemberAndDefaultBodyMember_sameName_isRejected() {
+        assertRejected(
+            "Overloading is not supported",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface MixedOverloadModule {
+                fun get(): String
+                fun get(x: Int): String = "${'$'}x"
+            }
+            """
+        )
+    }
 }

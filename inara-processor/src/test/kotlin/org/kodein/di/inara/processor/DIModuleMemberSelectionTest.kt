@@ -6,19 +6,18 @@ import com.tschuchort.compiletesting.KotlinCompilation.ExitCode
 import com.tschuchort.compiletesting.SourceFile
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 
 /**
- * Confirms two member-selection rules: a member with a default body is left alone (no `Binding`
- * constructor parameter, no override generated for it), and `suspend` functions are generated as
- * `suspend` overrides.
+ * Confirms two member-selection rules: a member with a default body gets an optional, nullable
+ * `Binding` parameter that falls back to the interface's own default implementation, and
+ * `suspend` functions are generated as `suspend` overrides.
  */
 class DIModuleMemberSelectionTest {
 
     @Test
-    fun memberWithDefaultBody_isSkipped() {
+    fun memberWithDefaultBody_getsOptionalBinding() {
         val source = SourceFile.kotlin(
             "DefaultBodyModule.kt",
             """
@@ -38,9 +37,17 @@ class DIModuleMemberSelectionTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/selection", "GeneratedDefaultBodyModule.kt")
-        assertFalse("greetingBinding" in generated, generated)
-        assertFalse("override fun greeting" in generated, generated)
         assertTrue("nameBinding" in generated, generated)
+        assertTrue(
+            "private val greetingBinding: Binding<DefaultBodyModule, Unit, String>?" in generated,
+            generated,
+        )
+        assertTrue("override fun greeting" in generated, generated)
+        assertTrue("super<DefaultBodyModule>.greeting()" in generated, generated)
+        assertTrue(
+            "greeting: Binding<DefaultBodyModule, Unit, String>? = null" in generated,
+            generated,
+        )
     }
 
     @Test
@@ -64,6 +71,6 @@ class DIModuleMemberSelectionTest {
 
         val generated = compilation.generatedSource("sample/selection", "GeneratedSuspendModule.kt")
         assertTrue("override suspend fun loadData(): String" in generated, generated)
-        assertTrue("loadDataBinding.get(this, Unit)" in generated, generated)
+        assertTrue("this.loadDataBinding.get(this, Unit)" in generated, generated)
     }
 }

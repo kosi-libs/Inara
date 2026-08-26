@@ -6,6 +6,7 @@ import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
@@ -19,6 +20,10 @@ private val BINDING = ClassName("org.kodein.di.inara", "Binding")
 /**
  * Emits the `Generated<Module>` private implementation and the `<Module>(...)` builder function
  * for [model], as described on `@DIModule`.
+ *
+ * A member with a default implementation (see [MemberModel.hasDefaultImplementation]) gets a
+ * nullable `Binding` that defaults to `null` in the builder function: `null` keeps the
+ * interface's own default body, any other value overrides it.
  */
 internal fun generateModuleFile(model: ModuleModel): FileSpec {
     val moduleClassName = model.moduleClassName
@@ -27,7 +32,8 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
     fun bindingTypeOf(member: MemberModel): TypeName {
         val argTypeName = member.argType?.toTypeName() ?: UNIT
         val returnTypeName = member.returnType.toTypeName()
-        return BINDING.parameterizedBy(moduleClassName, argTypeName, returnTypeName)
+        val bindingType = BINDING.parameterizedBy(moduleClassName, argTypeName, returnTypeName)
+        return if (member.hasDefaultImplementation) bindingType.copy(nullable = true) else bindingType
     }
 
     val classBuilder = TypeSpec.classBuilder(generatedClassName)
@@ -62,17 +68,30 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
             } else {
                 argCode = CodeBlock.of("Unit")
             }
-            funBuilder.addStatement("return %N.get(this, %L)", bindingParamName, argCode)
+            if (member.hasDefaultImplementation) {
+                val defaultArgCode = member.paramName?.let { CodeBlock.of("%N", it) } ?: CodeBlock.of("")
+                funBuilder.addStatement(
+                    "return if (this.%N == null) super<%T>.%N(%L) else this.%N.get(this, %L)",
+                    bindingParamName, moduleClassName, member.name, defaultArgCode, bindingParamName, argCode,
+                )
+            } else {
+                funBuilder.addStatement("return this.%N.get(this, %L)", bindingParamName, argCode)
+            }
             classBuilder.addFunction(funBuilder.build())
         } else {
+            val getterBuilder = FunSpec.getterBuilder()
+            if (member.hasDefaultImplementation) {
+                getterBuilder.addStatement(
+                    "return if (this.%N == null) super<%T>.%N else this.%N.get(this, Unit)",
+                    bindingParamName, moduleClassName, member.name, bindingParamName,
+                )
+            } else {
+                getterBuilder.addStatement("return this.%N.get(this, Unit)", bindingParamName)
+            }
             classBuilder.addProperty(
                 PropertySpec.builder(member.name, member.returnType.toTypeName())
                     .addModifiers(KModifier.OVERRIDE)
-                    .getter(
-                        FunSpec.getterBuilder()
-                            .addStatement("return %N.get(this, Unit)", bindingParamName)
-                            .build()
-                    )
+                    .getter(getterBuilder.build())
                     .build()
             )
         }
@@ -85,7 +104,11 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
         builderFun.addModifiers(KModifier.INTERNAL)
     }
     for (member in model.members) {
-        builderFun.addParameter(member.name, bindingTypeOf(member))
+        val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(member))
+        if (member.hasDefaultImplementation) {
+            paramBuilder.defaultValue("null")
+        }
+        builderFun.addParameter(paramBuilder.build())
     }
 
     val callCode = CodeBlock.builder()

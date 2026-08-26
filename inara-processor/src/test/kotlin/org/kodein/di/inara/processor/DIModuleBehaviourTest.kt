@@ -59,4 +59,59 @@ class DIModuleBehaviourTest {
         assertEquals("Hello, World", results[1])
         assertEquals("hi!!!", results[2])
     }
+
+    @Test
+    fun defaultImplementation_isKeptUnlessOverridden() {
+        val source = SourceFile.kotlin(
+            "DefaultsModule.kt",
+            """
+            package sample.behaviour
+
+            import org.kodein.di.inara.DIModule
+            import org.kodein.di.inara.Binding.Bindings.value
+
+            @DIModule
+            interface DefaultsModule {
+                val name: String
+                val greeting: String? get() = "Hello, ${'$'}name"
+                fun shout(): String = "${'$'}{greeting}!!!"
+            }
+
+            object Harness {
+                @JvmStatic
+                fun run(): Array<Any?> {
+                    // No greeting/shout bindings: the interface's own defaults run, and they see
+                    // the bound `name`.
+                    val defaulted = DefaultsModule(name = value("World"))
+
+                    // greeting bound to a literal null: must NOT fall back to the default, since
+                    // the fallback branches on the binding being absent, not on the value being
+                    // null.
+                    val overridden = DefaultsModule(
+                        name = value("World"),
+                        greeting = value(null),
+                        shout = value("overridden"),
+                    )
+
+                    return arrayOf(
+                        defaulted.greeting, defaulted.shout(),
+                        overridden.greeting, overridden.shout(),
+                    )
+                }
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val harnessClass = compilation.classLoader.loadClass("sample.behaviour.Harness")
+        @Suppress("UNCHECKED_CAST")
+        val results = harnessClass.getMethod("run").invoke(null) as Array<Any?>
+
+        assertEquals("Hello, World", results[0])
+        assertEquals("Hello, World!!!", results[1])
+        assertEquals(null, results[2])
+        assertEquals("overridden", results[3])
+    }
 }
