@@ -91,9 +91,9 @@ class DIModuleValidationTest {
     }
 
     @Test
-    fun interfaceExtendingAnotherInterface_isRejected() {
+    fun interfaceExtendingNonDIModuleInterface_isRejected() {
         assertRejected(
-            "may not extend other interfaces",
+            "may only extend other @DIModule interfaces",
             """
             package sample.validation
 
@@ -106,6 +106,81 @@ class DIModuleValidationTest {
             @DIModule
             interface ExtendingModule : BaseModule {
                 val value: String
+            }
+            """
+        )
+    }
+
+    @Test
+    fun diamondInheritance_isRejected() {
+        assertRejected(
+            "is inherited more than once",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface BaseModule {
+                val base: String
+            }
+
+            @DIModule
+            interface Module1 : BaseModule
+
+            @DIModule
+            interface Module2 : BaseModule
+
+            @DIModule
+            interface DiamondModule : Module1, Module2 {
+                val value: String
+            }
+            """
+        )
+    }
+
+    @Test
+    fun duplicateMemberNameAcrossParents_isRejected() {
+        assertRejected(
+            "is already declared in",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface Module1 {
+                val shared: String
+            }
+
+            @DIModule
+            interface Module2 {
+                val shared: Int
+            }
+
+            @DIModule
+            interface CombinedModule : Module1, Module2
+            """
+        )
+    }
+
+    @Test
+    fun overrideOfInheritedMember_isRejected() {
+        assertRejected(
+            "is already declared in",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface BaseModule {
+                val name: String
+            }
+
+            @DIModule
+            interface OverridingModule : BaseModule {
+                override val name: String
             }
             """
         )

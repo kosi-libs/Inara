@@ -9,13 +9,12 @@ import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.validate
 import com.squareup.kotlinpoet.ksp.writeTo
 
-private const val DI_MODULE_ANNOTATION = "org.kodein.di.inara.DIModule"
-
 /**
  * For every interface annotated with `@DIModule`, generates a private `Binding`-backed
  * implementation (`SuspendBinding` for `suspend` members) and a builder function named after the
- * interface. See [parseModule] for the validation rules and [generateModuleFile] for the
- * generated shape.
+ * interface. A module that extends other `@DIModule` interfaces gets a second, delegated
+ * implementation/builder pair as well. See [parseModule] for the validation rules and
+ * [generateModuleFile] for the generated shape(s).
  */
 public class DIModuleProcessor(
     private val codeGenerator: CodeGenerator,

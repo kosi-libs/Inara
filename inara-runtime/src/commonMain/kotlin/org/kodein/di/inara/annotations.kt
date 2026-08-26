@@ -1,8 +1,6 @@
 package org.kodein.di.inara
 
-import kotlin.annotation.AnnotationRetention.SOURCE
-
-@Retention(SOURCE)
+@Retention(AnnotationRetention.BINARY)
 @Target(AnnotationTarget.CLASS)
 public annotation class DIModule
 
