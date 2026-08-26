@@ -287,6 +287,10 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
                     reportError("A @DIModule member name may not end with 'Binding': '$name'.", decl)
                     valid = false
                 }
+                if (name == "copy") {
+                    reportError("A @DIModule member may not be named 'copy'.", decl)
+                    valid = false
+                }
                 if (decl.isMutable) {
                     reportError("var properties are not supported: '$name'.", decl)
                     valid = false
@@ -313,6 +317,10 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
 
                 if (name.endsWith("Binding")) {
                     reportError("A @DIModule member name may not end with 'Binding': '$name'.", decl)
+                    valid = false
+                }
+                if (name == "copy") {
+                    reportError("A @DIModule member may not be named 'copy'.", decl)
                     valid = false
                 }
                 if (decl.extensionReceiver != null) {

@@ -57,6 +57,40 @@ class DIModuleValidationTest {
     }
 
     @Test
+    fun memberNamedCopy_propertyIsRejected() {
+        assertRejected(
+            "may not be named 'copy'",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface CopyPropertyModule {
+                val copy: String
+            }
+            """
+        )
+    }
+
+    @Test
+    fun memberNamedCopy_functionIsRejected() {
+        assertRejected(
+            "may not be named 'copy'",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface CopyFunctionModule {
+                fun copy(): String
+            }
+            """
+        )
+    }
+
+    @Test
     fun varProperty_isRejected() {
         assertRejected(
             "var properties are not supported",

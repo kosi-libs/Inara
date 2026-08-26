@@ -44,7 +44,7 @@ public class BindingImpls {
     internal class Factory<M, A, T>(private val factory: M.(A) -> T) : Binding<M, A, T> { override fun get(module: M, arg: A): T = factory(module, arg) }
 
     // Same as Factory, but exists for Copies.
-    internal class Delegate<M, A, T>(private val delegate: M.(A) -> T) : Binding<M, A, T> { override fun get(module: M, arg: A): T = delegate(module, arg) }
+    public class Delegate<M, A, T>(private val delegate: M.(A) -> T) : Binding<M, A, T> { override fun get(module: M, arg: A): T = delegate(module, arg) }
 
     internal object Uninitialized {
         inline fun <T> Any?.ifInitialized(then: (T) -> Unit) {

@@ -32,7 +32,7 @@ public class SuspendBindingImpls {
     internal class Factory<M, A, T>(private val factory: suspend M.(A) -> T) : SuspendBinding<M, A, T> { override suspend fun get(module: M, arg: A): T = factory(module, arg) }
 
     // Same as Factory, but exists for Copies.
-    internal class SuspendDelegate<M, A, T>(private val delegate: suspend M.(A) -> T) : SuspendBinding<M, A, T> { override suspend fun get(module: M, arg: A): T = delegate(module, arg) }
+    public class SuspendDelegate<M, A, T>(private val delegate: suspend M.(A) -> T) : SuspendBinding<M, A, T> { override suspend fun get(module: M, arg: A): T = delegate(module, arg) }
 
     internal class Single<M, T>(builder: suspend M.() -> T) : SuspendBinding<M, Unit, T> {
         private var builder: (suspend M.() -> T)? = builder
