@@ -72,7 +72,9 @@ private fun copyDelegateDefaultCode(member: MemberModel): CodeBlock {
  * A `@ComposedDIModule` interface gets two pairs instead:
  * - `GeneratedDelegated<Module>` / a builder taking one already-built parent module instance per
  *   `@DIModule` parent (`Module1 by module1`-style delegation) plus a binding per member declared
- *   directly on this interface.
+ *   directly on this interface *or reachable through a plain (non-`@DIModule`) supertype* - a plain
+ *   supertype is never delegable, so [ModuleModel.ownMembers] already folds its members in
+ *   alongside this interface's own declarations (see [parseModule]).
  * - `Generated<Module>` / a builder taking a binding for every member in the consolidated
  *   interface, inherited ones included, each parameterized on this (leaf) module type - so any
  *   provider/factory/single body can reach any member, inherited or not, through its receiver.

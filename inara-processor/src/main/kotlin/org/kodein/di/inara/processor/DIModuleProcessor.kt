@@ -13,8 +13,10 @@ import com.squareup.kotlinpoet.ksp.writeTo
  * For every interface annotated with `@DIModule` or `@ComposedDIModule`, generates a private
  * `Binding`-backed implementation (`SuspendBinding` for `suspend` members) and a builder function
  * named after the interface. A `@ComposedDIModule` interface additionally gets a second, delegated
- * implementation/builder/`copy` set for its `@DIModule` parents. See [parseModule] for the
- * validation rules and [generateModuleFile] for the generated shape(s).
+ * implementation/builder/`copy` set for its `@DIModule` parents. The interface may extend any
+ * interface, not just other `@DIModule` ones - a plain supertype's members are bound exactly like
+ * the module's own. See [parseModule] for the validation rules and [generateModuleFile] for the
+ * generated shape(s).
  */
 public class DIModuleProcessor(
     private val codeGenerator: CodeGenerator,

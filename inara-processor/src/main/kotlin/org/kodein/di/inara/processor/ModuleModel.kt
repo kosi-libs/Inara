@@ -5,10 +5,12 @@ import com.google.devtools.ksp.isAbstract
 import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.symbol.ClassKind
 import com.google.devtools.ksp.symbol.KSClassDeclaration
+import com.google.devtools.ksp.symbol.KSDeclaration
 import com.google.devtools.ksp.symbol.KSFunctionDeclaration
 import com.google.devtools.ksp.symbol.KSNode
 import com.google.devtools.ksp.symbol.KSPropertyDeclaration
 import com.google.devtools.ksp.symbol.KSType
+import com.google.devtools.ksp.symbol.KSTypeReference
 import com.google.devtools.ksp.symbol.Modifier
 import com.google.devtools.ksp.symbol.Visibility
 import com.squareup.kotlinpoet.ClassName
@@ -48,14 +50,15 @@ internal data class ParentModel(
 )
 
 /**
- * [ownMembers] are the members declared directly on this interface; [allMembers] is the
- * consolidated closure of every `@DIModule` ancestor's members followed by [ownMembers], with no
- * two members sharing a name (see [parseModule]). A module with no `@DIModule` parents has
- * `allMembers == ownMembers` and an empty [ancestorDeclarations].
+ * [ownMembers] are the members declared directly on this interface plus every member reachable
+ * through a *plain* (non-`@DIModule`) supertype, transitively - nothing delegates those, so they
+ * need their own binding exactly like an own declaration. [allMembers] additionally folds in every
+ * `@DIModule` [parents]' member closure, with no two members sharing a name (see [parseModule]). A
+ * module with no `@DIModule` parents has `allMembers == ownMembers`.
  *
- * [ancestorDeclarations] is every `@DIModule` interface transitively reachable through [parents]
- * (deduplicated, [parents] included) - used only so the generator can register each of their
- * source files as an incremental-build dependency of the generated code.
+ * [ancestorDeclarations] is every interface transitively reachable through any direct supertype -
+ * `@DIModule` or plain alike - (deduplicated) - used only so the generator can register each of
+ * their source files as an incremental-build dependency of the generated code.
  *
  * [isComposed] is true when the interface is annotated `@ComposedDIModule` - it alone decides
  * whether the generator emits the delegated implementation/builder/`copy` set on top of the plain
@@ -101,78 +104,157 @@ private fun KSClassDeclaration.isDIModule(): Boolean =
 private fun KSClassDeclaration.isComposedDIModule(): Boolean =
     hasAnnotation(COMPOSED_DI_MODULE_ANNOTATION)
 
-/**
- * The direct `@DIModule` supertypes of this interface. A supertype that isn't a `@DIModule`
- * interface (including a plain `kotlin.Any`) is silently omitted here - [parseModule] is
- * responsible for rejecting those.
- */
-private fun KSClassDeclaration.diModuleParents(): List<KSClassDeclaration> =
-    superTypes.mapNotNull { (it.resolve().declaration as? KSClassDeclaration)?.takeIf { d -> d.isDIModule() } }.toList()
-
-private fun propertyMemberModel(decl: KSPropertyDeclaration, hasDefault: Boolean): MemberModel = MemberModel(
-    name = decl.simpleName.asString(),
-    isFunction = false,
-    isSuspend = false,
-    paramName = null,
-    argType = null,
-    returnType = decl.type.resolve(),
-    hasDefaultImplementation = hasDefault,
-)
-
-private fun functionMemberModel(decl: KSFunctionDeclaration, hasDefault: Boolean): MemberModel {
-    val param = decl.parameters.singleOrNull()
-    return MemberModel(
-        name = decl.simpleName.asString(),
-        isFunction = true,
-        isSuspend = Modifier.SUSPEND in decl.modifiers,
-        paramName = param?.name?.asString(),
-        argType = param?.type?.resolve(),
-        returnType = decl.returnType!!.resolve(),
-        hasDefaultImplementation = hasDefault,
-    )
-}
-
-/** A [MemberModel] paired with the interface that actually declares it, for diagnostics. */
-private data class ClosureMember(val member: MemberModel, val owner: KSClassDeclaration)
+/** Direct interface supertypes, `@DIModule` or not, with `kotlin.Any` excluded. */
+private fun KSClassDeclaration.superInterfaces(): List<KSClassDeclaration> =
+    superTypes.mapNotNull { superType ->
+        val resolved = superType.resolve().declaration
+        (resolved as? KSClassDeclaration)?.takeUnless { it.qualifiedName?.asString() == "kotlin.Any" }
+    }.toList()
 
 /**
- * The full member closure of [classDecl]: every ancestor `@DIModule`'s members (parents first, in
- * declaration order, each parent's own ancestors before its own members), followed by [classDecl]'s
- * own members. No validation is performed here - an ancestor's members are only ever read this way
- * after that ancestor has itself been successfully compiled (in this round or a previous one), so
- * they are already known-valid.
+ * [classDecl] plus every interface transitively reachable through its supertypes - `@DIModule` or
+ * not, annotation doesn't matter here - keyed by qualified name. Used both to find the most
+ * derived owner of a member reached through more than one path (see [resolveClosure]) and to
+ * detect a shared ancestor pulled in by two different `@ComposedDIModule` delegate parents.
  */
-private fun collectAllMembers(classDecl: KSClassDeclaration): List<ClosureMember> {
-    val result = mutableListOf<ClosureMember>()
-    for (parent in classDecl.diModuleParents()) {
-        result += collectAllMembers(parent)
-    }
-    for (decl in classDecl.declarations) {
-        when (decl) {
-            is KSPropertyDeclaration -> result += ClosureMember(propertyMemberModel(decl, !decl.isAbstract()), classDecl)
-            is KSFunctionDeclaration -> result += ClosureMember(functionMemberModel(decl, !decl.isAbstract), classDecl)
-            else -> Unit
-        }
-    }
-    return result
-}
-
-/**
- * Every `@DIModule` interface reachable from [classDecl] through [diModuleParents], including
- * [classDecl] itself, keyed by qualified name. Used to detect diamond inheritance: if two of
- * [classDecl]'s direct parents both reach the same ancestor, the same qualified name shows up in
- * both closures.
- */
-private fun diModuleClosure(classDecl: KSClassDeclaration): Map<String, KSClassDeclaration> {
+private fun interfaceClosure(classDecl: KSClassDeclaration): Map<String, KSClassDeclaration> {
     val result = LinkedHashMap<String, KSClassDeclaration>()
     result[classDecl.qualifiedName!!.asString()] = classDecl
-    for (parent in classDecl.diModuleParents()) {
-        for ((qualifiedName, decl) in diModuleClosure(parent)) {
+    for (supertype in classDecl.superInterfaces()) {
+        for ((qualifiedName, decl) in interfaceClosure(supertype)) {
             result.putIfAbsent(qualifiedName, decl)
         }
     }
     return result
 }
+
+/** True when [sub] is [sup], or transitively extends it. */
+private fun isSubtypeOf(sub: KSClassDeclaration, sup: KSClassDeclaration): Boolean =
+    sup.qualifiedName?.asString() in interfaceClosure(sub).keys
+
+/** A property or function declaration paired with the interface that actually declares it. */
+private data class ClosureDecl(val decl: KSDeclaration, val owner: KSClassDeclaration)
+
+/**
+ * Every property/function transitively reachable from [classDecl]'s supertypes, `@DIModule` or
+ * plain alike (annotation doesn't matter once inside the walk - only [parseModule]'s direct-parent
+ * partitioning cares), each paired with its declaring interface. A private member is dropped here:
+ * an interface's private member always carries its own body, so the generated class never has
+ * anything to implement for it. Raw: the same declaration can appear more than once (diamond
+ * inheritance, or an override alongside the member it overrides) - see [resolveClosure].
+ */
+private fun superDeclarationClosure(classDecl: KSClassDeclaration): List<ClosureDecl> {
+    val result = mutableListOf<ClosureDecl>()
+    for (supertype in classDecl.superInterfaces()) {
+        result += superDeclarationClosure(supertype)
+    }
+    for (decl in classDecl.declarations) {
+        val isMember = decl is KSPropertyDeclaration || decl is KSFunctionDeclaration
+        if (isMember && decl.getVisibility() != Visibility.PRIVATE) {
+            result += ClosureDecl(decl, classDecl)
+        }
+    }
+    return result
+}
+
+/**
+ * One [ClosureDecl] reached through one of [ModuleModel.parents] or a plain supertype, tagged with
+ * [node] - the direct supertype reference on the interface being parsed, used to anchor a
+ * diagnostic on the user's own code - and [ownFromPlain] - whether it was reached through a plain
+ * supertype (needs its own binding, [ModuleModel.ownMembers] included) rather than a `@DIModule`
+ * parent (satisfied by that parent's delegate in the `@ComposedDIModule` variant, [ModuleModel.allMembers]
+ * only).
+ */
+private data class Candidate(val closureDecl: ClosureDecl, val node: KSTypeReference, val ownFromPlain: Boolean)
+
+/**
+ * Resolves [candidates] into at most one [Candidate] per member name, reporting every genuine
+ * clash through [reportError] (anchored on [classDecl]).
+ *
+ * Two entries with the same name collapse silently when one's owner is the other's (the exact
+ * same declaration reached twice, e.g. diamond inheritance) or a subtype of the other's (an
+ * `override` in a more derived interface shadowing what it overrides, however many levels apart) -
+ * the most derived entry survives, preferring one reached through a plain supertype over one
+ * reached through a `@DIModule` parent when both reach the same winning owner. Anything else - two
+ * unrelated owners, or two distinct declarations on the very same owner (an overload) - is
+ * rejected.
+ */
+private fun resolveClosure(
+    candidates: List<Candidate>,
+    classDecl: KSClassDeclaration,
+    reportError: (String, KSNode) -> Unit,
+): List<Candidate> {
+    val result = mutableListOf<Candidate>()
+    for ((name, entries) in candidates.groupBy { it.closureDecl.decl.simpleName.asString() }) {
+        val mostDerivedOwners = entries
+            .map { it.closureDecl.owner }
+            .distinctBy { it.qualifiedName?.asString() }
+            .filter { candidate -> entries.all { other -> isSubtypeOf(candidate, other.closureDecl.owner) } }
+
+        if (mostDerivedOwners.size != 1) {
+            val ownerNames = entries.map { it.closureDecl.owner.simpleName.asString() }.distinct().sorted()
+            reportError(
+                "A member named '$name' is declared in more than one unrelated interface: " +
+                    ownerNames.joinToString(", ") { "'$it'" } + ".",
+                classDecl,
+            )
+            continue
+        }
+
+        val winningOwner = mostDerivedOwners.single().qualifiedName?.asString()
+        val winners = entries.filter { it.closureDecl.owner.qualifiedName?.asString() == winningOwner }
+        val distinctDecls = winners.map { it.closureDecl.decl }.distinct()
+        if (distinctDecls.size > 1) {
+            reportError(
+                "Overloading is not supported: multiple members are named '$name' in " +
+                    "'${winners.first().closureDecl.owner.simpleName.asString()}'.",
+                classDecl,
+            )
+            continue
+        }
+
+        result += winners.firstOrNull { it.ownFromPlain } ?: winners.first()
+    }
+    return result
+}
+
+/**
+ * [decl]'s type as seen from [moduleType] (substituting any type argument a plain supertype
+ * declared it with), via `KSPropertyDeclaration`/`KSFunctionDeclaration.asMemberOf`. Falls back to
+ * the type as declared, unsubstituted, if resolution yields an error type - degrading gracefully
+ * instead of crashing on an otherwise broken supertype.
+ */
+private fun buildMember(decl: KSDeclaration, moduleType: KSType, hasDefault: Boolean): MemberModel =
+    when (decl) {
+        is KSPropertyDeclaration -> {
+            val resolved = decl.asMemberOf(moduleType)
+            MemberModel(
+                name = decl.simpleName.asString(),
+                isFunction = false,
+                isSuspend = false,
+                paramName = null,
+                argType = null,
+                returnType = resolved.takeUnless { it.isError } ?: decl.type.resolve(),
+                hasDefaultImplementation = hasDefault,
+            )
+        }
+        is KSFunctionDeclaration -> {
+            // KSFunction's return/parameter types are nullable - null (like an error type) means
+            // resolution failed for that part specifically, so each falls back independently.
+            val signature = decl.asMemberOf(moduleType)
+            val param = decl.parameters.singleOrNull()
+            MemberModel(
+                name = decl.simpleName.asString(),
+                isFunction = true,
+                isSuspend = Modifier.SUSPEND in decl.modifiers,
+                paramName = param?.name?.asString(),
+                argType = param?.let { p -> signature.parameterTypes.firstOrNull()?.takeUnless { it.isError } ?: p.type.resolve() },
+                returnType = signature.returnType?.takeUnless { it.isError } ?: decl.returnType!!.resolve(),
+                hasDefaultImplementation = hasDefault,
+            )
+        }
+        else -> error("Unsupported declaration kind for a @DIModule member: $decl")
+    }
 
 /**
  * Validates [classDecl] against every `@DIModule` rule and builds a [ModuleModel] out of it.
@@ -194,28 +276,34 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
     }
 
     val isComposed = classDecl.isComposedDIModule()
+    val moduleType = classDecl.asStarProjectedType()
 
     if (classDecl.typeParameters.isNotEmpty()) {
         reportError("A @DIModule interface may not have type parameters.", classDecl)
     }
 
-    // Resolve and validate direct supertypes. A supertype that isn't a @DIModule interface makes
-    // the rest of this function unsafe to run (there is nothing sensible to walk), so bail out
-    // immediately after reporting every such supertype - the errors already reached `logger`.
-    var parentsValid = true
-    val parentDecls = mutableListOf<KSClassDeclaration>()
+    // Resolve direct supertypes into @DIModule parents (delegable - eligible for a
+    // @ComposedDIModule "Parent by parent" clause) and plain supertypes (their members are bound
+    // directly, like this interface's own). A supertype that doesn't resolve to an interface at
+    // all (an unresolved/error reference) makes the rest of this function unsafe to run, so bail
+    // out immediately after reporting every such supertype.
+    var supertypesValid = true
+    val parentEntries = mutableListOf<Pair<KSTypeReference, KSClassDeclaration>>()
+    val plainEntries = mutableListOf<Pair<KSTypeReference, KSClassDeclaration>>()
     for (superType in classDecl.superTypes) {
         val resolved = superType.resolve().declaration
         if (resolved.qualifiedName?.asString() == "kotlin.Any") continue
-        val parentClass = (resolved as? KSClassDeclaration)?.takeIf { it.isDIModule() }
-        if (parentClass == null) {
-            reportError("A @DIModule interface may only extend other @DIModule interfaces.", superType)
-            parentsValid = false
+        val superDecl = resolved as? KSClassDeclaration
+        if (superDecl == null) {
+            reportError("A @DIModule interface may only extend interfaces.", superType)
+            supertypesValid = false
             continue
         }
-        parentDecls += parentClass
+        if (superDecl.isDIModule()) parentEntries += superType to superDecl else plainEntries += superType to superDecl
     }
-    if (!parentsValid) return null
+    if (!supertypesValid) return null
+
+    val parentDecls = parentEntries.map { it.second }
 
     if (isComposed && parentDecls.isEmpty()) {
         reportError(
@@ -224,13 +312,15 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
         )
     }
 
-    // Diamond inheritance: two direct parents that both reach the same @DIModule ancestor. Kotlin
-    // would need an explicit override for that ancestor's members in the delegated implementation,
-    // which the generator does not attempt, so this is rejected for a @ComposedDIModule interface
-    // outright. A plain @DIModule interface has no delegated implementation to trip over this, so
-    // its shared ancestor's members are simply folded in once (see the member-closure loop below).
+    // Diamond inheritance: two direct @DIModule parents that both reach the same ancestor
+    // interface (annotated or not - a plain shared ancestor is just as ambiguous once delegated
+    // twice). Kotlin would need an explicit override for that ancestor's members in the delegated
+    // implementation, which the generator does not attempt, so this is rejected for a
+    // @ComposedDIModule interface outright. A plain @DIModule interface has no delegated
+    // implementation to trip over this, so a shared ancestor's members are simply folded in once
+    // (see [resolveClosure]).
     if (isComposed && parentDecls.size > 1) {
-        val closures = parentDecls.map { it to diModuleClosure(it) }
+        val closures = parentDecls.map { it to interfaceClosure(it) }
         for (i in closures.indices) {
             for (j in i + 1 until closures.size) {
                 val (parentA, closureA) = closures[i]
@@ -238,7 +328,7 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
                 for (qualifiedName in closureA.keys intersect closureB.keys) {
                     val shared = closureA.getValue(qualifiedName)
                     reportError(
-                        "@DIModule interface '${shared.simpleName.asString()}' is inherited more than once, " +
+                        "Interface '${shared.simpleName.asString()}' is inherited more than once, " +
                             "via '${parentA.simpleName.asString()}' and '${parentB.simpleName.asString()}'.",
                         classDecl,
                     )
@@ -247,14 +337,8 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
         }
     }
 
-    // `nameOwners` tracks, for every member name seen so far (inherited or own), the interface
-    // that declares it - `classDecl` itself for an own member, an ancestor for an inherited one.
-    // It is what turns `override val a` on an inherited member into the same diagnostic as any
-    // other name clash: by the time the own `a` is parsed, `nameOwners["a"]` already points at the
-    // parent that declared it.
     val nameOwners = mutableMapOf<String, KSClassDeclaration>()
     val parentModels = mutableListOf<ParentModel>()
-    val allMembers = mutableListOf<MemberModel>()
 
     for (parent in parentDecls) {
         val paramName = parent.generatedBaseName().replaceFirstChar(Char::lowercaseChar)
@@ -268,26 +352,71 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
             }
         }
         parentModels += ParentModel(parent, parent.toClassName(), paramName)
+    }
 
-        for (closureMember in collectAllMembers(parent)) {
-            val existingOwner = nameOwners[closureMember.member.name]
-            if (existingOwner != null) {
-                // Same ancestor reached through two parents (diamond inheritance): its member was
-                // already folded into `allMembers` via the other parent, not a real clash. Only
-                // reachable for a non-composed module - a composed one already failed the diamond
-                // check above. A clash between two *different* owners is still an error.
-                if (existingOwner.qualifiedName?.asString() != closureMember.owner.qualifiedName?.asString()) {
-                    reportError(
-                        "A member named '${closureMember.member.name}' is already declared in " +
-                            "'${existingOwner.simpleName.asString()}'.",
-                        classDecl,
-                    )
-                }
-                continue
-            }
-            nameOwners[closureMember.member.name] = closureMember.owner
-            allMembers += closureMember.member
+    /**
+     * Validates [decl] (declared on [owner]) against every `@DIModule` member rule and, if it
+     * passes, resolves its type as seen from [classDecl] (see [buildMember]). [isOwn] controls the
+     * diagnostic wording: an inherited member's is prefixed with which interface declares it, so
+     * the caret on [node] - the offending direct supertype reference for an inherited member, the
+     * declaration itself for an own one - doesn't leave the reader guessing where the member
+     * actually came from.
+     */
+    fun parseMember(decl: KSDeclaration, owner: KSClassDeclaration, node: KSNode, isOwn: Boolean): MemberModel? {
+        val name = decl.simpleName.asString()
+        val prefix = if (isOwn) "" else "Member '$name' inherited from '${owner.simpleName.asString()}': "
+        var valid = true
+        fun fail(message: String) {
+            reportError(prefix + message, node)
+            valid = false
         }
+
+        if (name.endsWith("Binding")) fail("A @DIModule member name may not end with 'Binding': '$name'.")
+        if (name == "copy") fail("A @DIModule member may not be named 'copy'.")
+
+        val hasDefault: Boolean
+        when (decl) {
+            is KSPropertyDeclaration -> {
+                hasDefault = !decl.isAbstract()
+                if (decl.isMutable) fail("var properties are not supported: '$name'.")
+                if (decl.extensionReceiver != null) fail("Extension members are not supported: '$name'.")
+                if (decl.getVisibility() != Visibility.PUBLIC) fail("Non-public members are not supported: '$name'.")
+            }
+            is KSFunctionDeclaration -> {
+                hasDefault = !decl.isAbstract
+                if (decl.extensionReceiver != null) fail("Extension members are not supported: '$name'.")
+                if (decl.typeParameters.isNotEmpty()) fail("Generic members are not supported: '$name'.")
+                if (decl.getVisibility() != Visibility.PUBLIC) fail("Non-public members are not supported: '$name'.")
+                if (decl.parameters.size > 1) fail("Members with more than one parameter are not supported: '$name'.")
+                if (decl.parameters.singleOrNull()?.isVararg == true) fail("vararg parameters are not supported: '$name'.")
+            }
+            else -> return null
+        }
+
+        if (!valid) return null
+        return buildMember(decl, moduleType, hasDefault)
+    }
+
+    val allMembers = mutableListOf<MemberModel>()
+    val ownMembers = mutableListOf<MemberModel>()
+
+    // Every member reachable through a @DIModule parent (allMembers only - satisfied by that
+    // parent's delegate in the @ComposedDIModule variant) or a plain supertype (both - nothing
+    // delegates it, so it needs its own binding just like an own declaration), resolved together
+    // so an override spanning both groups, or a shared ancestor reached through either, collapses
+    // to one candidate instead of a false clash.
+    val candidates = parentEntries.flatMap { (node, parent) ->
+        superDeclarationClosure(parent).map { Candidate(it, node, ownFromPlain = false) }
+    } + plainEntries.flatMap { (node, plain) ->
+        superDeclarationClosure(plain).map { Candidate(it, node, ownFromPlain = true) }
+    }
+
+    for (candidate in resolveClosure(candidates, classDecl, ::reportError)) {
+        val (closureDecl, node, ownFromPlain) = candidate
+        val member = parseMember(closureDecl.decl, closureDecl.owner, node, isOwn = false) ?: continue
+        nameOwners[closureDecl.decl.simpleName.asString()] = closureDecl.owner
+        allMembers += member
+        if (ownFromPlain) ownMembers += member
     }
 
     fun claimName(name: String, node: KSNode): Boolean {
@@ -307,84 +436,13 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
         return ok
     }
 
-    val ownMembers = mutableListOf<MemberModel>()
-
     for (decl in classDecl.declarations) {
-        when (decl) {
-            is KSPropertyDeclaration -> {
-                val hasDefault = !decl.isAbstract()
-                val name = decl.simpleName.asString()
-                var valid = claimName(name, decl)
-
-                if (name.endsWith("Binding")) {
-                    reportError("A @DIModule member name may not end with 'Binding': '$name'.", decl)
-                    valid = false
-                }
-                if (name == "copy") {
-                    reportError("A @DIModule member may not be named 'copy'.", decl)
-                    valid = false
-                }
-                if (decl.isMutable) {
-                    reportError("var properties are not supported: '$name'.", decl)
-                    valid = false
-                }
-                if (decl.extensionReceiver != null) {
-                    reportError("Extension members are not supported: '$name'.", decl)
-                    valid = false
-                }
-                if (decl.getVisibility() != Visibility.PUBLIC) {
-                    reportError("Non-public members are not supported: '$name'.", decl)
-                    valid = false
-                }
-
-                if (!valid) continue
-                val member = propertyMemberModel(decl, hasDefault)
-                ownMembers += member
-                allMembers += member
-            }
-
-            is KSFunctionDeclaration -> {
-                val hasDefault = !decl.isAbstract
-                val name = decl.simpleName.asString()
-                var valid = claimName(name, decl)
-
-                if (name.endsWith("Binding")) {
-                    reportError("A @DIModule member name may not end with 'Binding': '$name'.", decl)
-                    valid = false
-                }
-                if (name == "copy") {
-                    reportError("A @DIModule member may not be named 'copy'.", decl)
-                    valid = false
-                }
-                if (decl.extensionReceiver != null) {
-                    reportError("Extension members are not supported: '$name'.", decl)
-                    valid = false
-                }
-                if (decl.typeParameters.isNotEmpty()) {
-                    reportError("Generic members are not supported: '$name'.", decl)
-                    valid = false
-                }
-                if (decl.getVisibility() != Visibility.PUBLIC) {
-                    reportError("Non-public members are not supported: '$name'.", decl)
-                    valid = false
-                }
-                if (decl.parameters.size > 1) {
-                    reportError("Members with more than one parameter are not supported: '$name'.", decl)
-                    valid = false
-                }
-                val param = decl.parameters.singleOrNull()
-                if (param != null && param.isVararg) {
-                    reportError("vararg parameters are not supported: '$name'.", decl)
-                    valid = false
-                }
-
-                if (!valid) continue
-                val member = functionMemberModel(decl, hasDefault)
-                ownMembers += member
-                allMembers += member
-            }
-
-            else -> Unit
+        if (decl !is KSPropertyDeclaration && decl !is KSFunctionDeclaration) continue
+        val claimOk = claimName(decl.simpleName.asString(), decl)
+        val member = parseMember(decl, classDecl, decl, isOwn = true)
+        if (claimOk && member != null) {
+            ownMembers += member
+            allMembers += member
         }
     }
 
@@ -406,8 +464,8 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
     if (hasError) return null
 
     val ancestorDeclarations = LinkedHashMap<String, KSClassDeclaration>().apply {
-        for (parent in parentDecls) {
-            for ((qualifiedName, decl) in diModuleClosure(parent)) {
+        for (supertype in parentDecls + plainEntries.map { it.second }) {
+            for ((qualifiedName, decl) in interfaceClosure(supertype)) {
                 putIfAbsent(qualifiedName, decl)
             }
         }

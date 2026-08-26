@@ -125,24 +125,30 @@ class DIModuleValidationTest {
     }
 
     @Test
-    fun interfaceExtendingNonDIModuleInterface_isRejected() {
-        assertRejected(
-            "may only extend other @DIModule interfaces",
-            """
-            package sample.validation
+    fun interfaceExtendingNonDIModuleInterface_isAllowed() {
+        // A @DIModule interface may extend any interface, not just another @DIModule one - the
+        // plain supertype's members are bound just like the module's own (see
+        // DIModuleInheritanceTest for the generated shape).
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
 
-            import org.kodein.di.inara.DIModule
+                import org.kodein.di.inara.DIModule
 
-            interface BaseModule {
-                val base: String
-            }
+                interface BaseModule {
+                    val base: String
+                }
 
-            @DIModule
-            interface ExtendingModule : BaseModule {
-                val value: String
-            }
-            """
+                @DIModule
+                interface ExtendingModule : BaseModule {
+                    val value: String
+                }
+                """
+            )
         )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
     }
 
     @Test
@@ -351,7 +357,7 @@ class DIModuleValidationTest {
     @Test
     fun duplicateMemberNameAcrossParents_isRejected() {
         assertRejected(
-            "is already declared in",
+            "declared in more than one unrelated interface",
             """
             package sample.validation
 
@@ -584,6 +590,70 @@ class DIModuleValidationTest {
             interface MixedOverloadModule {
                 fun get(): String
                 fun get(x: Int): String = "${'$'}x"
+            }
+            """
+        )
+    }
+
+    @Test
+    fun varPropertyOfPlainSupertype_isRejected() {
+        assertRejected(
+            "var properties are not supported",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            interface Api {
+                var name: String
+            }
+
+            @DIModule
+            interface Module1 : Api {
+                val extra: Int
+            }
+            """
+        )
+    }
+
+    @Test
+    fun twoParameterMemberOfPlainSupertype_isRejected() {
+        assertRejected(
+            "more than one parameter",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            interface Api {
+                fun combine(a: Int, b: Int): Int
+            }
+
+            @DIModule
+            interface Module1 : Api {
+                val extra: Int
+            }
+            """
+        )
+    }
+
+    @Test
+    fun overloadedMembersOfPlainSupertype_isRejected() {
+        assertRejected(
+            "Overloading is not supported",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            interface Api {
+                fun get(): String
+                fun get(x: Int): String
+            }
+
+            @DIModule
+            interface Module1 : Api {
+                val extra: Int
             }
             """
         )
