@@ -1,4 +1,3 @@
-
 dependencyResolutionManagement {
     @Suppress("UnstableApiUsage")
     repositories {
@@ -11,6 +10,10 @@ plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 
-include(":inara-runtime")
-
 rootProject.name = "Inara"
+
+enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
+
+include(":inara-runtime")
+include(":inara-processor")
+include(":inara-tests")

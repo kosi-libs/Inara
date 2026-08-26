@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.mavenPublish)
 }
 
 kotlin {
@@ -43,5 +44,12 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
+    }
+}
+
+mavenPublishing {
+    pom {
+        name = "inara-runtime"
+        description = "Inara runtime"
     }
 }
