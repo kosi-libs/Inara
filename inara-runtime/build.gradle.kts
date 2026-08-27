@@ -54,5 +54,12 @@ mavenPublishing {
     pom {
         name = "inara-runtime"
         description = "Inara runtime"
+        licenses {
+            license {
+                name = "MIT License"
+                url = "https://opensource.org/licenses/MIT"
+                distribution = "repo"
+            }
+        }
     }
 }
