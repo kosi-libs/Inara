@@ -469,8 +469,11 @@ class DIModuleValidationTest {
         )
     }
 
-    // Every rule above also applies to a member with a default implementation - it is still a
-    // bindable member, just with an optional Binding, so its shape must be just as constrained.
+    // Every rule above also applies to a member with a default implementation EXCEPT var/extension/
+    // generic (see defaultBodyMember_{varProperty,extension,generic}_isIgnored below): `Binding`
+    // can express none of those three regardless of default status, so a defaulted one is silently
+    // excluded from the bindable surface entirely rather than rejected. Every other rule still
+    // applies just as if the member were abstract.
 
     @Test
     fun defaultBodyMember_nonPublic_isRejected() {
@@ -491,41 +494,81 @@ class DIModuleValidationTest {
     }
 
     @Test
-    fun defaultBodyMember_extension_isRejected() {
-        assertRejected(
-            "Extension members are not supported",
-            """
-            package sample.validation
+    fun defaultBodyMember_extension_isIgnored() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
 
-            import org.kodein.di.inara.DIModule
+                import org.kodein.di.inara.DIModule
 
-            @DIModule
-            interface ExtensionDefaultModule {
-                fun String.shout(): String = uppercase()
-            }
-            """
+                @DIModule
+                interface ExtensionDefaultModule {
+                    fun String.shout(): String = uppercase()
+                }
+                """
+            )
         )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/validation", "GeneratedExtensionDefaultModule.kt")
+        assertTrue("shoutBinding" !in generated, generated)
+        assertTrue("shout" !in generated, generated)
     }
 
     @Test
-    fun defaultBodyMember_generic_isRejected() {
-        assertRejected(
-            "Generic members are not supported",
-            """
-            package sample.validation
+    fun defaultBodyMember_generic_isIgnored() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
 
-            import org.kodein.di.inara.DIModule
+                import org.kodein.di.inara.DIModule
 
-            @DIModule
-            interface GenericDefaultModule {
-                fun <T> identity(value: T): T = value
-            }
-            """
+                @DIModule
+                interface GenericDefaultModule {
+                    fun <T> identity(value: T): T = value
+                }
+                """
+            )
         )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/validation", "GeneratedGenericDefaultModule.kt")
+        assertTrue("identityBinding" !in generated, generated)
+        assertTrue("identity" !in generated, generated)
     }
 
     @Test
-    fun defaultBodyMember_varProperty_isRejected() {
+    fun defaultBodyMember_varProperty_isIgnored() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
+
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface VarDefaultModule {
+                    var value: String
+                        get() = "default"
+                        set(_) {}
+                }
+                """
+            )
+        )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/validation", "GeneratedVarDefaultModule.kt")
+        assertTrue("valueBinding" !in generated, generated)
+        assertTrue("value" !in generated, generated)
+    }
+
+    @Test
+    fun varProperty_getterOnlyDefault_isRejected() {
         assertRejected(
             "var properties are not supported",
             """
@@ -534,10 +577,47 @@ class DIModuleValidationTest {
             import org.kodein.di.inara.DIModule
 
             @DIModule
-            interface VarDefaultModule {
+            interface VarGetterOnlyModule {
                 var value: String
                     get() = "default"
+            }
+            """
+        )
+    }
+
+    @Test
+    fun varProperty_setterOnlyDefault_isRejected() {
+        assertRejected(
+            "var properties are not supported",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface VarSetterOnlyModule {
+                var value: String
                     set(_) {}
+            }
+            """
+        )
+    }
+
+    @Test
+    fun defaultedExtensionMemberNamedBinding_stillRejected() {
+        // The naming-identity rules stay unconditional even for an otherwise-liftable member: this
+        // one is liftable as an extension member with a default body, but its own name would still
+        // collide with the generated class's internal `<name>Binding` naming scheme.
+        assertRejected(
+            "may not end with 'Binding'",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface ExtensionNamedBindingModule {
+                val String.nameBinding: Int get() = length
             }
             """
         )

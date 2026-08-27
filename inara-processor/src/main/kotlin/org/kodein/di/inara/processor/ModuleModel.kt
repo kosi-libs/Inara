@@ -104,6 +104,19 @@ private fun KSClassDeclaration.isDIModule(): Boolean =
 private fun KSClassDeclaration.isComposedDIModule(): Boolean =
     hasAnnotation(COMPOSED_DI_MODULE_ANNOTATION)
 
+/**
+ * True for a `var` whose getter *and* setter both carry a body. Inara's `Binding` has no way to
+ * express a setter at all, so a `var` can never be bound regardless of default status - unlike the
+ * other liftable rules (see [parseMember]), it needs *both* accessors defaulted to be liftable: a
+ * `var` with only one accessor implemented still leaves the other abstract with no `Binding`-based
+ * way to satisfy it, so it stays rejected.
+ */
+private fun KSPropertyDeclaration.hasFullyDefaultAccessors(): Boolean {
+    val getterHasBody = getter?.let { Modifier.ABSTRACT !in it.modifiers } ?: false
+    val setterHasBody = setter?.let { Modifier.ABSTRACT !in it.modifiers } ?: false
+    return getterHasBody && setterHasBody
+}
+
 /** Direct interface supertypes, `@DIModule` or not, with `kotlin.Any` excluded. */
 private fun KSClassDeclaration.superInterfaces(): List<KSClassDeclaration> =
     superTypes.mapNotNull { superType ->
@@ -361,11 +374,23 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
      * the caret on [node] - the offending direct supertype reference for an inherited member, the
      * declaration itself for an own one - doesn't leave the reader guessing where the member
      * actually came from.
+     *
+     * A `var` (with both accessors defaulted, see [hasFullyDefaultAccessors]), an extension member,
+     * or a generic function is rejected only when it *lacks* a default implementation - `Binding`
+     * can't express any of the three regardless of default status (no setter, no extension
+     * receiver, no per-call type parameter), so a defaulted one is instead silently excluded from
+     * the module's bindable surface entirely: no `Binding` parameter, no override, `null` returned
+     * without an error. Once a member is excluded this way, the *structural* rules below it (member
+     * count, vararg, visibility) no longer apply either - Inara never touches the member, so they're
+     * irrelevant to it. The two naming-identity rules above stay unconditional regardless: a
+     * `Binding`-suffixed or `copy`-named member could still collide with the generated class's own
+     * naming scheme even while unbound.
      */
     fun parseMember(decl: KSDeclaration, owner: KSClassDeclaration, node: KSNode, isOwn: Boolean): MemberModel? {
         val name = decl.simpleName.asString()
         val prefix = if (isOwn) "" else "Member '$name' inherited from '${owner.simpleName.asString()}': "
         var valid = true
+        var skip = false
         fun fail(message: String) {
             reportError(prefix + message, node)
             valid = false
@@ -378,22 +403,41 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
         when (decl) {
             is KSPropertyDeclaration -> {
                 hasDefault = !decl.isAbstract()
-                if (decl.isMutable) fail("var properties are not supported: '$name'.")
-                if (decl.extensionReceiver != null) fail("Extension members are not supported: '$name'.")
-                if (decl.getVisibility() != Visibility.PUBLIC) fail("Non-public members are not supported: '$name'.")
+                when {
+                    !decl.isMutable -> Unit
+                    decl.hasFullyDefaultAccessors() -> skip = true
+                    else -> fail("var properties are not supported: '$name'.")
+                }
+                if (!skip && decl.extensionReceiver != null) {
+                    if (hasDefault) skip = true else fail("Extension members are not supported: '$name'.")
+                }
+                if (!skip && decl.getVisibility() != Visibility.PUBLIC) {
+                    fail("Non-public members are not supported: '$name'.")
+                }
             }
             is KSFunctionDeclaration -> {
                 hasDefault = !decl.isAbstract
-                if (decl.extensionReceiver != null) fail("Extension members are not supported: '$name'.")
-                if (decl.typeParameters.isNotEmpty()) fail("Generic members are not supported: '$name'.")
-                if (decl.getVisibility() != Visibility.PUBLIC) fail("Non-public members are not supported: '$name'.")
-                if (decl.parameters.size > 1) fail("Members with more than one parameter are not supported: '$name'.")
-                if (decl.parameters.singleOrNull()?.isVararg == true) fail("vararg parameters are not supported: '$name'.")
+                if (decl.extensionReceiver != null) {
+                    if (hasDefault) skip = true else fail("Extension members are not supported: '$name'.")
+                }
+                if (!skip && decl.typeParameters.isNotEmpty()) {
+                    if (hasDefault) skip = true else fail("Generic members are not supported: '$name'.")
+                }
+                if (!skip && decl.getVisibility() != Visibility.PUBLIC) {
+                    fail("Non-public members are not supported: '$name'.")
+                }
+                if (!skip && decl.parameters.size > 1) {
+                    fail("Members with more than one parameter are not supported: '$name'.")
+                }
+                if (!skip && decl.parameters.singleOrNull()?.isVararg == true) {
+                    fail("vararg parameters are not supported: '$name'.")
+                }
             }
             else -> return null
         }
 
         if (!valid) return null
+        if (skip) return null
         return buildMember(decl, moduleType, hasDefault)
     }
 
