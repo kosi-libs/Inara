@@ -14,13 +14,20 @@ interface NetworkModule {
     fun endpoint(path: String): String
 }
 
+@DIFactory(builds = LoginController::class, from = NetworkModule::class)
+object LoginControllerFactory
+
+// Thanks to @DIModule
 val network = NetworkModule(
     baseUrl = Binding.value("https://api.example.com"),
     httpClient = Binding.single { HttpClient(baseUrl) },
     endpoint = Binding.factory { path -> "$baseUrl/$path" },
 )
 
-network.endpoint("users")   // "https://api.example.com/users"
+val endpoint = network.endpoint("users")   // "https://api.example.com/users"
+
+// Thanks to @DIFactory
+val loginController = LoginController(network)
 ```
 
 No reflection. No service locator. No runtime graph. Just an interface, a generated implementation,
@@ -41,6 +48,7 @@ and a compiler that tells you when a dependency is missing.
 - [Extending non-module interfaces](#extending-non-module-interfaces)
 - [Ignored members](#ignored-members)
 - [Visibility and nesting](#visibility-and-nesting)
+- [Building plain classes](#building-plain-classes)
 - [Generated code reference](#generated-code-reference)
 - [Rules and diagnostics](#rules-and-diagnostics)
 - [Thread safety](#thread-safety)
@@ -570,6 +578,105 @@ val inner: Outer.Inner = Inner(label = Binding.value("inner"))
 
 ---
 
+## Building plain classes
+
+Everything so far builds a `@DIModule` interface itself. `@DIFactory` builds something else with it:
+a plain constructor-shaped function for a class that never references Inara at all. Annotate an
+`internal object` with `builds`/`from`, and the processor generates a top-level function that
+resolves every constructor argument off a module instance:
+
+```kotlin
+class UsersController(val httpClient: HttpClient, val endpoint: String)
+
+@DIFactory(builds = UsersController::class, from = NetworkModule::class)
+internal object UserControllerDIFactory {
+    fun NetworkModule.argEndpoint(): String = endpoint("users")
+}
+```
+
+generates
+
+```kotlin
+public fun UsersController(module: NetworkModule): UsersController = with(UserControllerDIFactory) {
+    UsersController(
+        httpClient = module.httpClient(),
+        endpoint = module.argEndpoint(),
+    )
+}
+```
+
+`UsersController` itself has no idea Inara exists — call the generated function like any other:
+
+```kotlin
+val controller = UsersController(network)   // `network` is a built NetworkModule
+```
+
+### Resolving constructor arguments
+
+Each constructor argument is resolved independently, in priority order:
+
+1. An `arg<Argument>` extension function declared on the annotated object — `fun
+   NetworkModule.argEndpoint(): String` resolves an argument named `endpoint`. This is the *only*
+   thing a `@DIFactory` object may declare; anything else is a compile error.
+2. Otherwise, a uniquely-typed member of `from` — `httpClient` above resolves automatically because
+   `NetworkModule.httpClient()` is the only member returning `HttpClient`, exactly.
+3. Failing an exact match, a uniquely-typed *assignable* (supertype) member.
+4. Otherwise, a compile error recommending the `arg` function to add.
+
+Because `arg<Argument>` is a reserved naming convention, a `@DIModule` member itself may not be named
+`arg` followed by an uppercase letter.
+
+### `suspend` arguments
+
+By default (`Suspend.Allow`), a `suspend` provider — an `arg` function or a `suspend` module member —
+is just as eligible as a non-`suspend` one, and the generated function itself becomes `suspend` if
+and only if an argument actually resolved to one:
+
+```kotlin
+class AsyncGreeter(val service: Service)
+
+@DIFactory(builds = AsyncGreeter::class, from = AsyncModule::class)
+internal object AsyncGreeterDIFactory
+```
+
+```kotlin
+// generated:
+public suspend fun AsyncGreeter(module: AsyncModule): AsyncGreeter = with(AsyncGreeterDIFactory) {
+    AsyncGreeter(
+        service = module.load(),   // AsyncModule.load() is a suspend member
+    )
+}
+```
+
+`suspend = Suspend.Forbid` excludes every `suspend` candidate from resolution entirely — a
+`suspend`-only argument becomes unresolvable rather than silently skipped — and the generated
+function is never `suspend`. `suspend = Suspend.Force` resolves exactly like `Allow` but always
+generates a `suspend` function, whether or not any provider actually is.
+
+### `constructorIndex` — building through a non-primary constructor
+
+By default `@DIFactory` calls `builds`'s primary constructor. `constructorIndex` selects a different
+one instead, in declaration order (`0` the primary, `1` the first secondary, `2` the second, …) —
+useful when the intended entry point isn't the primary constructor, e.g. a `private` primary paired
+with a public secondary:
+
+```kotlin
+class Greeter private constructor(val greeting: String, private val marker: Int) {
+    constructor(baseUrl: String) : this("Hello from $baseUrl", 0)
+}
+
+@DIFactory(builds = Greeter::class, from = NetworkModule::class, constructorIndex = 1)
+internal object GreeterDIFactory
+// generated: public fun Greeter(module: NetworkModule): Greeter = with(GreeterDIFactory) {
+//                Greeter(baseUrl = module.baseUrl)
+//            }
+```
+
+Only the selected constructor's parameters are resolved — every other constructor, including the
+primary, is ignored entirely, `arg<Argument>` name-matching included.
+
+---
+
 ## Thread safety
 
 `Binding.single` and `Binding.weakSingle` take a `SingleThreadSafety` mode:
@@ -613,7 +720,7 @@ after collection.
 
 | Module | Contents |
 | --- | --- |
-| `inara-runtime` | `Binding`, `SuspendBinding`, `@DIModule`. Multiplatform, `explicitApi()` enabled. |
+| `inara-runtime` | `Binding`, `SuspendBinding`, `@DIModule`, `@DIFactory`. Multiplatform, `explicitApi()` enabled. |
 | `inara-processor` | The KSP `SymbolProcessor`: `ModuleModel.kt` (parsing/validation) and `ModuleFileGenerator.kt` (KotlinPoet generation). |
 | `inara-tests` | Integration tests running the real processor through Gradle/KSP across every target. |
 
