@@ -1,5 +1,6 @@
 package org.kodein.di.inara.processor
 
+import com.google.devtools.ksp.getConstructors
 import com.google.devtools.ksp.getVisibility
 import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.symbol.ClassKind
@@ -36,6 +37,17 @@ private fun readSuspendMode(annotation: KSAnnotation): SuspendMode {
 }
 
 /**
+ * Reads `@DIFactory`'s `constructorIndex` argument - `0` (the default) selects `builds`'s primary
+ * constructor, `1` its first secondary, and so on. Same `arguments` -> `defaultArguments` fallback as
+ * [readSuspendMode]; an `Int`-typed argument needs no unwrapping.
+ */
+private fun readConstructorIndex(annotation: KSAnnotation): Int {
+    val arg = annotation.arguments.find { it.name?.asString() == "constructorIndex" }
+        ?: annotation.defaultArguments.find { it.name?.asString() == "constructorIndex" }
+    return arg?.value as? Int ?: 0
+}
+
+/**
  * Where a `@DIFactory`-generated constructor argument's value comes from: an `arg<Argument>`
  * extension function declared on the `@DIFactory` object itself, or a member of the `from` module
  * resolved automatically (see [parseFactory]).
@@ -51,7 +63,8 @@ internal sealed class ArgumentSource {
     internal data class ModuleFunction(val memberName: String) : ArgumentSource()
 }
 
-/** One argument of `builds`'s primary constructor, resolved to where its value comes from.
+/** One argument of `builds`'s selected constructor (see `constructorIndex`), resolved to where its
+ * value comes from.
  * [isSuspend] is true when the resolved provider - the arg-function, or the module member - is
  * itself `suspend`; always false for a [ArgumentSource.ModuleProperty] (a property getter can't be
  * `suspend`). */
@@ -62,7 +75,7 @@ internal data class FactoryArgumentModel(
 )
 
 /**
- * A `@DIFactory` object, parsed and every one of `builds`'s primary constructor arguments resolved.
+ * A `@DIFactory` object, parsed and every one of `builds`'s selected constructor's arguments resolved.
  *
  * [visibility] is `builds`'s own visibility, not the `@DIFactory` object's (which is always
  * `internal`, see [parseFactory]) - it drives whether the generated builder function is `internal`.
@@ -91,15 +104,15 @@ private fun argFunctionName(paramName: String): String = "arg${paramName.replace
 private fun sameType(a: KSType, b: KSType): Boolean = a.isAssignableFrom(b) && b.isAssignableFrom(a)
 
 /**
- * Validates [objDecl] against every `@DIFactory` rule, resolves every one of `builds`'s primary
- * constructor arguments, and builds a [FactoryModel] out of it.
+ * Validates [objDecl] against every `@DIFactory` rule, resolves every one of `builds`'s selected
+ * constructor's arguments (see `constructorIndex`), and builds a [FactoryModel] out of it.
  *
  * Every violation found is reported through [logger] before returning - so a single compilation
  * surfaces every problem at once, rather than one error per run. Returns `null` if the declaration
  * is invalid.
  *
  * Two shapes are explicitly unsupported and neither validated against nor specially handled: a
- * `vararg` parameter on `builds`'s primary constructor, and a generic `builds` class used as more
+ * `vararg` parameter on `builds`'s selected constructor, and a generic `builds` class used as more
  * than a raw type. Either surfaces as an ordinary Kotlin compile error in the generated file rather
  * than a dedicated diagnostic here.
  */
@@ -123,6 +136,7 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
         it.annotationType.resolve().declaration.qualifiedName?.asString() == DI_FACTORY_ANNOTATION
     }
     val suspendMode = readSuspendMode(annotation)
+    val constructorIndex = readConstructorIndex(annotation)
     val buildsArg = annotation.arguments.find { it.name?.asString() == "builds" }
     val fromArg = annotation.arguments.find { it.name?.asString() == "from" }
     val buildsDecl = (buildsArg?.value as? KSType)?.declaration as? KSClassDeclaration
@@ -149,9 +163,29 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
         reportError("The 'builds' class '$buildsName' must be public or internal.", objDecl)
         return null
     }
-    val ctor = buildsDecl.primaryConstructor
-    if (ctor == null || ctor.getVisibility() !in setOf(Visibility.PUBLIC, Visibility.INTERNAL)) {
-        reportError("The 'builds' class '$buildsName' must have a public or internal primary constructor.", objDecl)
+    // `getConstructors()` (declarations filtered to constructors) is documented to preserve lexical
+    // declaration order, and a class's primary constructor is always declared in its header, ahead
+    // of any secondary - so it naturally lands at index 0 without special-casing, matching
+    // `constructorIndex`'s "0 = primary, 1 = first secondary, ..." contract directly.
+    val constructors = buildsDecl.getConstructors().toList()
+    if (constructorIndex < 0 || constructorIndex >= constructors.size) {
+        reportError(
+            "'constructorIndex' is $constructorIndex, but the 'builds' class '$buildsName' has " +
+                "${constructors.size} constructor(s) - it must be between 0 and ${constructors.size - 1}.",
+            objDecl,
+        )
+        return null
+    }
+    val ctor = constructors[constructorIndex]
+    if (ctor.getVisibility() !in setOf(Visibility.PUBLIC, Visibility.INTERNAL)) {
+        reportError(
+            if (constructorIndex == 0) {
+                "The 'builds' class '$buildsName' must have a public or internal primary constructor."
+            } else {
+                "The 'builds' class '$buildsName' must have a public or internal constructor at index $constructorIndex."
+            },
+            objDecl,
+        )
         return null
     }
 
@@ -298,11 +332,19 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
         SuspendMode.FORCE -> true
     }
 
+    // The generated function calls `ctor` directly, so it can only be as visible as the more
+    // restrictive of `builds` and the selected constructor - a public class with an internal
+    // constructor (only reachable once a non-primary constructor can be selected) still needs an
+    // internal generated function, or the call wouldn't compile.
+    val visibility =
+        if (Visibility.INTERNAL in setOf(buildsDecl.getVisibility(), ctor.getVisibility())) Visibility.INTERNAL
+        else Visibility.PUBLIC
+
     return FactoryModel(
         factoryClassName = objDecl.toClassName(),
         buildsClassName = buildsDecl.toClassName(),
         fromClassName = fromDecl.toClassName(),
-        visibility = buildsDecl.getVisibility(),
+        visibility = visibility,
         arguments = arguments,
         isSuspend = isSuspend,
         originatingFiles = originatingFiles,

@@ -218,4 +218,137 @@ class DIFactoryTest {
         val generated = compilation.generatedSource("sample/factory", "GeneratedWrappedDIFactory.kt")
         assertTrue("computed = module.argComputed()," in generated, generated)
     }
+
+    @Test
+    fun defaultConstructorIndex_stillSelectsThePrimaryWhenSecondariesExist() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val greeting: String
+                val count: Int
+            }
+
+            class Greeter(val count: Int) {
+                constructor(greeting: String) : this(greeting.length)
+            }
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "GeneratedGreeterDIFactory.kt")
+        assertTrue("count = module.count," in generated, generated)
+    }
+
+    @Test
+    fun constructorIndexSelectsASecondaryConstructor() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val greeting: String
+                val count: Int
+            }
+
+            class Greeter(val count: Int) {
+                constructor(greeting: String) : this(greeting.length)
+            }
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, constructorIndex = 1)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "GeneratedGreeterDIFactory.kt")
+        assertTrue("greeting = module.greeting," in generated, generated)
+    }
+
+    @Test
+    fun constructorIndexSelectsASecondaryConstructor_argFunctionMatchesItsParameters() {
+        // 'label' only exists on the primary - resolving 'prefix'/'suffix' via arg functions proves
+        // constructorIndex = 1 really moved parameter resolution to the secondary.
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val base: String
+            }
+
+            class Greeter(val label: String) {
+                constructor(prefix: String, suffix: String) : this(prefix + suffix)
+            }
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, constructorIndex = 1)
+            internal object GreeterDIFactory {
+                fun GreetingModule.argPrefix(): String = base
+                fun GreetingModule.argSuffix(): String = "!"
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "GeneratedGreeterDIFactory.kt")
+        assertTrue("prefix = module.argPrefix()," in generated, generated)
+        assertTrue("suffix = module.argSuffix()," in generated, generated)
+        assertTrue("label" !in generated, generated)
+    }
+
+    @Test
+    fun internalSecondaryConstructorOnPublicClass_generatesInternalFunction() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val greeting: String
+            }
+
+            class Greeter(val count: Int) {
+                internal constructor(greeting: String) : this(greeting.length)
+            }
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, constructorIndex = 1)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "GeneratedGreeterDIFactory.kt")
+        assertTrue("internal fun Greeter(module: GreetingModule): Greeter" in generated, generated)
+    }
 }

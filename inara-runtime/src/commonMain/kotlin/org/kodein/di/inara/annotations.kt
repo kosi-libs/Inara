@@ -25,23 +25,34 @@ public annotation class DIModule(val composed: Boolean = false)
  * Marks an `internal object` for generating a plain constructor-shaped factory function - the way
  * to build a class that never references Inara at all from a `@DIModule` instance.
  *
- * The processor generates a top-level `fun <Builds>(module: <From>): <Builds>` resolving each of
- * [builds]'s primary constructor arguments off [from], in priority order: an `arg<Argument>`
- * extension function declared on the annotated object (`fun <From>.argFoo(): T`, for a constructor
- * argument named `foo`) if present, else a uniquely-typed member of [from] (an exact type match,
- * else a subtype match), else a compile error recommending the `arg` function to add. The object
- * may declare nothing but such `arg` functions - anything else is a compile error.
+ * The processor generates a top-level `fun <Builds>(module: <From>): <Builds>` resolving each
+ * argument of [builds]'s selected constructor (see [constructorIndex]) off [from], in priority
+ * order: an `arg<Argument>` extension function declared on the annotated object (`fun
+ * <From>.argFoo(): T`, for a constructor argument named `foo`) if present, else a uniquely-typed
+ * member of [from] (an exact type match, else a subtype match), else a compile error recommending
+ * the `arg` function to add. The object may declare nothing but such `arg` functions - anything else
+ * is a compile error.
  *
  * @param builds The class to construct. Must be a concrete (non-abstract, non-`sealed`) class with
- *   a public or internal primary constructor, itself public or internal.
+ *   the constructor selected by [constructorIndex] public or internal, itself public or internal.
  * @param from The `@DIModule` interface the generated function's `module` parameter is built from.
  * @param suspend Whether a `suspend` provider - a `suspend` `arg` function, or a `suspend` member
  *   of [from] - may be used to resolve an argument, and whether the generated function itself is
  *   `suspend`. See [Suspend].
+ * @param constructorIndex Which of [builds]'s constructors the generated function calls, in
+ *   declaration order: `0` (the default) is the primary constructor, `1` the first secondary
+ *   constructor, `2` the second, and so on. The selected constructor's parameters are what
+ *   `arg<Argument>` functions and automatic module-member matching resolve against - every other
+ *   constructor is ignored entirely.
  */
 @Retention(AnnotationRetention.BINARY)
 @Target(AnnotationTarget.CLASS)
-public annotation class DIFactory(val builds: KClass<*>, val from: KClass<*>, val suspend: Suspend = Suspend.Allow) {
+public annotation class DIFactory(
+    val builds: KClass<*>,
+    val from: KClass<*>,
+    val suspend: Suspend = Suspend.Allow,
+    val constructorIndex: Int = 0,
+) {
     /** How [DIFactory] treats a `suspend` provider for one of [builds]'s constructor arguments. */
     public enum class Suspend {
         /** No provider - `arg` function or module member - may be `suspend`; the generated

@@ -18,4 +18,17 @@ class ModuleFactoryTest {
         assertEquals("https://api.example.com", controller.httpClient.baseUrl)
         assertEquals("https://api.example.com/users", controller.endpoint)
     }
+
+    @Test
+    fun generatedFactory_usesThePublicSecondaryConstructor_whenThePrimaryIsPrivate() {
+        val network = NetworkModule(
+            baseUrl = Binding.value("https://api.example.com"),
+            httpClient = Binding.single { HttpClient(baseUrl) },
+            endpoint = Binding.factory { path -> "$baseUrl/$path" },
+        )
+
+        val greeter = Greeter(network)
+
+        assertEquals("Hello from https://api.example.com", greeter.greeting)
+    }
 }

@@ -504,4 +504,76 @@ class DIFactoryValidationTest {
             """
         )
     }
+
+    @Test
+    fun constructorIndexOutOfRange_isRejected() {
+        // Greeter has exactly one constructor (its primary) - index 1 is out of range.
+        assertRejected(
+            "'constructorIndex' is 1, but the 'builds' class 'Greeter' has 1 constructor(s)",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule { val greeting: String }
+
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, constructorIndex = 1)
+            internal object GreeterDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun constructorIndexNegative_isRejected() {
+        assertRejected(
+            "'constructorIndex' is -1",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule { val greeting: String }
+
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, constructorIndex = -1)
+            internal object GreeterDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun argFunctionNamedForPrimaryOnlyParam_isRejectedWhenSecondaryIsSelected() {
+        // 'label' only exists on Greeter's primary constructor - once constructorIndex = 1 selects
+        // the secondary ('prefix'), an arg function still named argLabel no longer matches anything.
+        assertRejected(
+            "does not match any constructor argument",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val base: String
+            }
+
+            class Greeter(val label: String) {
+                constructor(prefix: String) : this(prefix)
+            }
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, constructorIndex = 1)
+            internal object GreeterDIFactory {
+                fun GreetingModule.argLabel(): String = base
+            }
+            """
+        )
+    }
 }
