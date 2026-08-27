@@ -436,44 +436,56 @@ class DIModuleValidationTest {
     }
 
     @Test
-    fun twoParameterMember_isRejected() {
-        assertRejected(
-            "more than one parameter",
-            """
-            package sample.validation
+    fun twoParameterMember_isAllowed() {
+        // Members with more than one parameter are wrapped into a generated arguments data class -
+        // see DIModuleMultiParamTest for the generated shape.
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
 
-            import org.kodein.di.inara.DIModule
+                import org.kodein.di.inara.DIModule
 
-            @DIModule
-            interface TwoParamModule {
-                fun combine(a: Int, b: Int): Int
-            }
-            """
+                @DIModule
+                interface TwoParamModule {
+                    fun combine(a: Int, b: Int): Int
+                }
+                """
+            )
         )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
     }
 
     @Test
-    fun varargParameter_isRejected() {
-        assertRejected(
-            "vararg parameters are not supported",
-            """
-            package sample.validation
+    fun varargParameter_isAllowed() {
+        // A lone vararg parameter's Binding argument type is the array type directly - see
+        // DIModuleMultiParamTest for the generated shape.
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
 
-            import org.kodein.di.inara.DIModule
+                import org.kodein.di.inara.DIModule
 
-            @DIModule
-            interface VarargModule {
-                fun join(vararg parts: String): String
-            }
-            """
+                @DIModule
+                interface VarargModule {
+                    fun join(vararg parts: String): String
+                }
+                """
+            )
         )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
     }
 
     // Every rule above also applies to a member with a default implementation EXCEPT var/extension/
-    // generic (see defaultBodyMember_{varProperty,extension,generic}_isIgnored below): `Binding`
-    // can express none of those three regardless of default status, so a defaulted one is silently
-    // excluded from the bindable surface entirely rather than rejected. Every other rule still
-    // applies just as if the member were abstract.
+    // generic (see defaultBodyMember_{varProperty,extension,generic}_isIgnored below) and parameter
+    // count/vararg (unrestricted regardless of default status, see twoParameterMember_isAllowed /
+    // varargParameter_isAllowed above): `Binding` can express none of the first three regardless of
+    // default status, so a defaulted one is silently excluded from the bindable surface entirely
+    // rather than rejected; parameter count/vararg are simply never restricted. Every other rule
+    // still applies just as if the member were abstract.
 
     @Test
     fun defaultBodyMember_nonPublic_isRejected() {
@@ -624,37 +636,43 @@ class DIModuleValidationTest {
     }
 
     @Test
-    fun defaultBodyMember_vararg_isRejected() {
-        assertRejected(
-            "vararg parameters are not supported",
-            """
-            package sample.validation
+    fun defaultBodyMember_vararg_isAllowed() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
 
-            import org.kodein.di.inara.DIModule
+                import org.kodein.di.inara.DIModule
 
-            @DIModule
-            interface VarargDefaultModule {
-                fun join(vararg parts: String): String = parts.joinToString()
-            }
-            """
+                @DIModule
+                interface VarargDefaultModule {
+                    fun join(vararg parts: String): String = parts.joinToString()
+                }
+                """
+            )
         )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
     }
 
     @Test
-    fun defaultBodyMember_twoParameters_isRejected() {
-        assertRejected(
-            "more than one parameter",
-            """
-            package sample.validation
+    fun defaultBodyMember_twoParameters_isAllowed() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
 
-            import org.kodein.di.inara.DIModule
+                import org.kodein.di.inara.DIModule
 
-            @DIModule
-            interface TwoParamDefaultModule {
-                fun combine(a: Int, b: Int): Int = a + b
-            }
-            """
+                @DIModule
+                interface TwoParamDefaultModule {
+                    fun combine(a: Int, b: Int): Int = a + b
+                }
+                """
+            )
         )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
     }
 
     @Test
@@ -697,24 +715,27 @@ class DIModuleValidationTest {
     }
 
     @Test
-    fun twoParameterMemberOfPlainSupertype_isRejected() {
-        assertRejected(
-            "more than one parameter",
-            """
-            package sample.validation
+    fun twoParameterMemberOfPlainSupertype_isAllowed() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
 
-            import org.kodein.di.inara.DIModule
+                import org.kodein.di.inara.DIModule
 
-            interface Api {
-                fun combine(a: Int, b: Int): Int
-            }
+                interface Api {
+                    fun combine(a: Int, b: Int): Int
+                }
 
-            @DIModule
-            interface Module1 : Api {
-                val extra: Int
-            }
-            """
+                @DIModule
+                interface Module1 : Api {
+                    val extra: Int
+                }
+                """
+            )
         )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
     }
 
     @Test
@@ -734,6 +755,24 @@ class DIModuleValidationTest {
             @DIModule
             interface Module1 : Api {
                 val extra: Int
+            }
+            """
+        )
+    }
+
+    @Test
+    fun multiParamMembersWithSameCapitalizedName_isRejected() {
+        assertRejected(
+            "would all generate a 'Mult' arguments class",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface CollidingArgsModule {
+                fun mult(a: Int, b: Int): Int
+                fun Mult(a: Int, b: Int): Int
             }
             """
         )

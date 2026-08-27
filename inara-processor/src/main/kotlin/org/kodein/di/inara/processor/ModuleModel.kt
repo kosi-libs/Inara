@@ -20,10 +20,25 @@ internal const val DI_MODULE_ANNOTATION = "org.kodein.di.inara.DIModule"
 internal const val COMPOSED_DI_MODULE_ANNOTATION = "org.kodein.di.inara.ComposedDIModule"
 
 /**
+ * One parameter of a function member. [type] is the *element* type for a vararg parameter (as
+ * declared) - not the array type seen inside the function body - the generator derives the array
+ * type itself, since KSP doesn't expose it directly.
+ */
+internal data class ParameterModel(
+    val name: String,
+    val type: KSType,
+    val isVararg: Boolean,
+)
+
+/**
  * A single member of a `@DIModule` interface that will be backed by a `Binding`.
  *
- * A `val` property is modeled as a function with no parameter: [paramName] and [argType]
- * are null, and the corresponding `Binding`'s argument type is `Unit`.
+ * [parameters] is empty for a `val` property or a no-argument function - the corresponding
+ * `Binding`'s argument type is then `Unit`. A single non-vararg parameter's own type is used
+ * directly as the argument type; a single vararg parameter's argument type is the array type seen
+ * inside the function body (`Array<out T>`, or a dedicated primitive array like `IntArray`). Two or
+ * more parameters (vararg included) are wrapped into a generated `<Module>BindingArguments.<Name>`
+ * data class instead - see `ModuleFileGenerator`.
  *
  * [hasDefaultImplementation] is true when the member carries a body in the interface (a default
  * property getter or function body). Its `Binding` parameter is then optional and nullable:
@@ -33,8 +48,7 @@ internal data class MemberModel(
     val name: String,
     val isFunction: Boolean,
     val isSuspend: Boolean,
-    val paramName: String?,
-    val argType: KSType?,
+    val parameters: List<ParameterModel>,
     val returnType: KSType,
     val hasDefaultImplementation: Boolean,
 )
@@ -245,8 +259,7 @@ private fun buildMember(decl: KSDeclaration, moduleType: KSType, hasDefault: Boo
                 name = decl.simpleName.asString(),
                 isFunction = false,
                 isSuspend = false,
-                paramName = null,
-                argType = null,
+                parameters = emptyList(),
                 returnType = resolved.takeUnless { it.isError } ?: decl.type.resolve(),
                 hasDefaultImplementation = hasDefault,
             )
@@ -255,19 +268,29 @@ private fun buildMember(decl: KSDeclaration, moduleType: KSType, hasDefault: Boo
             // KSFunction's return/parameter types are nullable - null (like an error type) means
             // resolution failed for that part specifically, so each falls back independently.
             val signature = decl.asMemberOf(moduleType)
-            val param = decl.parameters.singleOrNull()
+            val parameters = decl.parameters.mapIndexed { index, p ->
+                val substituted = signature.parameterTypes.getOrNull(index)?.takeUnless { it.isError }
+                ParameterModel(
+                    name = p.name?.asString() ?: "arg$index",
+                    type = substituted ?: p.type.resolve(),
+                    isVararg = p.isVararg,
+                )
+            }
             MemberModel(
                 name = decl.simpleName.asString(),
                 isFunction = true,
                 isSuspend = Modifier.SUSPEND in decl.modifiers,
-                paramName = param?.name?.asString(),
-                argType = param?.let { p -> signature.parameterTypes.firstOrNull()?.takeUnless { it.isError } ?: p.type.resolve() },
+                parameters = parameters,
                 returnType = signature.returnType?.takeUnless { it.isError } ?: decl.returnType!!.resolve(),
                 hasDefaultImplementation = hasDefault,
             )
         }
         else -> error("Unsupported declaration kind for a @DIModule member: $decl")
     }
+
+/** The simple name of the nested `data class` a multi-parameter member's arguments are wrapped
+ * into, e.g. `Mult` for a member named `mult`. Meaningful only when `parameters.size > 1`. */
+internal fun MemberModel.argsClassSimpleName(): String = name.replaceFirstChar(Char::uppercaseChar)
 
 /**
  * Validates [classDecl] against every `@DIModule` rule and builds a [ModuleModel] out of it.
@@ -380,11 +403,15 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
      * can't express any of the three regardless of default status (no setter, no extension
      * receiver, no per-call type parameter), so a defaulted one is instead silently excluded from
      * the module's bindable surface entirely: no `Binding` parameter, no override, `null` returned
-     * without an error. Once a member is excluded this way, the *structural* rules below it (member
-     * count, vararg, visibility) no longer apply either - Inara never touches the member, so they're
-     * irrelevant to it. The two naming-identity rules above stay unconditional regardless: a
-     * `Binding`-suffixed or `copy`-named member could still collide with the generated class's own
-     * naming scheme even while unbound.
+     * without an error. Once a member is excluded this way, the *structural* rule below it
+     * (visibility) no longer applies either - Inara never touches the member, so it's irrelevant to
+     * it. The two naming-identity rules above stay unconditional regardless: a `Binding`-suffixed or
+     * `copy`-named member could still collide with the generated class's own naming scheme even
+     * while unbound.
+     *
+     * A function's parameter count and any vararg parameter are unrestricted - see [ParameterModel]
+     * and `ModuleFileGenerator` for how more than one parameter is wrapped into a generated data
+     * class.
      */
     fun parseMember(decl: KSDeclaration, owner: KSClassDeclaration, node: KSNode, isOwn: Boolean): MemberModel? {
         val name = decl.simpleName.asString()
@@ -425,12 +452,6 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
                 }
                 if (!skip && decl.getVisibility() != Visibility.PUBLIC) {
                     fail("Non-public members are not supported: '$name'.")
-                }
-                if (!skip && decl.parameters.size > 1) {
-                    fail("Members with more than one parameter are not supported: '$name'.")
-                }
-                if (!skip && decl.parameters.singleOrNull()?.isVararg == true) {
-                    fail("vararg parameters are not supported: '$name'.")
                 }
             }
             else -> return null
@@ -502,6 +523,18 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
                     classDecl,
                 )
             }
+        }
+    }
+
+    // Two multi-parameter members whose names capitalize to the same arguments-class name would
+    // generate the same nested data class twice.
+    for ((capitalized, group) in allMembers.filter { it.parameters.size > 1 }.groupBy { it.argsClassSimpleName() }) {
+        if (group.size > 1) {
+            reportError(
+                "Members " + group.map { it.name }.distinct().sorted().joinToString(", ") { "'$it'" } +
+                    " would all generate a '$capitalized' arguments class - rename one of them.",
+                classDecl,
+            )
         }
     }
 
