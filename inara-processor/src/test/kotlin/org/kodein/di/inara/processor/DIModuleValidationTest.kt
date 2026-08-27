@@ -198,7 +198,6 @@ class DIModuleValidationTest {
             """
             package sample.validation
 
-            import org.kodein.di.inara.ComposedDIModule
             import org.kodein.di.inara.DIModule
 
             @DIModule
@@ -212,7 +211,7 @@ class DIModuleValidationTest {
             @DIModule
             interface Module2 : BaseModule
 
-            @ComposedDIModule
+            @DIModule(composed = true)
             interface DiamondModule : Module1, Module2 {
                 val value: String
             }
@@ -258,9 +257,9 @@ class DIModuleValidationTest {
             """
             package sample.validation
 
-            import org.kodein.di.inara.ComposedDIModule
+            import org.kodein.di.inara.DIModule
 
-            @ComposedDIModule
+            @DIModule(composed = true)
             interface StandaloneModule {
                 val value: String
             }
@@ -276,7 +275,6 @@ class DIModuleValidationTest {
                 """
                 package sample.validation
 
-                import org.kodein.di.inara.ComposedDIModule
                 import org.kodein.di.inara.DIModule
 
                 @DIModule
@@ -284,7 +282,7 @@ class DIModuleValidationTest {
                     val a: String
                 }
 
-                @ComposedDIModule
+                @DIModule(composed = true)
                 interface Combined : Foo, other.Foo {
                     val b: Int
                 }
@@ -353,7 +351,6 @@ class DIModuleValidationTest {
             """
             package sample.validation
 
-            import org.kodein.di.inara.ComposedDIModule
             import org.kodein.di.inara.DIModule
 
             @DIModule
@@ -361,7 +358,7 @@ class DIModuleValidationTest {
                 val a: String
             }
 
-            @ComposedDIModule
+            @DIModule(composed = true)
             interface Combined : Foo {
                 val foo: Int
             }

@@ -419,14 +419,14 @@ body can reach members declared on the child.
 Diamond inheritance is allowed here: a shared ancestor reached through two paths contributes its
 members exactly once.
 
-### `@ComposedDIModule` — delegation
+### `composed = true` — delegation
 
 When you want to build a module from *already-built* parent modules rather than rebinding their
-members, annotate with `@ComposedDIModule`. It implies `@DIModule` and additionally generates a
-delegating implementation:
+members, pass `composed = true` to `@DIModule`. It additionally generates a delegating
+implementation:
 
 ```kotlin
-@ComposedDIModule
+@DIModule(composed = true)
 interface AppModule : GreeterModule, CounterModule {
     val label: String
 }
@@ -459,7 +459,7 @@ val withOtherGreeter = app.copy(greeterModule = differentGreeter)
 Parent parameter names are derived from the parent's name, decapitalized (`GreeterModule` →
 `greeterModule`).
 
-**Diamond inheritance is rejected for `@ComposedDIModule`.** Two delegates both supplying the same
+**Diamond inheritance is rejected for `composed = true`.** Two delegates both supplying the same
 ancestor's members is ambiguous in Kotlin, and the generator does not attempt to disambiguate it.
 Plain `@DIModule` has no such constraint.
 
@@ -502,8 +502,8 @@ interface StringConverterModule : Converter<String> { val prefix: String }
 // convert is bound as Binding<StringConverterModule, String, String>
 ```
 
-A plain supertype is never *delegable*: under `@ComposedDIModule` its members appear as own bindings
-in the delegated builder, alongside the module's own declarations.
+A plain supertype is never *delegable*: under `@DIModule(composed = true)` its members appear as own
+bindings in the delegated builder, alongside the module's own declarations.
 
 ---
 
@@ -613,7 +613,7 @@ after collection.
 
 | Module | Contents |
 | --- | --- |
-| `inara-runtime` | `Binding`, `SuspendBinding`, `@DIModule`, `@ComposedDIModule`. Multiplatform, `explicitApi()` enabled. |
+| `inara-runtime` | `Binding`, `SuspendBinding`, `@DIModule`. Multiplatform, `explicitApi()` enabled. |
 | `inara-processor` | The KSP `SymbolProcessor`: `ModuleModel.kt` (parsing/validation) and `ModuleFileGenerator.kt` (KotlinPoet generation). |
 | `inara-tests` | Integration tests running the real processor through Gradle/KSP across every target. |
 

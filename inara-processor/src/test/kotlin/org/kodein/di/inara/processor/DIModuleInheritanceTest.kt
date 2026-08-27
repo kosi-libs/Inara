@@ -14,7 +14,7 @@ import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
  *
  * A plain `@DIModule` child only gets the full implementation/builder pair (one binding per
  * member, inherited included, parameterized on the leaf module type) - see
- * [plainModule_generatesOnlyFullVariant]. A `@ComposedDIModule` child additionally gets a
+ * [plainModule_generatesOnlyFullVariant]. A `@DIModule(composed = true)` child additionally gets a
  * delegated implementation/builder pair (parent instances + own bindings) - see
  * [composedModule_generatesDelegatedAndFullVariants].
  */
@@ -27,7 +27,6 @@ class DIModuleInheritanceTest {
             """
             package sample.inheritance
 
-            import org.kodein.di.inara.ComposedDIModule
             import org.kodein.di.inara.DIModule
 
             class TypeA
@@ -40,7 +39,7 @@ class DIModuleInheritanceTest {
             @DIModule
             interface Module2 { val b: TypeB }
 
-            @ComposedDIModule
+            @DIModule(composed = true)
             interface Module3 : Module1, Module2 { val c: TypeC }
             """
         )

@@ -17,7 +17,6 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.ksp.toClassName
 
 internal const val DI_MODULE_ANNOTATION = "org.kodein.di.inara.DIModule"
-internal const val COMPOSED_DI_MODULE_ANNOTATION = "org.kodein.di.inara.ComposedDIModule"
 internal const val DI_FACTORY_ANNOTATION = "org.kodein.di.inara.DIFactory"
 
 /**
@@ -75,7 +74,7 @@ internal data class ParentModel(
  * `@DIModule` or plain alike - (deduplicated) - used only so the generator can register each of
  * their source files as an incremental-build dependency of the generated code.
  *
- * [isComposed] is true when the interface is annotated `@ComposedDIModule` - it alone decides
+ * [isComposed] is true when the interface is annotated `@DIModule(composed = true)` - it alone decides
  * whether the generator emits the delegated implementation/builder/`copy` set on top of the plain
  * one; [parents] is populated regardless of its value.
  */
@@ -111,14 +110,21 @@ private fun KSClassDeclaration.generatedBaseName(): String {
 private fun KSClassDeclaration.hasAnnotation(qualifiedName: String): Boolean =
     annotations.any { it.annotationType.resolve().declaration.qualifiedName?.asString() == qualifiedName }
 
-/** True for `@DIModule` *or* `@ComposedDIModule` - the latter implies the former. Also used by
- * `DIFactoryModel.kt` to validate a `@DIFactory`'s `from` argument. */
+/** True for `@DIModule`. Also used by `DIFactoryModel.kt` to validate a `@DIFactory`'s `from`
+ * argument. */
 internal fun KSClassDeclaration.isDIModule(): Boolean =
-    hasAnnotation(DI_MODULE_ANNOTATION) || hasAnnotation(COMPOSED_DI_MODULE_ANNOTATION)
+    hasAnnotation(DI_MODULE_ANNOTATION)
 
-/** True only for `@ComposedDIModule` - drives whether the delegated variant is generated. */
-private fun KSClassDeclaration.isComposedDIModule(): Boolean =
-    hasAnnotation(COMPOSED_DI_MODULE_ANNOTATION)
+/** True only for `@DIModule(composed = true)` - drives whether the delegated variant is
+ * generated. */
+private fun KSClassDeclaration.isComposedDIModule(): Boolean {
+    val annotation = annotations.firstOrNull {
+        it.annotationType.resolve().declaration.qualifiedName?.asString() == DI_MODULE_ANNOTATION
+    } ?: return false
+    val arg = annotation.arguments.find { it.name?.asString() == "composed" }
+        ?: annotation.defaultArguments.find { it.name?.asString() == "composed" }
+    return arg?.value as? Boolean ?: false
+}
 
 /**
  * True for a `var` whose getter *and* setter both carry a body. Inara's `Binding` has no way to
@@ -144,7 +150,7 @@ private fun KSClassDeclaration.superInterfaces(): List<KSClassDeclaration> =
  * [classDecl] plus every interface transitively reachable through its supertypes - `@DIModule` or
  * not, annotation doesn't matter here - keyed by qualified name. Used both to find the most
  * derived owner of a member reached through more than one path (see [resolveClosure]) and to
- * detect a shared ancestor pulled in by two different `@ComposedDIModule` delegate parents.
+ * detect a shared ancestor pulled in by two different `@DIModule(composed = true)` delegate parents.
  */
 private fun interfaceClosure(classDecl: KSClassDeclaration): Map<String, KSClassDeclaration> {
     val result = LinkedHashMap<String, KSClassDeclaration>()
@@ -191,7 +197,7 @@ private fun superDeclarationClosure(classDecl: KSClassDeclaration): List<Closure
  * [node] - the direct supertype reference on the interface being parsed, used to anchor a
  * diagnostic on the user's own code - and [ownFromPlain] - whether it was reached through a plain
  * supertype (needs its own binding, [ModuleModel.ownMembers] included) rather than a `@DIModule`
- * parent (satisfied by that parent's delegate in the `@ComposedDIModule` variant, [ModuleModel.allMembers]
+ * parent (satisfied by that parent's delegate in the `@DIModule(composed = true)` variant, [ModuleModel.allMembers]
  * only).
  */
 private data class Candidate(val closureDecl: ClosureDecl, val node: KSTypeReference, val ownFromPlain: Boolean)
@@ -309,7 +315,7 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
     }
 
     if (classDecl.classKind != ClassKind.INTERFACE) {
-        reportError("Only interfaces may be annotated with @DIModule / @ComposedDIModule.", classDecl)
+        reportError("Only interfaces may be annotated with @DIModule.", classDecl)
         return null
     }
 
@@ -321,7 +327,7 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
     }
 
     // Resolve direct supertypes into @DIModule parents (delegable - eligible for a
-    // @ComposedDIModule "Parent by parent" clause) and plain supertypes (their members are bound
+    // @DIModule(composed = true) "Parent by parent" clause) and plain supertypes (their members are bound
     // directly, like this interface's own). A supertype that doesn't resolve to an interface at
     // all (an unresolved/error reference) makes the rest of this function unsafe to run, so bail
     // out immediately after reporting every such supertype.
@@ -345,7 +351,7 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
 
     if (isComposed && parentDecls.isEmpty()) {
         reportError(
-            "@ComposedDIModule requires the interface to extend at least one @DIModule interface.",
+            "@DIModule(composed = true) requires the interface to extend at least one @DIModule interface.",
             classDecl,
         )
     }
@@ -354,7 +360,7 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
     // interface (annotated or not - a plain shared ancestor is just as ambiguous once delegated
     // twice). Kotlin would need an explicit override for that ancestor's members in the delegated
     // implementation, which the generator does not attempt, so this is rejected for a
-    // @ComposedDIModule interface outright. A plain @DIModule interface has no delegated
+    // @DIModule(composed = true) interface outright. A plain @DIModule interface has no delegated
     // implementation to trip over this, so a shared ancestor's members are simply folded in once
     // (see [resolveClosure]).
     if (isComposed && parentDecls.size > 1) {
@@ -475,7 +481,7 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
     val ownMembers = mutableListOf<MemberModel>()
 
     // Every member reachable through a @DIModule parent (allMembers only - satisfied by that
-    // parent's delegate in the @ComposedDIModule variant) or a plain supertype (both - nothing
+    // parent's delegate in the @DIModule(composed = true) variant) or a plain supertype (both - nothing
     // delegates it, so it needs its own binding just like an own declaration), resolved together
     // so an override spanning both groups, or a shared ancestor reached through either, collapses
     // to one candidate instead of a false clash.
@@ -522,7 +528,7 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
 
     // A @DIModule parent's parameter name may not collide with any member name in the
     // consolidated interface (checked last, since own member names are only known by now). Only
-    // relevant to a @ComposedDIModule interface - a plain @DIModule interface has no such parameter.
+    // relevant to a @DIModule(composed = true) interface - a plain @DIModule interface has no such parameter.
     if (isComposed) {
         for (parentModel in parentModels) {
             if (parentModel.paramName in nameOwners) {

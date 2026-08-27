@@ -151,7 +151,6 @@ class DIModulePlainSupertypeTest {
             """
             package sample.plain
 
-            import org.kodein.di.inara.ComposedDIModule
             import org.kodein.di.inara.DIModule
 
             interface Api {
@@ -163,7 +162,7 @@ class DIModulePlainSupertypeTest {
                 val a: Int
             }
 
-            @ComposedDIModule
+            @DIModule(composed = true)
             interface Module2 : Module1, Api {
                 val b: Int
             }

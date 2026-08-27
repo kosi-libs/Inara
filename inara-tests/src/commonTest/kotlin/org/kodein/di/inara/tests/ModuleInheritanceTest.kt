@@ -47,7 +47,7 @@ class ModuleInheritanceTest {
 
     @Test
     fun plainDIModuleChild_hasNoDelegatedBuilder_fullBuilderBindsInheritedMember() = runTest {
-        // InheritedModule is a plain @DIModule child of GreeterModule (not @ComposedDIModule), so
+        // InheritedModule is a plain @DIModule child of GreeterModule (not composed = true), so
         // there is no InheritedModule(greeterModule, suffix) delegated builder to call - only the
         // full one, taking a binding for every member, inherited included.
         val module = InheritedModule(
@@ -62,7 +62,7 @@ class ModuleInheritanceTest {
     @Test
     fun diamondInheritance_allowedForPlainDIModule_baseMemberBoundOnce() = runTest {
         // DiamondModule reaches DiamondBase through both DiamondLeft and DiamondRight; none of the
-        // four interfaces is @ComposedDIModule, so this is allowed and `base` is bound once.
+        // four interfaces is composed = true, so this is allowed and `base` is bound once.
         val module = DiamondModule(
             base = Binding.value("shared"),
             extra = Binding.value(7),

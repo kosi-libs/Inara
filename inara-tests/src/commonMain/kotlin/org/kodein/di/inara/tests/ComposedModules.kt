@@ -1,6 +1,5 @@
 package org.kodein.di.inara.tests
 
-import org.kodein.di.inara.ComposedDIModule
 import org.kodein.di.inara.DIModule
 
 public data class Greeting(public val text: String)
@@ -9,7 +8,7 @@ public data class Greeting(public val text: String)
  * Two leaf `@DIModule` interfaces and a `ComposedModule` extending both, exercising module
  * inheritance through real Gradle/KSP-generated code: `greet` (inherited, has a default body) and
  * `nextAsync` (inherited, `suspend`) both come from a parent, alongside `label`, declared directly
- * on `ComposedModule`. `ComposedModule` is `@ComposedDIModule` so it additionally gets the
+ * on `ComposedModule`. `ComposedModule` is `@DIModule(composed = true)` so it additionally gets the
  * delegated implementation/builder/`copy` set that takes already-built parent instances - see
  * [InheritedModule] for a plain `@DIModule` child, which doesn't.
  */
@@ -24,7 +23,7 @@ public interface AsyncCounterModule {
     public suspend fun nextAsync(): Int
 }
 
-@ComposedDIModule
+@DIModule(composed = true)
 public interface ComposedModule : GreeterModule, AsyncCounterModule {
     public val label: String
 }
@@ -32,7 +31,7 @@ public interface ComposedModule : GreeterModule, AsyncCounterModule {
 /**
  * A plain `@DIModule` child of [GreeterModule]: it inherits `greet`/`greeting` (bindable through
  * its own full builder, like any other member) but gets no `InheritedModule(greeterModule, ...)`
- * delegated builder and no parent-swapping `copy` overload, since it isn't `@ComposedDIModule`.
+ * delegated builder and no parent-swapping `copy` overload, since it isn't `composed = true`.
  */
 @DIModule
 public interface InheritedModule : GreeterModule {
@@ -42,7 +41,7 @@ public interface InheritedModule : GreeterModule {
 /**
  * A plain `@DIModule` diamond: [DiamondLeft] and [DiamondRight] both extend [DiamondBase], and
  * [DiamondModule] extends both. This is only legal because none of the four interfaces is
- * `@ComposedDIModule` - [DiamondBase]'s members are folded into [DiamondModule]'s full builder
+ * `@DIModule(composed = true)` - [DiamondBase]'s members are folded into [DiamondModule]'s full builder
  * exactly once, reached through either path.
  */
 @DIModule

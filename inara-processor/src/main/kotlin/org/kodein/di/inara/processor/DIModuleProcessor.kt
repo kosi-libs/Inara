@@ -10,9 +10,9 @@ import com.google.devtools.ksp.validate
 import com.squareup.kotlinpoet.ksp.writeTo
 
 /**
- * For every interface annotated with `@DIModule` or `@ComposedDIModule`, generates a private
- * `Binding`-backed implementation (`SuspendBinding` for `suspend` members) and a builder function
- * named after the interface. A `@ComposedDIModule` interface additionally gets a second, delegated
+ * For every interface annotated with `@DIModule`, generates a private `Binding`-backed
+ * implementation (`SuspendBinding` for `suspend` members) and a builder function named after the
+ * interface. A `@DIModule(composed = true)` interface additionally gets a second, delegated
  * implementation/builder/`copy` set for its `@DIModule` parents. The interface may extend any
  * interface, not just other `@DIModule` ones - a plain supertype's members are bound exactly like
  * the module's own. See [parseModule] for the validation rules and [generateModuleFile] for the
@@ -31,15 +31,7 @@ public class DIModuleProcessor(
     override fun process(resolver: Resolver): List<KSAnnotated> {
         val deferred = mutableListOf<KSAnnotated>()
 
-        // An interface annotated with both @DIModule and @ComposedDIModule shows up under both
-        // annotations - dedupe by qualified name (falling back to identity for anything that isn't
-        // a KSClassDeclaration, so it is at least never silently dropped) so it is processed once.
-        val moduleSymbols = (
-            resolver.getSymbolsWithAnnotation(DI_MODULE_ANNOTATION) +
-                resolver.getSymbolsWithAnnotation(COMPOSED_DI_MODULE_ANNOTATION)
-            ).distinctBy { (it as? KSClassDeclaration)?.qualifiedName?.asString() ?: it }
-
-        for (symbol in moduleSymbols) {
+        for (symbol in resolver.getSymbolsWithAnnotation(DI_MODULE_ANNOTATION)) {
             if (!symbol.validate()) {
                 deferred += symbol
                 continue
@@ -47,7 +39,7 @@ public class DIModuleProcessor(
 
             val classDecl = symbol as? KSClassDeclaration
             if (classDecl == null) {
-                logger.error("@DIModule / @ComposedDIModule can only be applied to interfaces.", symbol)
+                logger.error("@DIModule can only be applied to interfaces.", symbol)
                 continue
             }
 

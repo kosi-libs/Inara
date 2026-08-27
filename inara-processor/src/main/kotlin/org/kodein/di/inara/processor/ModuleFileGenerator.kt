@@ -135,16 +135,16 @@ private fun copyDelegateDefaultCode(member: MemberModel): CodeBlock {
 
 /**
  * Emits the implementation class(es), builder function(s), and `copy` function(s) for [model], as
- * described on `@DIModule` / `@ComposedDIModule`.
+ * described on `@DIModule`.
  *
- * A module that isn't `@ComposedDIModule` (see [ModuleModel.isComposed]) gets exactly one
+ * A module that isn't `@DIModule(composed = true)` (see [ModuleModel.isComposed]) gets exactly one
  * `Generated<Module>` implementation and one `<Module>(...)` builder taking a `Binding`
  * (`SuspendBinding` for a `suspend` member) per member in the consolidated interface - inherited
  * members included, so a `@DIModule` interface that merely extends other `@DIModule` interfaces
  * (without composing them) still gets a binding for everything it inherits, exactly as if those
  * members had been declared directly on it.
  *
- * A `@ComposedDIModule` interface gets two pairs instead:
+ * A `@DIModule(composed = true)` interface gets two pairs instead:
  * - `GeneratedDelegated<Module>` / a builder taking one already-built parent module instance per
  *   `@DIModule` parent (`Module1 by module1`-style delegation) plus a binding per member declared
  *   directly on this interface *or reachable through a plain (non-`@DIModule`) supertype* - a plain

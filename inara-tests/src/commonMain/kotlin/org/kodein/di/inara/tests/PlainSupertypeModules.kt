@@ -1,6 +1,5 @@
 package org.kodein.di.inara.tests
 
-import org.kodein.di.inara.ComposedDIModule
 import org.kodein.di.inara.DIModule
 
 /**
@@ -30,11 +29,11 @@ public interface StringConverterModule : Converter<String> {
 }
 
 /**
- * A `@ComposedDIModule` mixing a `@DIModule` parent ([CounterModule]) with a plain supertype
+ * A `@DIModule(composed = true)` mixing a `@DIModule` parent ([CounterModule]) with a plain supertype
  * ([Taggable]): the parent is delegable (`CounterModule by counterModule`), the plain supertype is
  * not - [Taggable]'s members are bound directly, alongside [label].
  */
-@ComposedDIModule
+@DIModule(composed = true)
 public interface TaggedCounterModule : CounterModule, Taggable {
     public val label: String
 }

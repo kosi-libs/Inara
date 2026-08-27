@@ -191,7 +191,6 @@ class DIModuleCopyTest {
             """
             package sample.copy.inheritance
 
-            import org.kodein.di.inara.ComposedDIModule
             import org.kodein.di.inara.DIModule
 
             class TypeA
@@ -204,7 +203,7 @@ class DIModuleCopyTest {
             @DIModule
             interface Module2 { val b: TypeB }
 
-            @ComposedDIModule
+            @DIModule(composed = true)
             interface Module3 : Module1, Module2 { val c: TypeC }
             """
         )
