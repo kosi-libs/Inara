@@ -18,6 +18,7 @@ import com.squareup.kotlinpoet.ksp.toClassName
 
 internal const val DI_MODULE_ANNOTATION = "org.kodein.di.inara.DIModule"
 internal const val COMPOSED_DI_MODULE_ANNOTATION = "org.kodein.di.inara.ComposedDIModule"
+internal const val DI_FACTORY_ANNOTATION = "org.kodein.di.inara.DIFactory"
 
 /**
  * One parameter of a function member. [type] is the *element* type for a vararg parameter (as
@@ -110,8 +111,9 @@ private fun KSClassDeclaration.generatedBaseName(): String {
 private fun KSClassDeclaration.hasAnnotation(qualifiedName: String): Boolean =
     annotations.any { it.annotationType.resolve().declaration.qualifiedName?.asString() == qualifiedName }
 
-/** True for `@DIModule` *or* `@ComposedDIModule` - the latter implies the former. */
-private fun KSClassDeclaration.isDIModule(): Boolean =
+/** True for `@DIModule` *or* `@ComposedDIModule` - the latter implies the former. Also used by
+ * `DIFactoryModel.kt` to validate a `@DIFactory`'s `from` argument. */
+internal fun KSClassDeclaration.isDIModule(): Boolean =
     hasAnnotation(DI_MODULE_ANNOTATION) || hasAnnotation(COMPOSED_DI_MODULE_ANNOTATION)
 
 /** True only for `@ComposedDIModule` - drives whether the delegated variant is generated. */
@@ -405,9 +407,10 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
      * the module's bindable surface entirely: no `Binding` parameter, no override, `null` returned
      * without an error. Once a member is excluded this way, the *structural* rule below it
      * (visibility) no longer applies either - Inara never touches the member, so it's irrelevant to
-     * it. The two naming-identity rules above stay unconditional regardless: a `Binding`-suffixed or
-     * `copy`-named member could still collide with the generated class's own naming scheme even
-     * while unbound.
+     * it. The three naming-identity rules above stay unconditional regardless: a `Binding`-suffixed,
+     * `copy`-named, or `arg<Argument>`-shaped member could still collide with the generated class's
+     * own naming scheme, or with a `@DIFactory` object's expected extension-function convention,
+     * even while unbound.
      *
      * A function's parameter count and any vararg parameter are unrestricted - see [ParameterModel]
      * and `ModuleFileGenerator` for how more than one parameter is wrapped into a generated data
@@ -425,6 +428,12 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
 
         if (name.endsWith("Binding")) fail("A @DIModule member name may not end with 'Binding': '$name'.")
         if (name == "copy") fail("A @DIModule member may not be named 'copy'.")
+        // A member shaped like `argFoo` would silently shadow a same-named @DIFactory extension
+        // function (`fun M.argFoo(): T`) - Kotlin always prefers a member over an extension, so the
+        // factory's function would never actually be called, with no error to say so.
+        if (name.startsWith("arg") && name.length > 3 && name[3].isUpperCase()) {
+            fail("A @DIModule member name may not start with 'arg' followed by an uppercase letter: '$name'.")
+        }
 
         val hasDefault: Boolean
         when (decl) {

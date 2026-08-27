@@ -17,6 +17,12 @@ import com.squareup.kotlinpoet.ksp.writeTo
  * interface, not just other `@DIModule` ones - a plain supertype's members are bound exactly like
  * the module's own. See [parseModule] for the validation rules and [generateModuleFile] for the
  * generated shape(s).
+ *
+ * For every `internal object` annotated with `@DIFactory`, generates a top-level builder function
+ * for the class it `builds`, resolving each of that class's primary constructor arguments off an
+ * instance of the `@DIModule` interface it's declared to build `from` - so the built class itself
+ * never needs to know Inara exists. See [parseFactory] for the resolution rules and
+ * [generateFactoryFile] for the generated shape.
  */
 public class DIModuleProcessor(
     private val codeGenerator: CodeGenerator,
@@ -28,12 +34,12 @@ public class DIModuleProcessor(
         // An interface annotated with both @DIModule and @ComposedDIModule shows up under both
         // annotations - dedupe by qualified name (falling back to identity for anything that isn't
         // a KSClassDeclaration, so it is at least never silently dropped) so it is processed once.
-        val symbols = (
+        val moduleSymbols = (
             resolver.getSymbolsWithAnnotation(DI_MODULE_ANNOTATION) +
                 resolver.getSymbolsWithAnnotation(COMPOSED_DI_MODULE_ANNOTATION)
             ).distinctBy { (it as? KSClassDeclaration)?.qualifiedName?.asString() ?: it }
 
-        for (symbol in symbols) {
+        for (symbol in moduleSymbols) {
             if (!symbol.validate()) {
                 deferred += symbol
                 continue
@@ -47,6 +53,22 @@ public class DIModuleProcessor(
 
             val model = parseModule(classDecl, logger) ?: continue
             generateModuleFile(model).writeTo(codeGenerator, aggregating = false)
+        }
+
+        for (symbol in resolver.getSymbolsWithAnnotation(DI_FACTORY_ANNOTATION)) {
+            if (!symbol.validate()) {
+                deferred += symbol
+                continue
+            }
+
+            val objDecl = symbol as? KSClassDeclaration
+            if (objDecl == null) {
+                logger.error("@DIFactory can only be applied to objects.", symbol)
+                continue
+            }
+
+            val model = parseFactory(objDecl, logger) ?: continue
+            generateFactoryFile(model).writeTo(codeGenerator, aggregating = false)
         }
 
         return deferred

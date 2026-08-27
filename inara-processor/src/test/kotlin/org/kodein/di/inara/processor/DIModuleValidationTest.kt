@@ -57,6 +57,46 @@ class DIModuleValidationTest {
     }
 
     @Test
+    fun memberNameShapedLikeArgFunction_isRejected() {
+        // A member named `argFoo` would silently shadow a same-named @DIFactory extension function
+        // (`fun M.argFoo(): T`) - Kotlin always prefers a member over an extension.
+        assertRejected(
+            "may not start with 'arg' followed by an uppercase letter",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface BadNameModule {
+                val argFoo: String
+            }
+            """
+        )
+    }
+
+    @Test
+    fun memberNamedArgument_isAllowed() {
+        // "argument" is fine - only "arg" followed immediately by an UPPERCASE letter is rejected.
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
+
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface OkNameModule {
+                    val argument: String
+                }
+                """
+            )
+        )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+    }
+
+    @Test
     fun memberNamedCopy_propertyIsRejected() {
         assertRejected(
             "may not be named 'copy'",

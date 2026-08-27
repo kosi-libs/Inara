@@ -1,5 +1,7 @@
 package org.kodein.di.inara
 
+import kotlin.reflect.KClass
+
 /**
  * Marks an interface for `Binding`-backed implementation generation.
  *
@@ -27,6 +29,10 @@ public annotation class DIModule
 @Retention(AnnotationRetention.BINARY)
 @Target(AnnotationTarget.CLASS)
 public annotation class ComposedDIModule
+
+@Retention(AnnotationRetention.BINARY)
+@Target(AnnotationTarget.CLASS)
+public annotation class DIFactory(val builds: KClass<*>, val from: KClass<*>)
 
 @RequiresOptIn
 @Retention(AnnotationRetention.BINARY)
