@@ -15,7 +15,7 @@ interface NetworkModule {
 }
 
 @DIFactory(builds = LoginController::class, from = NetworkModule::class)
-object LoginControllerFactory
+internal object LoginControllerFactory
 
 // Thanks to @DIModule
 val network = NetworkModule(
@@ -64,6 +64,11 @@ and a compiler that tells you when a dependency is missing.
 There is no separate "component" type, no qualifier annotations, no `get<T>()` lookups. Consumers
 call `module.httpClient()` — a normal method on a normal interface.
 
+**Opinionated, by design.** No global context, no mutable context, and business code is always
+independent from the DI layer — it has no notion that Inara even exists.
+[`@DIFactory`](#building-plain-classes) takes that further still, generating a class with zero
+imports from Inara at all.
+
 **Wiring is a value, not a configuration language.** A module instance is built by calling a
 generated function with one `Binding` per member. Bindings are ordinary values you can pass around,
 store, and swap.
@@ -89,6 +94,10 @@ suspend fun token(): Token   // bound with SuspendBinding.single { authClient.fe
 
 **Overriding is first-class.** Every module gets generated `copy(...)` overloads, so building a test
 variant means overriding one member and inheriting the rest.
+
+**Multiplatform, with no platform-specific surprises.** Inara targets every platform it supports and
+behaves **exactly** the same on each of them — the sole exception is the JS/Wasm targets, where
+thread synchronization is a no-op, since there is no thread to synchronize.
 
 ---
 
