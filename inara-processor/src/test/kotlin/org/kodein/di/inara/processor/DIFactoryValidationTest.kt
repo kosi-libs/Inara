@@ -292,25 +292,51 @@ class DIFactoryValidationTest {
     }
 
     @Test
-    fun suspendArgFunction_isRejected() {
+    fun suspendArgFunctionUnderForbid_isRejected() {
         assertRejected(
             "may not be 'suspend'",
             """
             package sample.factory
 
             import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIFactory.Suspend
             import org.kodein.di.inara.DIModule
 
             @DIModule
             interface GreetingModule { val greeting: String }
             class Greeter(val greeting: String)
 
-            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, suspend = Suspend.Forbid)
             internal object GreeterDIFactory {
                 suspend fun GreetingModule.argGreeting(): String = greeting
             }
             """
         )
+    }
+
+    @Test
+    fun suspendArgFunctionUnderDefaultAllow_isAccepted() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Factory.kt",
+                """
+                package sample.factory
+
+                import org.kodein.di.inara.DIFactory
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface GreetingModule { val greeting: String }
+                class Greeter(val greeting: String)
+
+                @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+                internal object GreeterDIFactory {
+                    suspend fun GreetingModule.argGreeting(): String = greeting
+                }
+                """
+            )
+        )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
     }
 
     @Test
@@ -423,6 +449,57 @@ class DIFactoryValidationTest {
             class Greeter(val greeting: String)
 
             @DIFactory(builds = Greeter::class, from = EmptyModule::class)
+            internal object GreeterDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun forbid_onlySuspendCandidateAvailable_isRejectedAsUnresolvable() {
+        // Suspend.Forbid excludes a suspend module member from the candidate pool entirely, rather
+        // than resolving it and then rejecting it - so this falls into the same "cannot resolve,
+        // add an arg function" diagnostic as any other unresolvable argument.
+        assertRejected(
+            "Cannot resolve argument",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIFactory.Suspend
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface TokenModule {
+                suspend fun token(): String
+            }
+            class Session(val token: String)
+
+            @DIFactory(builds = Session::class, from = TokenModule::class, suspend = Suspend.Forbid)
+            internal object SessionDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun allow_ambiguousBetweenSuspendAndNonSuspendCandidates_isRejected() {
+        // A suspend candidate is now just as eligible as a non-suspend one under Suspend.Allow, so
+        // two exact-type matches - one of each - are ambiguous exactly like any other pair.
+        assertRejected(
+            "is ambiguous",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface MixedModule {
+                suspend fun suspendGreeting(): String
+                val plainGreeting: String
+            }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = MixedModule::class)
             internal object GreeterDIFactory
             """
         )

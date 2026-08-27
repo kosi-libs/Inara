@@ -123,7 +123,10 @@ class DIFactoryTest {
     }
 
     @Test
-    fun suspendModuleMember_isNotACandidate_requiresArgFunction() {
+    fun argFunctionPriority_winsOverAnEligibleSuspendModuleMember() {
+        // An explicit arg-function always wins over auto-resolution, whether or not the module
+        // member it would otherwise resolve to is itself suspend - see the DIFactorySuspendTest
+        // for suspend-specific candidate-pool behavior.
         val source = SourceFile.kotlin(
             "Factory.kt",
             """

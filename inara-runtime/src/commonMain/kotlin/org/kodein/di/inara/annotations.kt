@@ -32,7 +32,13 @@ public annotation class ComposedDIModule
 
 @Retention(AnnotationRetention.BINARY)
 @Target(AnnotationTarget.CLASS)
-public annotation class DIFactory(val builds: KClass<*>, val from: KClass<*>)
+public annotation class DIFactory(val builds: KClass<*>, val from: KClass<*>, val suspend: Suspend = Suspend.Allow) {
+    public enum class Suspend {
+        Forbid,
+        Allow,
+        Force,
+    }
+}
 
 @RequiresOptIn
 @Retention(AnnotationRetention.BINARY)

@@ -3,6 +3,7 @@ package org.kodein.di.inara.processor
 import com.google.devtools.ksp.getVisibility
 import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.symbol.ClassKind
+import com.google.devtools.ksp.symbol.KSAnnotation
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSFile
 import com.google.devtools.ksp.symbol.KSFunctionDeclaration
@@ -12,6 +13,27 @@ import com.google.devtools.ksp.symbol.Modifier
 import com.google.devtools.ksp.symbol.Visibility
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.ksp.toClassName
+
+/** Mirrors `org.kodein.di.inara.DIFactory.Suspend` - read from the annotation via [readSuspendMode]
+ * since the processor has no compile-time dependency on `inara-runtime`'s actual enum class. */
+internal enum class SuspendMode { FORBID, ALLOW, FORCE }
+
+/**
+ * Reads `@DIFactory`'s `suspend` argument. Per `KSValueArgument.value`'s documented contract, an
+ * enum-typed annotation argument surfaces as a `KSClassDeclaration` (the entry) - reading its
+ * simple name avoids depending on exactly which `ClassKind` KSP reports for it. Falls back from
+ * `arguments` to `defaultArguments` to cover whichever of the two actually carries an unspecified,
+ * defaulted argument.
+ */
+private fun readSuspendMode(annotation: KSAnnotation): SuspendMode {
+    val arg = annotation.arguments.find { it.name?.asString() == "suspend" }
+        ?: annotation.defaultArguments.find { it.name?.asString() == "suspend" }
+    return when ((arg?.value as? KSClassDeclaration)?.simpleName?.asString()) {
+        "Forbid" -> SuspendMode.FORBID
+        "Force" -> SuspendMode.FORCE
+        else -> SuspendMode.ALLOW // "Allow", or the argument is missing/unrecognized
+    }
+}
 
 /**
  * Where a `@DIFactory`-generated constructor argument's value comes from: an `arg<Argument>`
@@ -29,10 +51,14 @@ internal sealed class ArgumentSource {
     internal data class ModuleFunction(val memberName: String) : ArgumentSource()
 }
 
-/** One argument of `builds`'s primary constructor, resolved to where its value comes from. */
+/** One argument of `builds`'s primary constructor, resolved to where its value comes from.
+ * [isSuspend] is true when the resolved provider - the arg-function, or the module member - is
+ * itself `suspend`; always false for a [ArgumentSource.ModuleProperty] (a property getter can't be
+ * `suspend`). */
 internal data class FactoryArgumentModel(
     val paramName: String,
     val source: ArgumentSource,
+    val isSuspend: Boolean,
 )
 
 /**
@@ -40,6 +66,11 @@ internal data class FactoryArgumentModel(
  *
  * [visibility] is `builds`'s own visibility, not the `@DIFactory` object's (which is always
  * `internal`, see [parseFactory]) - it drives whether the generated builder function is `internal`.
+ *
+ * [isSuspend] drives whether the generated builder function itself is `suspend` - see
+ * [SuspendMode]: always `false` under `Suspend.Forbid` (structurally, since no `suspend` provider
+ * is ever resolved under that mode), true when any resolved argument is under `Suspend.Allow`, and
+ * unconditionally `true` under `Suspend.Force`.
  */
 internal data class FactoryModel(
     val factoryClassName: ClassName,
@@ -47,6 +78,7 @@ internal data class FactoryModel(
     val fromClassName: ClassName,
     val visibility: Visibility,
     val arguments: List<FactoryArgumentModel>,
+    val isSuspend: Boolean,
     val originatingFiles: List<KSFile>,
 )
 
@@ -90,6 +122,7 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
     val annotation = objDecl.annotations.first {
         it.annotationType.resolve().declaration.qualifiedName?.asString() == DI_FACTORY_ANNOTATION
     }
+    val suspendMode = readSuspendMode(annotation)
     val buildsArg = annotation.arguments.find { it.name?.asString() == "builds" }
     val fromArg = annotation.arguments.find { it.name?.asString() == "from" }
     val buildsDecl = (buildsArg?.value as? KSType)?.declaration as? KSClassDeclaration
@@ -136,8 +169,9 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
     val ctorParams = ctor.parameters.associate { p -> p.name!!.asString() to p.type.resolve() }
 
     // Every declaration in the object must be a well-shaped `fun M.arg<Argument>(): T` - collect
-    // the valid ones (paramName -> function name) and reject anything else.
-    val argFunctions = mutableMapOf<String, String>()
+    // the valid ones (paramName -> the function itself, so its `suspend`-ness can be read later)
+    // and reject anything else.
+    val argFunctions = mutableMapOf<String, KSFunctionDeclaration>()
     for (decl in objDecl.declarations) {
         // `declarations` includes the object's own synthetic no-arg constructor - not a real
         // member, skip it silently rather than rejecting it as an invalid one.
@@ -171,8 +205,8 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
             )
             continue
         }
-        if (Modifier.SUSPEND in fn.modifiers) {
-            reportError("'$name' may not be 'suspend'.", fn)
+        if (suspendMode == SuspendMode.FORBID && Modifier.SUSPEND in fn.modifiers) {
+            reportError("'$name' may not be 'suspend': 'suspend' is 'Suspend.Forbid' on '${objDecl.simpleName.asString()}'.", fn)
             continue
         }
         if (fn.parameters.isNotEmpty()) {
@@ -192,24 +226,32 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
             )
             continue
         }
-        argFunctions[paramName] = name
+        argFunctions[paramName] = fn
     }
 
     // Every constructor argument must be uniquely resolvable: an arg function declared above, else
     // a unique exactly-typed module member, else a unique assignable-typed module member, else an
-    // error.
-    val candidates = fromModel.allMembers.filter { it.parameters.isEmpty() && !it.isSuspend }
+    // error. Under Suspend.Forbid, a suspend candidate is excluded here entirely (rather than
+    // resolved and then rejected) - the same exclusion already applied to arg-functions above, so a
+    // resolved FactoryArgumentModel can never end up suspend when the mode is Forbid.
+    val candidates = fromModel.allMembers.filter {
+        it.parameters.isEmpty() && (suspendMode != SuspendMode.FORBID || !it.isSuspend)
+    }
     val arguments = mutableListOf<FactoryArgumentModel>()
     for ((paramName, paramType) in ctorParams) {
-        val resolvedArgFunctionName = argFunctions[paramName]
-        if (resolvedArgFunctionName != null) {
-            arguments += FactoryArgumentModel(paramName, ArgumentSource.FactoryFunction(resolvedArgFunctionName))
+        val resolvedArgFunction = argFunctions[paramName]
+        if (resolvedArgFunction != null) {
+            arguments += FactoryArgumentModel(
+                paramName,
+                ArgumentSource.FactoryFunction(resolvedArgFunction.simpleName.asString()),
+                isSuspend = Modifier.SUSPEND in resolvedArgFunction.modifiers,
+            )
             continue
         }
 
         val exact = candidates.filter { sameType(it.returnType, paramType) }
         if (exact.size == 1) {
-            arguments += FactoryArgumentModel(paramName, exact.single().toArgumentSource())
+            arguments += exact.single().toFactoryArgumentModel(paramName)
             continue
         }
         if (exact.size > 1) {
@@ -223,7 +265,7 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
 
         val assignable = candidates.filter { paramType.isAssignableFrom(it.returnType) }
         if (assignable.size == 1) {
-            arguments += FactoryArgumentModel(paramName, assignable.single().toArgumentSource())
+            arguments += assignable.single().toFactoryArgumentModel(paramName)
             continue
         }
         if (assignable.size > 1) {
@@ -250,15 +292,24 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
         fromDecl.containingFile,
     ) + fromModel.ancestorDeclarations.mapNotNull { it.containingFile }
 
+    val isSuspend = when (suspendMode) {
+        SuspendMode.FORBID -> false
+        SuspendMode.ALLOW -> arguments.any { it.isSuspend }
+        SuspendMode.FORCE -> true
+    }
+
     return FactoryModel(
         factoryClassName = objDecl.toClassName(),
         buildsClassName = buildsDecl.toClassName(),
         fromClassName = fromDecl.toClassName(),
         visibility = buildsDecl.getVisibility(),
         arguments = arguments,
+        isSuspend = isSuspend,
         originatingFiles = originatingFiles,
     )
 }
 
-private fun MemberModel.toArgumentSource(): ArgumentSource =
-    if (isFunction) ArgumentSource.ModuleFunction(name) else ArgumentSource.ModuleProperty(name)
+private fun MemberModel.toFactoryArgumentModel(paramName: String): FactoryArgumentModel {
+    val source = if (isFunction) ArgumentSource.ModuleFunction(name) else ArgumentSource.ModuleProperty(name)
+    return FactoryArgumentModel(paramName, source, isSuspend = isSuspend)
+}

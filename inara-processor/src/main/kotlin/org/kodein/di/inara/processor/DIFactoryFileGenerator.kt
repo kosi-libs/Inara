@@ -36,6 +36,9 @@ private fun buildFactoryFunction(model: FactoryModel): FunSpec {
     if (model.visibility == Visibility.INTERNAL) {
         funBuilder.addModifiers(KModifier.INTERNAL)
     }
+    if (model.isSuspend) {
+        funBuilder.addModifiers(KModifier.SUSPEND)
+    }
     funBuilder.addParameter("module", model.fromClassName)
 
     val constructorCall = CodeBlock.builder()
