@@ -39,7 +39,7 @@ class DIModuleMemberSelectionTest {
         val generated = compilation.generatedSource("sample/selection", "GeneratedDefaultBodyModule.kt")
         assertTrue("nameBinding" in generated, generated)
         assertTrue(
-            "private val greetingBinding: Binding<DefaultBodyModule, Unit, String>?" in generated,
+            "public val greetingBinding: Binding<DefaultBodyModule, Unit, String>?" in generated,
             generated,
         )
         assertTrue("override fun greeting" in generated, generated)
@@ -72,13 +72,13 @@ class DIModuleMemberSelectionTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/selection", "GeneratedSuspendModule.kt")
-        assertTrue("private val nameBinding: Binding<SuspendModule, Unit, String>" in generated, generated)
+        assertTrue("public val nameBinding: Binding<SuspendModule, Unit, String>" in generated, generated)
         assertTrue(
-            "private val loadDataBinding: SuspendBinding<SuspendModule, Unit, String>" in generated,
+            "public val loadDataBinding: SuspendBinding<SuspendModule, Unit, String>" in generated,
             generated,
         )
         assertTrue(
-            "private val loadKeyedBinding: SuspendBinding<SuspendModule, String, String>" in generated,
+            "public val loadKeyedBinding: SuspendBinding<SuspendModule, String, String>" in generated,
             generated,
         )
         assertTrue("override suspend fun loadData(): String" in generated, generated)
@@ -110,7 +110,7 @@ class DIModuleMemberSelectionTest {
 
         val generated = compilation.generatedSource("sample/selection", "GeneratedSuspendDefaultModule.kt")
         assertTrue(
-            "private val loadDataBinding: SuspendBinding<SuspendDefaultModule, Unit, String>?" in generated,
+            "public val loadDataBinding: SuspendBinding<SuspendDefaultModule, Unit, String>?" in generated,
             generated,
         )
         assertTrue(

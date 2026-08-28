@@ -46,16 +46,18 @@ class DIModuleCopyTest {
         assertTrue("public fun NetworkModule.copy(): NetworkModule = this" in generated, generated)
 
         assertTrue("@OptIn(InternalDIBindings::class)" in generated, generated)
+        // Each parameter defaults to the receiver's own stored binding when it's the generated
+        // implementation, falling back to a current-value delegate for any other implementation.
         assertTrue(
-            "baseUrl: Binding<NetworkModule, Unit, String> = BindingImpls.Delegate { this@copy.baseUrl }" in generated,
+            "baseUrl: Binding<NetworkModule, Unit, String> = if (this@copy is GeneratedNetworkModule) this@copy.baseUrlBinding else BindingImpls.Delegate { this@copy.baseUrl }" in generated,
             generated,
         )
         assertTrue(
-            "httpClient: Binding<NetworkModule, Unit, HttpClient> = BindingImpls.Delegate { this@copy.httpClient() }" in generated,
+            "httpClient: Binding<NetworkModule, Unit, HttpClient> = if (this@copy is GeneratedNetworkModule) this@copy.httpClientBinding else BindingImpls.Delegate { this@copy.httpClient() }" in generated,
             generated,
         )
         assertTrue(
-            "context: Binding<NetworkModule, Int, Context> = BindingImpls.Delegate { this@copy.context(it) }" in generated,
+            "context: Binding<NetworkModule, Int, Context> = if (this@copy is GeneratedNetworkModule) this@copy.contextBinding else BindingImpls.Delegate { this@copy.context(it) }" in generated,
             generated,
         )
         assertTrue("baseUrlBinding = baseUrl" in generated, generated)
@@ -87,7 +89,7 @@ class DIModuleCopyTest {
     }
 
     @Test
-    fun defaultBodyMember_copyParameterStaysNullableAndDefaultsToNull() {
+    fun defaultBodyMember_copyParameterStaysNullableAndPassesTheStoredBindingThrough() {
         val source = SourceFile.kotlin(
             "DefaultsModule.kt",
             """
@@ -108,25 +110,25 @@ class DIModuleCopyTest {
 
         val generated = compilation.generatedSource("sample/copy", "GeneratedDefaultsModule.kt")
 
-        // name (no default implementation): frozen to its current value.
+        // name (no default implementation): its parameter defaults to the receiver's stored
+        // binding, so omitting it changes nothing - even a not-yet-resolved single/multiplex keeps
+        // its memo. A non-generated implementation falls back to a current-value delegate.
         assertTrue(
-            "name: Binding<DefaultsModule, Unit, String> = BindingImpls.Delegate { this@copy.name }" in generated,
+            "name: Binding<DefaultsModule, Unit, String> = if (this@copy is GeneratedDefaultsModule) this@copy.nameBinding else BindingImpls.Delegate { this@copy.name }" in generated,
             generated,
         )
 
-        // greeting (default implementation): same nullable-parameter-defaulting-to-null shape as
-        // the builder function, so an omitted override still re-runs the interface's default body
-        // - now against the *new* module, so it sees `name` above if that's also overridden in the
-        // same call - rather than freezing the value it produced on the old module.
-        // Appears twice: once as the builder function's parameter, once as the copy function's.
-        assertEquals(
-            2,
-            Regex(Regex.escape("greeting: Binding<DefaultsModule, Unit, String>? = null")).findAll(generated).count(),
+        // greeting (default implementation): parameter is still nullable so a caller can pass an
+        // explicit `null` to force the interface's own body back. Its default is the receiver's
+        // stored binding, which is itself `null` when the member was never bound - the body then
+        // re-runs against the *new* module, seeing `name` if that's overridden in the same call.
+        assertTrue(
+            "greeting: Binding<DefaultsModule, Unit, String>? = if (this@copy is GeneratedDefaultsModule) this@copy.greetingBinding else BindingImpls.Delegate { this@copy.greeting() }" in generated,
             generated,
         )
 
-        // No BindingImpls.Delegate is ever built for `greeting` itself.
-        assertTrue("this@copy.greeting()" !in generated, generated)
+        // The builder function's parameter for a default-body member is unchanged: `? = null`.
+        assertTrue("greeting: Binding<DefaultsModule, Unit, String>? = null" in generated, generated)
     }
 
     @Test
@@ -151,7 +153,7 @@ class DIModuleCopyTest {
         val generated = compilation.generatedSource("sample/copy", "GeneratedAsyncModule.kt")
 
         assertTrue(
-            "load: SuspendBinding<AsyncModule, Unit, String> = SuspendBindingImpls.SuspendDelegate { this@copy.load() }" in generated,
+            "load: SuspendBinding<AsyncModule, Unit, String> = if (this@copy is GeneratedAsyncModule) this@copy.loadBinding else SuspendBindingImpls.SuspendDelegate { this@copy.load() }" in generated,
             generated,
         )
     }
@@ -218,27 +220,44 @@ class DIModuleCopyTest {
         assertTrue("public fun Module3.copy(): Module3 = this" in generated, generated)
 
         // Member-override overload: one parameter per member, inherited included, all on Module3.
+        // An inherited member (a, b) only has a stored binding on the full generated class, so its
+        // default is a single-holder guard. An own member (c) is reachable on the delegated class
+        // too, so its default is a `when` over both.
         assertTrue(
-            "a: Binding<Module3, Unit, TypeA> = BindingImpls.Delegate { this@copy.a }" in generated,
+            "a: Binding<Module3, Unit, TypeA> = if (this@copy is GeneratedModule3) this@copy.aBinding else BindingImpls.Delegate { this@copy.a }" in generated,
             generated,
         )
         assertTrue(
-            "b: Binding<Module3, Unit, TypeB> = BindingImpls.Delegate { this@copy.b }" in generated,
+            "b: Binding<Module3, Unit, TypeB> = if (this@copy is GeneratedModule3) this@copy.bBinding else BindingImpls.Delegate { this@copy.b }" in generated,
             generated,
         )
         assertTrue(
-            "c: Binding<Module3, Unit, TypeC> = BindingImpls.Delegate { this@copy.c }" in generated,
+            Regex(
+                Regex.escape("c: Binding<Module3, Unit, TypeC> = when {") + "\\s*" +
+                    Regex.escape("this@copy is GeneratedModule3 -> this@copy.cBinding") + "\\s*" +
+                    Regex.escape("this@copy is GeneratedDelegatedModule3 -> this@copy.cBinding") + "\\s*" +
+                    Regex.escape("else -> BindingImpls.Delegate { this@copy.c }") + "\\s*\\}"
+            ).containsMatchIn(generated),
             generated,
         )
 
         // Module-override overload: one parameter per @DIModule parent, defaulting to (and
-        // actually passing through) the receiver; own member still gets a delegate binding.
+        // actually passing through) the receiver; own member's binding is carried across from
+        // whichever generated class the receiver is.
         assertTrue("module1: Module1 = this" in generated, generated)
         assertTrue("module2: Module2 = this" in generated, generated)
         val moduleOverrideCall = generated.substringAfterLast("GeneratedDelegatedModule3(")
         assertTrue("module1 = module1," in moduleOverrideCall, generated)
         assertTrue("module2 = module2," in moduleOverrideCall, generated)
-        assertTrue("cBinding = BindingImpls.Delegate { this@copy.c }" in moduleOverrideCall, generated)
+        assertTrue(
+            Regex(
+                Regex.escape("cBinding = when {") + "\\s*" +
+                    Regex.escape("this@copy is GeneratedModule3 -> this@copy.cBinding") + "\\s*" +
+                    Regex.escape("this@copy is GeneratedDelegatedModule3 -> this@copy.cBinding") + "\\s*" +
+                    Regex.escape("else -> BindingImpls.Delegate { this@copy.c }") + "\\s*\\}"
+            ).containsMatchIn(moduleOverrideCall),
+            generated,
+        )
     }
 
     @Test
@@ -274,16 +293,17 @@ class DIModuleCopyTest {
         assertEquals(2, Regex("""fun Module3\.copy\(""").findAll(generated).count(), generated)
 
         assertTrue("public fun Module3.copy(): Module3 = this" in generated, generated)
+        // No delegated class here, so every member's default is a single-holder guard.
         assertTrue(
-            "a: Binding<Module3, Unit, TypeA> = BindingImpls.Delegate { this@copy.a }" in generated,
+            "a: Binding<Module3, Unit, TypeA> = if (this@copy is GeneratedModule3) this@copy.aBinding else BindingImpls.Delegate { this@copy.a }" in generated,
             generated,
         )
         assertTrue(
-            "b: Binding<Module3, Unit, TypeB> = BindingImpls.Delegate { this@copy.b }" in generated,
+            "b: Binding<Module3, Unit, TypeB> = if (this@copy is GeneratedModule3) this@copy.bBinding else BindingImpls.Delegate { this@copy.b }" in generated,
             generated,
         )
         assertTrue(
-            "c: Binding<Module3, Unit, TypeC> = BindingImpls.Delegate { this@copy.c }" in generated,
+            "c: Binding<Module3, Unit, TypeC> = if (this@copy is GeneratedModule3) this@copy.cBinding else BindingImpls.Delegate { this@copy.c }" in generated,
             generated,
         )
     }

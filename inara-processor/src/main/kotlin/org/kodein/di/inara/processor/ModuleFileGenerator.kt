@@ -106,9 +106,10 @@ private fun bindingTypeOf(
 
 /**
  * `BindingImpls.Delegate { this@copy.<member> }` (`SuspendBindingImpls.SuspendDelegate` for a
- * `suspend` member): a binding that reads [member]'s *current* value off the `copy` receiver. Used
- * as a `copy` parameter's default value, so omitting it preserves the module's existing behavior -
- * default implementation or bound value alike - rather than reverting to anything.
+ * `suspend` member): a binding that reads [member]'s *current* value off the `copy` receiver on
+ * every `get`. The *fallback* branch of [copyBindingDefaultCode] - used only when the receiver is
+ * some hand-written `<Module>` implementation whose stored binding can't be reached; a generated
+ * implementation's binding is carried across verbatim instead.
  *
  * A named argument assigns straight into a vararg parameter, no spread operator needed (using one
  * is flagged as redundant) - so a lone vararg parameter, and every parameter of a multi-parameter
@@ -131,6 +132,44 @@ private fun copyDelegateDefaultCode(member: MemberModel): CodeBlock {
         )
     }
     return CodeBlock.of("%T { %L }", delegateClass, accessCode)
+}
+
+/**
+ * The default value of [member]'s parameter on a generated `copy(...)` function: the binding the
+ * receiver *currently* holds for it, carried across verbatim, so omitting the parameter changes
+ * nothing about that member - a `single`/`weakSingle`/`multiplex` binding keeps its memo, a
+ * default-body member that was never bound keeps its `null` (its body then re-runs against the new
+ * module, still seeing any sibling overridden in the same call).
+ *
+ * [holderClassNames] are the generated implementation classes - in the same file, so referenced by
+ * simple name - that expose a `<member>Binding` property for this member: `Generated<Module>`
+ * always, plus `GeneratedDelegated<Module>` for a composed module's own member (an inherited one
+ * lives on a delegated parent instance, out of reach). When the receiver is none of them - some
+ * hand-written implementation - there is no stored binding to read, so the default falls back to
+ * [copyDelegateDefaultCode]'s current-value delegate.
+ */
+private fun copyBindingDefaultCode(member: MemberModel, holderClassNames: List<String>): CodeBlock {
+    val bindingPropertyName = "${member.name}Binding"
+    val fallback = copyDelegateDefaultCode(member)
+    return when (holderClassNames.size) {
+        0 -> fallback
+        1 -> CodeBlock.of(
+            "if (this@copy is %N) this@copy.%N else %L",
+            holderClassNames[0], bindingPropertyName, fallback,
+        )
+        else -> CodeBlock.builder()
+            .add("when {\n")
+            .indent()
+            .apply {
+                for (holder in holderClassNames) {
+                    add("this@copy is %N -> this@copy.%N\n", holder, bindingPropertyName)
+                }
+            }
+            .add("else -> %L\n", fallback)
+            .unindent()
+            .add("}")
+            .build()
+    }
 }
 
 /**
@@ -299,8 +338,11 @@ private fun buildModuleType(
 
         constructorBuilder.addParameter(bindingParamName, bindingType)
         classBuilder.addProperty(
+            // Not `private`: the generated `copy(...)` extensions live in the same file and read
+            // this off a smart-cast receiver to carry the module's current binding across verbatim
+            // (see `copyBindingDefaultCode`). The class itself is `private`, so this stays
+            // file-scoped regardless.
             PropertySpec.builder(bindingParamName, bindingType)
-                .addModifiers(KModifier.PRIVATE)
                 .initializer(bindingParamName)
                 .build()
         )
@@ -417,8 +459,8 @@ private fun buildModuleType(
  * - a `copy(...)` taking one `Binding`/`SuspendBinding` per member in [ModuleModel.allMembers],
  *   building through the "full" `Generated<Module>` class. Only emitted when there is at least one
  *   member - with none, it would take no parameters and collide with the no-arg overload. See
- *   [buildMemberOverrideCopyFunction] for how each parameter's default differs depending on whether
- *   the member has a default implementation.
+ *   [buildMemberOverrideCopyFunction] and [copyBindingDefaultCode] for how each parameter defaults
+ *   to the receiver's current binding for that member.
  * - if [ModuleModel.isComposed], an extra `copy(...)` taking one already-built module instance per
  *   `@DIModule` parent (each defaulting to the receiver itself), building through the "delegated"
  *   `GeneratedDelegated<Module>` class - lets a caller swap out a whole parent module at once
@@ -427,6 +469,17 @@ private fun buildModuleType(
 internal fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName): List<FunSpec> {
     val moduleClassName = model.moduleClassName
     val generatedClassName = "Generated${model.generatedBaseName}"
+    val delegatedClassName = "GeneratedDelegated${model.generatedBaseName}"
+    val ownMemberNames = model.ownMembers.mapTo(mutableSetOf()) { it.name }
+
+    // The generated implementation classes that expose a stored `<member>Binding` property for
+    // this member (see `copyBindingDefaultCode`): the full class always; the delegated class too
+    // for a composed module's own member - an inherited member is delegated to a parent instance
+    // and has no binding property on `GeneratedDelegated<Module>`.
+    fun bindingHolders(member: MemberModel): List<String> = buildList {
+        add(generatedClassName)
+        if (model.isComposed && member.name in ownMemberNames) add(delegatedClassName)
+    }
 
     val noArgCopy = FunSpec.builder("copy")
         .receiver(moduleClassName)
@@ -438,12 +491,14 @@ internal fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName): L
     val copyFunctions = mutableListOf(noArgCopy)
 
     if (model.allMembers.isNotEmpty()) {
-        copyFunctions += buildMemberOverrideCopyFunction(moduleClassName, argsClassName, generatedClassName, model.allMembers, model.visibility)
+        copyFunctions += buildMemberOverrideCopyFunction(moduleClassName, argsClassName, generatedClassName, model.allMembers, model.visibility, ::bindingHolders)
     }
 
     if (model.isComposed) {
-        val delegatedClassName = "GeneratedDelegated${model.generatedBaseName}"
-        copyFunctions += buildModuleOverrideCopyFunction(moduleClassName, argsClassName, delegatedClassName, model.ownMembers, model.parents, model.visibility)
+        copyFunctions += buildModuleOverrideCopyFunction(
+            moduleClassName, argsClassName, delegatedClassName, model.ownMembers, model.parents, model.visibility,
+            holdersFor = { listOf(generatedClassName, delegatedClassName) },
+        )
     }
 
     return copyFunctions
@@ -452,18 +507,13 @@ internal fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName): L
 /**
  * The `copy(...)` overload that lets any individual member's binding be overridden.
  *
- * A member with a default implementation (see [MemberModel.hasDefaultImplementation]) keeps the
- * exact same optional, nullable parameter the builder function gives it - `null` still means "run
- * the interface's own default body", now re-evaluated against the *new* module (so it sees any
- * other member overridden in the same `copy` call). It can *not* instead default to a delegate
- * reading the member's current value the way every other member's parameter does: that current
- * value was itself computed by the default body reading the *old* module, so freezing it would
- * silently stop the member from reacting to sibling overrides in this very call - defeating the
- * point of overriding a sibling in the first place.
- *
- * A member with no default implementation has no such body to re-run, so its current value - a
- * fixed, previously-bound `Binding` - is exactly what "unchanged" means; that value is safe to
- * freeze via [copyDelegateDefaultCode].
+ * Every parameter defaults to the binding the receiver currently holds for that member (see
+ * [copyBindingDefaultCode]) - `holdersFor` gives the generated classes whose `<member>Binding`
+ * property is read to obtain it. Omitting a parameter therefore changes nothing about that member,
+ * including a `single`/`multiplex` binding's memo and a default-body member's `null` (its body then
+ * re-runs against the *new* module, still observing any sibling overridden in the same call). A
+ * default-body member keeps its nullable parameter so a caller can still pass an explicit `null` to
+ * force it back to the interface's own body.
  */
 private fun buildMemberOverrideCopyFunction(
     moduleClassName: ClassName,
@@ -471,6 +521,7 @@ private fun buildMemberOverrideCopyFunction(
     generatedClassName: String,
     members: List<MemberModel>,
     visibility: Visibility,
+    holdersFor: (MemberModel) -> List<String>,
 ): FunSpec {
     val funBuilder = FunSpec.builder("copy")
         .receiver(moduleClassName)
@@ -478,19 +529,13 @@ private fun buildMemberOverrideCopyFunction(
     if (visibility == Visibility.INTERNAL) {
         funBuilder.addModifiers(KModifier.INTERNAL)
     }
-    // BindingImpls.Delegate is only used for a member with no default implementation - if every
-    // member has one, this overload never touches it and doesn't need the opt-in.
-    if (members.any { !it.hasDefaultImplementation }) {
-        funBuilder.addAnnotation(OPT_IN_INTERNAL_DI_BINDINGS)
-    }
+    // Every parameter's default falls back to a BindingImpls.Delegate for a foreign receiver, so
+    // the opt-in is always needed once there is at least one parameter.
+    funBuilder.addAnnotation(OPT_IN_INTERNAL_DI_BINDINGS)
 
     for (member in members) {
         val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, argsClassName, member))
-        if (member.hasDefaultImplementation) {
-            paramBuilder.defaultValue("null")
-        } else {
-            paramBuilder.defaultValue(copyDelegateDefaultCode(member))
-        }
+        paramBuilder.defaultValue(copyBindingDefaultCode(member, holdersFor(member)))
         funBuilder.addParameter(paramBuilder.build())
     }
 
@@ -509,7 +554,11 @@ private fun buildMemberOverrideCopyFunction(
     return funBuilder.addCode(callCode).build()
 }
 
-/** The `copy(...)` overload that lets a whole `@DIModule` parent be swapped out at once. */
+/**
+ * The `copy(...)` overload that lets a whole `@DIModule` parent be swapped out at once. Each own
+ * member's binding is carried across from the receiver (see [copyBindingDefaultCode]); `holdersFor`
+ * gives the generated classes exposing its `<member>Binding` property.
+ */
 private fun buildModuleOverrideCopyFunction(
     moduleClassName: ClassName,
     argsClassName: ClassName,
@@ -517,6 +566,7 @@ private fun buildModuleOverrideCopyFunction(
     ownMembers: List<MemberModel>,
     parents: List<ParentModel>,
     visibility: Visibility,
+    holdersFor: (MemberModel) -> List<String>,
 ): FunSpec {
     val funBuilder = FunSpec.builder("copy")
         .receiver(moduleClassName)
@@ -524,10 +574,9 @@ private fun buildModuleOverrideCopyFunction(
     if (visibility == Visibility.INTERNAL) {
         funBuilder.addModifiers(KModifier.INTERNAL)
     }
-    // An own member with no default implementation is rebound via a Delegate (see
-    // buildMemberOverrideCopyFunction for why a default-body member isn't) - @OptIn is only
-    // needed when there is at least one such member.
-    if (ownMembers.any { !it.hasDefaultImplementation }) {
+    // Every own member's binding falls back to a BindingImpls.Delegate for a foreign receiver, so
+    // the opt-in is needed whenever there is at least one own member.
+    if (ownMembers.isNotEmpty()) {
         funBuilder.addAnnotation(OPT_IN_INTERNAL_DI_BINDINGS)
     }
 
@@ -547,8 +596,7 @@ private fun buildModuleOverrideCopyFunction(
                 addStatement("%N = %N,", parent.paramName, parent.paramName)
             }
             for (member in ownMembers) {
-                val valueCode = if (member.hasDefaultImplementation) CodeBlock.of("null") else copyDelegateDefaultCode(member)
-                addStatement("%N = %L,", "${member.name}Binding", valueCode)
+                addStatement("%N = %L,", "${member.name}Binding", copyBindingDefaultCode(member, holdersFor(member)))
             }
         }
         .unindent()

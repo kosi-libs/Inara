@@ -42,7 +42,7 @@ class DIModulePlainSupertypeTest {
 
         val generated = compilation.generatedSource("sample/plain", "GeneratedModule1.kt")
 
-        assertTrue("private val nameBinding: Binding<Module1, Unit, String>," in generated, generated)
+        assertTrue("public val nameBinding: Binding<Module1, Unit, String>," in generated, generated)
         assertTrue("override val name: String" in generated, generated)
         assertTrue("this.nameBinding.get(this, Unit)" in generated, generated)
         assertTrue("name: Binding<Module1, Unit, String>," in generated, generated)
@@ -73,7 +73,7 @@ class DIModulePlainSupertypeTest {
 
         val generated = compilation.generatedSource("sample/plain", "GeneratedModule1.kt")
 
-        assertTrue("private val tagBinding: Binding<Module1, Unit, String>?," in generated, generated)
+        assertTrue("public val tagBinding: Binding<Module1, Unit, String>?," in generated, generated)
         assertTrue("super<Module1>.tag()" in generated, generated)
         assertTrue("tag: Binding<Module1, Unit, String>? = null" in generated, generated)
     }
@@ -103,8 +103,8 @@ class DIModulePlainSupertypeTest {
         val generated = compilation.generatedSource("sample/plain", "GeneratedModule1.kt")
 
         // The substituted concrete type shows up, not Api's own type parameter name.
-        assertTrue("private val valueBinding: Binding<Module1, Unit, String>," in generated, generated)
-        assertTrue("private val mapBinding: Binding<Module1, String, String>," in generated, generated)
+        assertTrue("public val valueBinding: Binding<Module1, Unit, String>," in generated, generated)
+        assertTrue("public val mapBinding: Binding<Module1, String, String>," in generated, generated)
         assertTrue("override fun map(input: String): String" in generated, generated)
     }
 
@@ -140,7 +140,7 @@ class DIModulePlainSupertypeTest {
         // `tag` appears once, and as the *derived* (default-bodied) declaration, not Api's abstract
         // one - a required binding would mean the abstract version won.
         assertEquals(1, Regex("""tagBinding""").findAll(generated).count { generated.substring(it.range.first).startsWith("tagBinding:") }, generated)
-        assertTrue("private val tagBinding: Binding<Module1, Unit, String>?," in generated, generated)
+        assertTrue("public val tagBinding: Binding<Module1, Unit, String>?," in generated, generated)
         assertTrue("super<Module1>.tag" in generated, generated)
     }
 
@@ -215,9 +215,9 @@ class DIModulePlainSupertypeTest {
 
         val generated = compilation.generatedSource("sample/plain", "GeneratedModule2.kt")
 
-        assertTrue("private val tagBinding: Binding<Module2, Unit, String>," in generated, generated)
+        assertTrue("public val tagBinding: Binding<Module2, Unit, String>," in generated, generated)
         assertTrue("override val tag: String" in generated, generated)
-        assertTrue("private val aBinding: Binding<Module2, Unit, Int>," in generated, generated)
-        assertTrue("private val bBinding: Binding<Module2, Unit, Int>," in generated, generated)
+        assertTrue("public val aBinding: Binding<Module2, Unit, Int>," in generated, generated)
+        assertTrue("public val bBinding: Binding<Module2, Unit, Int>," in generated, generated)
     }
 }

@@ -49,9 +49,9 @@ class DIModuleGenerationTest {
         val generated = compilation.generatedSource("sample", "GeneratedNetworkModule.kt")
 
         assertTrue("private class GeneratedNetworkModule(" in generated, generated)
-        assertTrue("private val baseUrlBinding: Binding<NetworkModule, Unit, String>" in generated, generated)
-        assertTrue("private val httpClientBinding: Binding<NetworkModule, Unit, HttpClient>" in generated, generated)
-        assertTrue("private val contextBinding: Binding<NetworkModule, Int, Context>" in generated, generated)
+        assertTrue("public val baseUrlBinding: Binding<NetworkModule, Unit, String>" in generated, generated)
+        assertTrue("public val httpClientBinding: Binding<NetworkModule, Unit, HttpClient>" in generated, generated)
+        assertTrue("public val contextBinding: Binding<NetworkModule, Int, Context>" in generated, generated)
         assertTrue(": NetworkModule" in generated, generated)
         assertTrue("override val baseUrl: String" in generated, generated)
         assertTrue("this.baseUrlBinding.get(this, Unit)" in generated, generated)

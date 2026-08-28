@@ -53,11 +53,11 @@ class DIModuleMultiParamTest {
         assertTrue("val flag: Boolean = false" !in generated, generated)
 
         // va: single vararg, no data class - the array type is the Binding argument type directly.
-        assertTrue("private val vaBinding: Binding<Module, Array<out String>, String>," in generated, generated)
+        assertTrue("public val vaBinding: Binding<Module, Array<out String>, String>," in generated, generated)
         assertTrue("override fun va(vararg str: String): String = this.vaBinding.get(this, str)" in generated, generated)
 
         // mult: two non-vararg params, positional args-object construction.
-        assertTrue("private val multBinding: Binding<Module, ModuleBindingArguments.Mult, Long>," in generated, generated)
+        assertTrue("public val multBinding: Binding<Module, ModuleBindingArguments.Mult, Long>," in generated, generated)
         assertTrue(
             "override fun mult(s: List<String>, i: Int): Long = this.multBinding.get(this, ModuleBindingArguments.Mult(s, i))" in generated,
             generated,
@@ -65,7 +65,7 @@ class DIModuleMultiParamTest {
 
         // both: vararg + named param, positional args-object construction, no default repeated on
         // the override.
-        assertTrue("private val bothBinding: Binding<Module, ModuleBindingArguments.Both, String>," in generated, generated)
+        assertTrue("public val bothBinding: Binding<Module, ModuleBindingArguments.Both, String>," in generated, generated)
         assertTrue("override fun both(vararg ids: Int, flag: Boolean): String" in generated, generated)
         assertTrue("this.bothBinding.get(this, ModuleBindingArguments.Both(ids, flag))" in generated, generated)
 
@@ -131,7 +131,7 @@ class DIModuleMultiParamTest {
 
         val generated = compilation.generatedSource("sample/multiparam", "GeneratedSuspendMultiParamModule.kt")
         assertTrue("public data class Combine(" in generated, generated)
-        assertTrue("private val combineBinding:" in generated, generated)
+        assertTrue("public val combineBinding:" in generated, generated)
         assertTrue(
             "SuspendBinding<SuspendMultiParamModule, SuspendMultiParamModuleBindingArguments.Combine, Int>," in generated,
             generated,
@@ -159,7 +159,7 @@ class DIModuleMultiParamTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/multiparam", "GeneratedDefaultMultiParamModule.kt")
-        assertTrue("private val bothBinding:" in generated, generated)
+        assertTrue("public val bothBinding:" in generated, generated)
         assertTrue(
             "Binding<DefaultMultiParamModule, DefaultMultiParamModuleBindingArguments.Both, String>?," in generated,
             generated,
@@ -202,7 +202,7 @@ class DIModuleMultiParamTest {
         assertTrue("public class ChildModuleBindingArguments private constructor()" in generatedChild, generatedChild)
         assertTrue("public data class Mult(" in generatedChild, generatedChild)
         assertTrue(
-            "private val multBinding: Binding<ChildModule, ChildModuleBindingArguments.Mult, Long>," in generatedChild,
+            "public val multBinding: Binding<ChildModule, ChildModuleBindingArguments.Mult, Long>," in generatedChild,
             generatedChild,
         )
     }
@@ -233,6 +233,6 @@ class DIModuleMultiParamTest {
         val generated = compilation.generatedSource("sample/multiparam", "GeneratedModule1.kt")
         assertTrue("public class Module1BindingArguments private constructor()" in generated, generated)
         assertTrue("public data class Mult(" in generated, generated)
-        assertTrue("private val multBinding: Binding<Module1, Module1BindingArguments.Mult, Long>," in generated, generated)
+        assertTrue("public val multBinding: Binding<Module1, Module1BindingArguments.Mult, Long>," in generated, generated)
     }
 }

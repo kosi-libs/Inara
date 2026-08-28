@@ -43,7 +43,7 @@ class DIModuleIgnoredMemberTest {
         val generated = compilation.generatedSource("sample/ignored", "GeneratedVarModule.kt")
         assertTrue("valueBinding" !in generated, generated)
         assertTrue("override var value" !in generated, generated)
-        assertTrue("private val extraBinding: Binding<VarModule, Unit, Int>," in generated, generated)
+        assertTrue("public val extraBinding: Binding<VarModule, Unit, Int>," in generated, generated)
         assertTrue("override val extra: Int" in generated, generated)
         assertTrue("fun VarModule(extra: Binding<VarModule, Unit, Int>): VarModule" in generated, generated)
     }
@@ -176,7 +176,7 @@ class DIModuleIgnoredMemberTest {
 
         val generated = compilation.generatedSource("sample/ignored", "GeneratedChildModule.kt")
         assertTrue("valueBinding" !in generated, generated)
-        assertTrue("private val extraBinding: Binding<ChildModule, Unit, Int>," in generated, generated)
+        assertTrue("public val extraBinding: Binding<ChildModule, Unit, Int>," in generated, generated)
     }
 
     @Test
@@ -204,7 +204,7 @@ class DIModuleIgnoredMemberTest {
 
         val generated = compilation.generatedSource("sample/ignored", "GeneratedModule1.kt")
         assertTrue("identityBinding" !in generated, generated)
-        assertTrue("private val extraBinding: Binding<Module1, Unit, Int>," in generated, generated)
+        assertTrue("public val extraBinding: Binding<Module1, Unit, Int>," in generated, generated)
     }
 
     @Test

@@ -435,8 +435,8 @@ observes whatever that sibling was bound to.
 
 == Copying a module
 
-Every module gets a `copy` extension function that takes one parameter per member, each defaulting to the module's _current_ behaviour,
-so you override exactly what you name:
+Every module gets a `copy` extension function that takes one parameter per member, each defaulting to
+the binding the module _currently_ holds for that member, so you override exactly what you name:
 
 .Main.kt
 [source,kotlin]
@@ -446,10 +446,11 @@ val testModule = appModule.copy(
 )
 ----
 
-Members with a default implementation behave slightly differently under `copy`: their parameter still
-defaults to `null` (meaning "run the interface's default body") rather than freezing the current
-value. That is deliberate — the default body is re-run against the _new_ module, so it observes
-siblings you overrode in the very same `copy` call.
+An omitted parameter carries the original binding across untouched — including a `single` /
+`weakSingle` / `multiplex` binding's memoised state, and, for a member with a default implementation,
+its _unbound_ state (that default body then re-runs against the _new_ module, so it still observes
+siblings you overrode in the same `copy` call). A member with a default implementation additionally
+accepts an explicit `null`, which forces it back to the interface's own body.
 
 == Inheritance and composition
 

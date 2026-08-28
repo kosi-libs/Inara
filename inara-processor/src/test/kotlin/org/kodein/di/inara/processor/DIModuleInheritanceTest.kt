@@ -53,7 +53,7 @@ class DIModuleInheritanceTest {
         assertTrue("private class GeneratedDelegatedModule3(" in generated, generated)
         assertTrue("module1: Module1," in generated, generated)
         assertTrue("module2: Module2," in generated, generated)
-        assertTrue("private val cBinding: Binding<Module3, Unit, TypeC>," in generated, generated)
+        assertTrue("public val cBinding: Binding<Module3, Unit, TypeC>," in generated, generated)
         assertTrue("Module1 by module1" in generated, generated)
         assertTrue("Module2 by module2" in generated, generated)
         assertTrue("override val c: TypeC" in generated, generated)
@@ -62,8 +62,8 @@ class DIModuleInheritanceTest {
 
         // Full variant: one binding per member, inherited included, all on Module3.
         assertTrue("private class GeneratedModule3(" in generated, generated)
-        assertTrue("private val aBinding: Binding<Module3, Unit, TypeA>," in generated, generated)
-        assertTrue("private val bBinding: Binding<Module3, Unit, TypeB>," in generated, generated)
+        assertTrue("public val aBinding: Binding<Module3, Unit, TypeA>," in generated, generated)
+        assertTrue("public val bBinding: Binding<Module3, Unit, TypeB>," in generated, generated)
         assertTrue("override val a: TypeA" in generated, generated)
         assertTrue("this.aBinding.get(this, Unit)" in generated, generated)
         assertTrue("override val b: TypeB" in generated, generated)
@@ -109,9 +109,9 @@ class DIModuleInheritanceTest {
         // No delegated variant at all - just the one Generated<Module> with every member's binding.
         assertTrue("GeneratedDelegatedModule3" !in generated, generated)
         assertTrue("private class GeneratedModule3(" in generated, generated)
-        assertTrue("private val aBinding: Binding<Module3, Unit, TypeA>," in generated, generated)
-        assertTrue("private val bBinding: Binding<Module3, Unit, TypeB>," in generated, generated)
-        assertTrue("private val cBinding: Binding<Module3, Unit, TypeC>," in generated, generated)
+        assertTrue("public val aBinding: Binding<Module3, Unit, TypeA>," in generated, generated)
+        assertTrue("public val bBinding: Binding<Module3, Unit, TypeB>," in generated, generated)
+        assertTrue("public val cBinding: Binding<Module3, Unit, TypeC>," in generated, generated)
         assertTrue("override val a: TypeA" in generated, generated)
         assertTrue("override val b: TypeB" in generated, generated)
         assertTrue("override val c: TypeC" in generated, generated)
@@ -193,7 +193,7 @@ class DIModuleInheritanceTest {
         val generated = compilation.generatedSource("sample/inheritance", "GeneratedChildModule.kt")
 
         assertTrue(
-            "private val greetingBinding: Binding<ChildModule, Unit, String>?" in generated,
+            "public val greetingBinding: Binding<ChildModule, Unit, String>?" in generated,
             generated,
         )
         assertTrue("super<ChildModule>.greeting()" in generated, generated)
@@ -230,7 +230,7 @@ class DIModuleInheritanceTest {
         val generated = compilation.generatedSource("sample/inheritance", "GeneratedAsyncChildModule.kt")
 
         assertTrue(
-            "private val loadBinding: SuspendBinding<AsyncChildModule, Unit, String>" in generated,
+            "public val loadBinding: SuspendBinding<AsyncChildModule, Unit, String>" in generated,
             generated,
         )
         assertTrue("override suspend fun load(): String" in generated, generated)
