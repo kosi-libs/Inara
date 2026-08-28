@@ -12,16 +12,16 @@ import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 /**
  * Verifies the shape generated for an interface that extends other `@DIModule` interfaces.
  *
- * A plain `@DIModule` child only gets the full implementation/builder pair (one binding per
- * member, inherited included, parameterized on the leaf module type) - see
+ * Every `@DIModule` child gets one `internal Generated<Module>` implementation and its full builder
+ * (one binding per member, inherited included, parameterized on the leaf module type) - see
  * [plainModule_generatesOnlyFullVariant]. A `@DIModule(composed = true)` child additionally gets a
- * delegated implementation/builder pair (parent instances + own bindings) - see
- * [composedModule_generatesDelegatedAndFullVariants].
+ * second builder overload taking parent instances, which builds that *same* class by pulling each
+ * inherited binding off its parent - see [composedModule_generatesFullClassAndComposedBuilder].
  */
 class DIModuleInheritanceTest {
 
     @Test
-    fun composedModule_generatesDelegatedAndFullVariants() {
+    fun composedModule_generatesFullClassAndComposedBuilder() {
         val source = SourceFile.kotlin(
             "ComposedModules.kt",
             """
@@ -49,32 +49,33 @@ class DIModuleInheritanceTest {
 
         val generated = compilation.generatedSource("sample/inheritance", "GeneratedModule3.kt")
 
-        // Delegated variant: parent instances + own binding only.
-        assertTrue("private class GeneratedDelegatedModule3(" in generated, generated)
-        assertTrue("module1: Module1," in generated, generated)
-        assertTrue("module2: Module2," in generated, generated)
-        assertTrue("public val cBinding: Binding<Module3, Unit, TypeC>," in generated, generated)
-        assertTrue("Module1 by module1" in generated, generated)
-        assertTrue("Module2 by module2" in generated, generated)
-        assertTrue("override val c: TypeC" in generated, generated)
-        assertTrue("this.cBinding.get(this, Unit)" in generated, generated)
-        assertTrue("aBinding" !in generated.substringBefore("private class GeneratedModule3("), generated)
-
-        // Full variant: one binding per member, inherited included, all on Module3.
-        assertTrue("private class GeneratedModule3(" in generated, generated)
+        // One implementation class, no delegated variant.
+        assertTrue("GeneratedDelegatedModule3" !in generated, generated)
+        assertEquals(1, Regex("""class GeneratedModule3\(""").findAll(generated).count(), generated)
+        assertTrue("@file:OptIn(InternalDIBindings::class)" in generated, generated)
+        assertTrue("@InternalDIBindings\ninternal class GeneratedModule3(" in generated, generated)
         assertTrue("public val aBinding: Binding<Module3, Unit, TypeA>," in generated, generated)
         assertTrue("public val bBinding: Binding<Module3, Unit, TypeB>," in generated, generated)
+        assertTrue("public val cBinding: Binding<Module3, Unit, TypeC>," in generated, generated)
         assertTrue("override val a: TypeA" in generated, generated)
         assertTrue("this.aBinding.get(this, Unit)" in generated, generated)
-        assertTrue("override val b: TypeB" in generated, generated)
-        assertTrue("this.bBinding.get(this, Unit)" in generated, generated)
 
-        // Both builder functions are named after the module and take a binding for `c`.
-        val builderOccurrences = Regex("""fun Module3\(""").findAll(generated).count()
-        assertEquals(2, builderOccurrences, generated)
+        // Two builders, both named after the module. The full one takes a binding per member.
+        assertEquals(2, Regex("""fun Module3\(""").findAll(generated).count(), generated)
         assertTrue("a: Binding<Module3, Unit, TypeA>," in generated, generated)
-        assertTrue("b: Binding<Module3, Unit, TypeB>," in generated, generated)
-        assertTrue("c: Binding<Module3, Unit, TypeC>," in generated, generated)
+
+        // The composed builder takes parent instances and pulls each inherited binding off them.
+        assertTrue("module1: Module1," in generated, generated)
+        assertTrue("module2: Module2," in generated, generated)
+        assertTrue(
+            "aBinding = if (module1 is GeneratedModule1) module1.aBinding else BindingImpls.Delegate { module1.a }" in generated,
+            generated,
+        )
+        assertTrue(
+            "bBinding = if (module2 is GeneratedModule2) module2.bBinding else BindingImpls.Delegate { module2.b }" in generated,
+            generated,
+        )
+        assertTrue("cBinding = c," in generated, generated)
     }
 
     @Test
@@ -108,7 +109,7 @@ class DIModuleInheritanceTest {
 
         // No delegated variant at all - just the one Generated<Module> with every member's binding.
         assertTrue("GeneratedDelegatedModule3" !in generated, generated)
-        assertTrue("private class GeneratedModule3(" in generated, generated)
+        assertTrue("internal class GeneratedModule3(" in generated, generated)
         assertTrue("public val aBinding: Binding<Module3, Unit, TypeA>," in generated, generated)
         assertTrue("public val bBinding: Binding<Module3, Unit, TypeB>," in generated, generated)
         assertTrue("public val cBinding: Binding<Module3, Unit, TypeC>," in generated, generated)

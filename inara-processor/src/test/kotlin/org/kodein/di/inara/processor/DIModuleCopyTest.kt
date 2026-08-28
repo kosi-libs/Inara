@@ -45,7 +45,7 @@ class DIModuleCopyTest {
 
         assertTrue("public fun NetworkModule.copy(): NetworkModule = this" in generated, generated)
 
-        assertTrue("@OptIn(InternalDIBindings::class)" in generated, generated)
+        assertTrue("@file:OptIn(InternalDIBindings::class)" in generated, generated)
         // Each parameter defaults to the receiver's own stored binding when it's the generated
         // implementation, falling back to a current-value delegate for any other implementation.
         assertTrue(
@@ -219,45 +219,32 @@ class DIModuleCopyTest {
 
         assertTrue("public fun Module3.copy(): Module3 = this" in generated, generated)
 
-        // Member-override overload: one parameter per member, inherited included, all on Module3.
-        // An inherited member (a, b) only has a stored binding on the full generated class, so its
-        // default is a single-holder guard. An own member (c) is reachable on the delegated class
-        // too, so its default is a `when` over both.
+        // Member-override overload: one parameter per member, inherited included, all on Module3,
+        // each a single-holder guard over the one implementation class.
         assertTrue(
             "a: Binding<Module3, Unit, TypeA> = if (this@copy is GeneratedModule3) this@copy.aBinding else BindingImpls.Delegate { this@copy.a }" in generated,
             generated,
         )
         assertTrue(
-            "b: Binding<Module3, Unit, TypeB> = if (this@copy is GeneratedModule3) this@copy.bBinding else BindingImpls.Delegate { this@copy.b }" in generated,
-            generated,
-        )
-        assertTrue(
-            Regex(
-                Regex.escape("c: Binding<Module3, Unit, TypeC> = when {") + "\\s*" +
-                    Regex.escape("this@copy is GeneratedModule3 -> this@copy.cBinding") + "\\s*" +
-                    Regex.escape("this@copy is GeneratedDelegatedModule3 -> this@copy.cBinding") + "\\s*" +
-                    Regex.escape("else -> BindingImpls.Delegate { this@copy.c }") + "\\s*\\}"
-            ).containsMatchIn(generated),
+            "c: Binding<Module3, Unit, TypeC> = if (this@copy is GeneratedModule3) this@copy.cBinding else BindingImpls.Delegate { this@copy.c }" in generated,
             generated,
         )
 
-        // Module-override overload: one parameter per @DIModule parent, defaulting to (and
-        // actually passing through) the receiver; own member's binding is carried across from
-        // whichever generated class the receiver is.
-        assertTrue("module1: Module1 = this" in generated, generated)
-        assertTrue("module2: Module2 = this" in generated, generated)
-        val moduleOverrideCall = generated.substringAfterLast("GeneratedDelegatedModule3(")
-        assertTrue("module1 = module1," in moduleOverrideCall, generated)
-        assertTrue("module2 = module2," in moduleOverrideCall, generated)
+        // Module-override overload: one parameter per @DIModule parent, defaulting to the receiver.
+        // It builds the same GeneratedModule3; an inherited member takes its binding from the
+        // (possibly swapped) parent, an own member from the receiver.
+        assertTrue("public fun Module3.copy(module1: Module1 = this, module2: Module2 = this): Module3 = GeneratedModule3(" in generated, generated)
         assertTrue(
             Regex(
-                Regex.escape("cBinding = when {") + "\\s*" +
-                    Regex.escape("this@copy is GeneratedModule3 -> this@copy.cBinding") + "\\s*" +
-                    Regex.escape("this@copy is GeneratedDelegatedModule3 -> this@copy.cBinding") + "\\s*" +
-                    Regex.escape("else -> BindingImpls.Delegate { this@copy.c }") + "\\s*\\}"
-            ).containsMatchIn(moduleOverrideCall),
+                Regex.escape("aBinding = when {") + "\\s*" +
+                    Regex.escape("module1 !== this@copy -> if (module1 is GeneratedModule1) module1.aBinding else BindingImpls.Delegate { module1.a }") + "\\s*" +
+                    Regex.escape("this@copy is GeneratedModule3 -> this@copy.aBinding") + "\\s*" +
+                    Regex.escape("else -> BindingImpls.Delegate { this@copy.a }") + "\\s*\\}"
+            ).containsMatchIn(generated),
             generated,
         )
+        val moduleOverrideCall = generated.substringAfterLast("module1: Module1 = this")
+        assertTrue("cBinding = if (this@copy is GeneratedModule3) this@copy.cBinding else BindingImpls.Delegate { this@copy.c }" in moduleOverrideCall, generated)
     }
 
     @Test

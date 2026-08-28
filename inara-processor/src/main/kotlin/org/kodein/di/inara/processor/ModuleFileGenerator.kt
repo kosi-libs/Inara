@@ -26,8 +26,12 @@ private val SUSPEND_BINDING = ClassName("org.kodein.di.inara", "SuspendBinding")
 private val BINDING_IMPLS_DELEGATE = ClassName("org.kodein.di.inara", "BindingImpls").nestedClass("Delegate")
 private val SUSPEND_BINDING_IMPLS_DELEGATE = ClassName("org.kodein.di.inara", "SuspendBindingImpls").nestedClass("SuspendDelegate")
 private val INTERNAL_DI_BINDINGS = ClassName("org.kodein.di.inara", "InternalDIBindings")
-private val OPT_IN_INTERNAL_DI_BINDINGS: AnnotationSpec = AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+
+/** `@file:OptIn(InternalDIBindings::class)` - added to every generated file so its `internal
+ * Generated<Module>` class, and every `BindingImpls.Delegate` it builds, need no further opt-in. */
+private val FILE_OPT_IN_INTERNAL_DI_BINDINGS: AnnotationSpec = AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
     .addMember("%T::class", INTERNAL_DI_BINDINGS)
+    .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
     .build()
 
 private val ARRAY = ClassName("kotlin", "Array")
@@ -105,29 +109,28 @@ private fun bindingTypeOf(
 }
 
 /**
- * `BindingImpls.Delegate { this@copy.<member> }` (`SuspendBindingImpls.SuspendDelegate` for a
- * `suspend` member): a binding that reads [member]'s *current* value off the `copy` receiver on
- * every `get`. The *fallback* branch of [copyBindingDefaultCode] - used only when the receiver is
- * some hand-written `<Module>` implementation whose stored binding can't be reached; a generated
- * implementation's binding is carried across verbatim instead.
+ * `BindingImpls.Delegate { <receiver>.<member>(…) }` (`SuspendBindingImpls.SuspendDelegate` for a
+ * `suspend` member): a binding that reads [member]'s *current* value off [receiver] on every `get`.
+ * The fallback for when a real stored binding can't be reached - a hand-written `<Module>`
+ * implementation, or a parent module from another compilation.
  *
  * A named argument assigns straight into a vararg parameter, no spread operator needed (using one
  * is flagged as redundant) - so a lone vararg parameter, and every parameter of a multi-parameter
  * member (vararg or not, matching each field's name on the generated arguments data class), is
  * passed named. A lone non-vararg parameter stays positional.
  */
-private fun copyDelegateDefaultCode(member: MemberModel): CodeBlock {
+private fun delegateBindingCode(member: MemberModel, receiver: CodeBlock): CodeBlock {
     val delegateClass = if (member.isSuspend) SUSPEND_BINDING_IMPLS_DELEGATE else BINDING_IMPLS_DELEGATE
     val accessCode = when {
-        !member.isFunction -> CodeBlock.of("this@copy.%N", member.name)
-        member.parameters.isEmpty() -> CodeBlock.of("this@copy.%N()", member.name)
-        member.parameters.size == 1 && !member.parameters[0].isVararg -> CodeBlock.of("this@copy.%N(it)", member.name)
+        !member.isFunction -> CodeBlock.of("%L.%N", receiver, member.name)
+        member.parameters.isEmpty() -> CodeBlock.of("%L.%N()", receiver, member.name)
+        member.parameters.size == 1 && !member.parameters[0].isVararg -> CodeBlock.of("%L.%N(it)", receiver, member.name)
         member.parameters.size == 1 -> member.parameters[0].let { p ->
-            CodeBlock.of("this@copy.%N(%N = it)", member.name, p.name)
+            CodeBlock.of("%L.%N(%N = it)", receiver, member.name, p.name)
         }
         else -> CodeBlock.of(
-            "this@copy.%N(%L)",
-            member.name,
+            "%L.%N(%L)",
+            receiver, member.name,
             member.parameters.map { p -> CodeBlock.of("%N = it.%N", p.name, p.name) }.joinToCode(", "),
         )
     }
@@ -135,63 +138,96 @@ private fun copyDelegateDefaultCode(member: MemberModel): CodeBlock {
 }
 
 /**
- * The default value of [member]'s parameter on a generated `copy(...)` function: the binding the
- * receiver *currently* holds for it, carried across verbatim, so omitting the parameter changes
- * nothing about that member - a `single`/`weakSingle`/`multiplex` binding keeps its memo, a
- * default-body member that was never bound keeps its `null` (its body then re-runs against the new
- * module, still seeing any sibling overridden in the same call).
- *
- * [holderClassNames] are the generated implementation classes - in the same file, so referenced by
- * simple name - that expose a `<member>Binding` property for this member: `Generated<Module>`
- * always, plus `GeneratedDelegated<Module>` for a composed module's own member (an inherited one
- * lives on a delegated parent instance, out of reach). When the receiver is none of them - some
- * hand-written implementation - there is no stored binding to read, so the default falls back to
- * [copyDelegateDefaultCode]'s current-value delegate.
+ * The binding for [member] read off the `copy` receiver: `this@copy.<member>Binding` when the
+ * receiver is the [generatedClass] implementation, otherwise a current-value delegate (see
+ * [delegateBindingCode]). [receiver] is always `this@copy` here - the receiver's own generated
+ * class, so its `<member>Binding` is exactly the right type even for a multi-parameter member.
  */
-private fun copyBindingDefaultCode(member: MemberModel, holderClassNames: List<String>): CodeBlock {
-    val bindingPropertyName = "${member.name}Binding"
-    val fallback = copyDelegateDefaultCode(member)
-    return when (holderClassNames.size) {
-        0 -> fallback
-        1 -> CodeBlock.of(
-            "if (this@copy is %N) this@copy.%N else %L",
-            holderClassNames[0], bindingPropertyName, fallback,
-        )
-        else -> CodeBlock.builder()
-            .add("when {\n")
-            .indent()
-            .apply {
-                for (holder in holderClassNames) {
-                    add("this@copy is %N -> this@copy.%N\n", holder, bindingPropertyName)
-                }
-            }
-            .add("else -> %L\n", fallback)
-            .unindent()
-            .add("}")
-            .build()
-    }
+private fun storedBindingOrDelegateCode(
+    member: MemberModel,
+    receiver: CodeBlock,
+    generatedClass: ClassName,
+): CodeBlock = CodeBlock.of(
+    "if (%L is %T) %L.%N else %L",
+    receiver, generatedClass, receiver, "${member.name}Binding", delegateBindingCode(member, receiver),
+)
+
+/**
+ * The binding for an inherited [member] sourced from its parent instance [parentParam]: the
+ * `<member>Binding` property read off [parentGeneratedClass] when the instance is that
+ * implementation, otherwise a delegate that forwards to `parentParam.<member>(...)`.
+ *
+ * [parentGeneratedClass] is `null` when the parent was compiled in another module (its
+ * `Generated<Parent>` is `internal` there and unreferenceable). A member with 2+ parameters also
+ * always takes the delegate: its arguments are wrapped in a *per-module* `<Module>BindingArguments`
+ * data class, so the parent's `Binding<Parent, ParentArgs.X, T>` can't fill the child's
+ * `Binding<Child, ChildArgs.X, T>` slot (`A` is invariant) - the delegate sidesteps it by unpacking
+ * and forwarding.
+ */
+private fun parentBindingCode(
+    member: MemberModel,
+    parentParam: String,
+    parentGeneratedClass: ClassName?,
+): CodeBlock {
+    val delegate = delegateBindingCode(member, CodeBlock.of("%N", parentParam))
+    if (parentGeneratedClass == null || member.parameters.size > 1) return delegate
+    return CodeBlock.of(
+        "if (%N is %T) %N.%N else %L",
+        parentParam, parentGeneratedClass, parentParam, "${member.name}Binding", delegate,
+    )
 }
 
 /**
- * Emits the implementation class(es), builder function(s), and `copy` function(s) for [model], as
+ * The default value of an inherited [member]'s parameter on the parent-swapping `copy(...)`
+ * overload: three cases, since that overload defaults each parent parameter to the receiver itself.
+ *
+ * - the parent *was* swapped (`<parentParam> !== this@copy`) - take the binding from the new parent
+ *   instance ([parentBindingCode]);
+ * - it wasn't, and the receiver is the generated implementation - carry `this@copy.<member>Binding`
+ *   straight across, exactly like the member-override `copy`;
+ * - it wasn't, and the receiver is hand-written - a current-value delegate over `this@copy`.
+ */
+private fun parentSwapInheritedCode(
+    member: MemberModel,
+    parentParamName: String,
+    parentGeneratedClass: ClassName?,
+    selfGeneratedClass: ClassName,
+): CodeBlock {
+    val bindingPropertyName = "${member.name}Binding"
+    return CodeBlock.builder()
+        .add("when {\n")
+        .indent()
+        .add(
+            "%N !== this@copy -> %L\n",
+            parentParamName,
+            parentBindingCode(member, parentParamName, parentGeneratedClass),
+        )
+        .add("this@copy is %T -> this@copy.%N\n", selfGeneratedClass, bindingPropertyName)
+        .add("else -> %L\n", delegateBindingCode(member, CodeBlock.of("this@copy")))
+        .unindent()
+        .add("}")
+        .build()
+}
+
+/**
+ * Emits the implementation class, builder function(s), and `copy` function(s) for [model], as
  * described on `@DIModule`.
  *
- * A module that isn't `@DIModule(composed = true)` (see [ModuleModel.isComposed]) gets exactly one
- * `Generated<Module>` implementation and one `<Module>(...)` builder taking a `Binding`
- * (`SuspendBinding` for a `suspend` member) per member in the consolidated interface - inherited
- * members included, so a `@DIModule` interface that merely extends other `@DIModule` interfaces
- * (without composing them) still gets a binding for everything it inherits, exactly as if those
- * members had been declared directly on it.
+ * Every module - `@DIModule(composed = true)` or not - gets exactly one `internal Generated<Module>`
+ * implementation and one `<Module>(...)` builder taking a `Binding` (`SuspendBinding` for a
+ * `suspend` member) per member in the consolidated interface, inherited members included, each
+ * parameterized on this (leaf) module type - so any provider/factory/single body can reach any
+ * member, inherited or not, through its receiver.
  *
- * A `@DIModule(composed = true)` interface gets two pairs instead:
- * - `GeneratedDelegated<Module>` / a builder taking one already-built parent module instance per
- *   `@DIModule` parent (`Module1 by module1`-style delegation) plus a binding per member declared
- *   directly on this interface *or reachable through a plain (non-`@DIModule`) supertype* - a plain
- *   supertype is never delegable, so [ModuleModel.ownMembers] already folds its members in
- *   alongside this interface's own declarations (see [parseModule]).
- * - `Generated<Module>` / a builder taking a binding for every member in the consolidated
- *   interface, inherited ones included, each parameterized on this (leaf) module type - so any
- *   provider/factory/single body can reach any member, inherited or not, through its receiver.
+ * A `@DIModule(composed = true)` interface additionally gets a second `<Module>(...)` builder
+ * overload (see [buildComposedBuilderFunction]) taking one already-built parent module instance per
+ * `@DIModule` parent plus a binding per own/plain-supertype member: it constructs the *same*
+ * `Generated<Module>`, reading each inherited member's binding straight off the parent instance
+ * (`Binding<M, A, T>` is contravariant in `M`, so a `Binding<Parent, …>` fits a `Binding<Child, …>`
+ * slot). A parent that isn't the generated implementation - hand-written, or compiled in another
+ * module - falls back to a `BindingImpls.Delegate` over the instance, as does an inherited member
+ * with 2+ parameters (its `Binding` argument type is the *per-module* `<Module>BindingArguments`
+ * data class, and `A` is invariant - see [parentBindingCode]).
  *
  * A member with a default implementation (see [MemberModel.hasDefaultImplementation]) gets a
  * nullable `Binding`/`SuspendBinding` that defaults to `null` in the builder function: `null` keeps
@@ -215,44 +251,23 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
         listOfNotNull(model.declaration.containingFile) + model.ancestorDeclarations.mapNotNull { it.containingFile }
 
     val fileBuilder = FileSpec.builder(moduleClassName.packageName, generatedClassName)
+        .addAnnotation(FILE_OPT_IN_INTERNAL_DI_BINDINGS)
 
     buildArgsContainerType(argsClassName, model.allMembers, originatingFiles)?.let { fileBuilder.addType(it) }
 
-    if (!model.isComposed) {
-        val (typeSpec, builderFun) = buildModuleType(
-            generatedClassName = generatedClassName,
-            builderName = model.simpleName,
-            moduleClassName = moduleClassName,
-            argsClassName = argsClassName,
-            visibility = model.visibility,
-            members = model.allMembers,
-            parents = emptyList(),
-            originatingFiles = originatingFiles,
-        )
-        fileBuilder.addType(typeSpec).addFunction(builderFun)
-    } else {
-        val (delegatedType, delegatedBuilderFun) = buildModuleType(
-            generatedClassName = "GeneratedDelegated${model.generatedBaseName}",
-            builderName = model.simpleName,
-            moduleClassName = moduleClassName,
-            argsClassName = argsClassName,
-            visibility = model.visibility,
-            members = model.ownMembers,
-            parents = model.parents,
-            originatingFiles = originatingFiles,
-        )
-        val (fullType, fullBuilderFun) = buildModuleType(
-            generatedClassName = generatedClassName,
-            builderName = model.simpleName,
-            moduleClassName = moduleClassName,
-            argsClassName = argsClassName,
-            visibility = model.visibility,
-            members = model.allMembers,
-            parents = emptyList(),
-            originatingFiles = originatingFiles,
-        )
-        fileBuilder.addType(delegatedType).addFunction(delegatedBuilderFun)
-        fileBuilder.addType(fullType).addFunction(fullBuilderFun)
+    val (typeSpec, builderFun) = buildModuleType(
+        generatedClassName = generatedClassName,
+        builderName = model.simpleName,
+        moduleClassName = moduleClassName,
+        argsClassName = argsClassName,
+        visibility = model.visibility,
+        members = model.allMembers,
+        originatingFiles = originatingFiles,
+    )
+    fileBuilder.addType(typeSpec).addFunction(builderFun)
+
+    if (model.isComposed) {
+        fileBuilder.addFunction(buildComposedBuilderFunction(model, generatedClassName, argsClassName))
     }
 
     for (copyFun in buildCopyFunctions(model, argsClassName)) {
@@ -305,9 +320,14 @@ private fun buildArgsContainerType(argsClassName: ClassName, members: List<Membe
 }
 
 /**
- * Builds one `Generated<...>` implementation class and its matching [builderName] builder
- * function: a constructor/builder parameter of [parents]'s module type per parent (delegated via
- * `by`), then one `Binding`/`SuspendBinding` parameter per member in [members].
+ * Builds the `Generated<Module>` implementation class and its matching [builderName] builder
+ * function: one `Binding`/`SuspendBinding` parameter per member in [members] (which is always
+ * [ModuleModel.allMembers], inherited members included).
+ *
+ * The class is `internal` and marked `@InternalDIBindings` - not `private` - so a composed child's
+ * generated file, and this file's own `copy(...)` extensions, can read its `<member>Binding`
+ * properties off a smart-cast instance. It never leaks into public API: every builder / `copy`
+ * function is typed on the module interface.
  */
 private fun buildModuleType(
     generatedClassName: String,
@@ -316,21 +336,17 @@ private fun buildModuleType(
     argsClassName: ClassName,
     visibility: Visibility,
     members: List<MemberModel>,
-    parents: List<ParentModel>,
     originatingFiles: List<KSFile>,
 ): Pair<TypeSpec, FunSpec> {
     fun bindingTypeOf(member: MemberModel): TypeName = bindingTypeOf(moduleClassName, argsClassName, member)
 
     val classBuilder = TypeSpec.classBuilder(generatedClassName)
-        .addModifiers(KModifier.PRIVATE)
+        .addModifiers(KModifier.INTERNAL)
+        .addAnnotation(INTERNAL_DI_BINDINGS)
     for (file in originatingFiles) {
         classBuilder.addOriginatingKSFile(file)
     }
     val constructorBuilder = FunSpec.constructorBuilder()
-
-    for (parent in parents) {
-        constructorBuilder.addParameter(parent.paramName, parent.moduleClassName)
-    }
 
     for (member in members) {
         val bindingParamName = "${member.name}Binding"
@@ -338,10 +354,6 @@ private fun buildModuleType(
 
         constructorBuilder.addParameter(bindingParamName, bindingType)
         classBuilder.addProperty(
-            // Not `private`: the generated `copy(...)` extensions live in the same file and read
-            // this off a smart-cast receiver to carry the module's current binding across verbatim
-            // (see `copyBindingDefaultCode`). The class itself is `private`, so this stays
-            // file-scoped regardless.
             PropertySpec.builder(bindingParamName, bindingType)
                 .initializer(bindingParamName)
                 .build()
@@ -408,13 +420,8 @@ private fun buildModuleType(
             )
         }
     }
-    // addSuperinterface(type, constructorParameter) below requires the primary constructor to
-    // already be set on the builder and to already contain that parameter.
     classBuilder.primaryConstructor(constructorBuilder.build())
     classBuilder.addSuperinterface(moduleClassName)
-    for (parent in parents) {
-        classBuilder.addSuperinterface(parent.moduleClassName, parent.paramName)
-    }
 
     val builderFun = FunSpec.builder(builderName)
         .returns(moduleClassName)
@@ -426,9 +433,6 @@ private fun buildModuleType(
         .add("return %N(\n", generatedClassName)
         .indent()
         .apply {
-            for (parent in parents) {
-                addStatement("%N = %N,", parent.paramName, parent.paramName)
-            }
             for (member in members) {
                 addStatement("%N = %N,", "${member.name}Binding", member.name)
             }
@@ -438,9 +442,6 @@ private fun buildModuleType(
         .build()
     builderFun.addCode(callCode)
 
-    for (parent in parents) {
-        builderFun.addParameter(parent.paramName, parent.moduleClassName)
-    }
     for (member in members) {
         val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(member))
         if (member.hasDefaultImplementation) {
@@ -453,33 +454,77 @@ private fun buildModuleType(
 }
 
 /**
+ * The second `<Module>(...)` builder overload for a `@DIModule(composed = true)` interface: one
+ * already-built parent module instance per `@DIModule` parent, then one binding per own /
+ * plain-supertype member (a default-impl member's defaults to `null`). It constructs the same
+ * `Generated<Module>` as the full builder - each inherited member's binding pulled off its parent
+ * instance via [parentBindingCode] (contravariant `Binding<in M>` lets a `Binding<Parent, …>` fill
+ * a `Binding<Child, …>` slot; a non-generated / other-module parent, or a 2+ parameter member,
+ * falls back to a `BindingImpls.Delegate`).
+ */
+private fun buildComposedBuilderFunction(
+    model: ModuleModel,
+    generatedClassName: String,
+    argsClassName: ClassName,
+): FunSpec {
+    val moduleClassName = model.moduleClassName
+    val ownMemberNames = model.ownMembers.mapTo(mutableSetOf()) { it.name }
+
+    val builderFun = FunSpec.builder(model.simpleName).returns(moduleClassName)
+    if (model.visibility == Visibility.INTERNAL) {
+        builderFun.addModifiers(KModifier.INTERNAL)
+    }
+
+    for (parent in model.parents) {
+        builderFun.addParameter(parent.paramName, parent.moduleClassName)
+    }
+    for (member in model.ownMembers) {
+        val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, argsClassName, member))
+        if (member.hasDefaultImplementation) {
+            paramBuilder.defaultValue("null")
+        }
+        builderFun.addParameter(paramBuilder.build())
+    }
+
+    val callCode = CodeBlock.builder()
+        .add("return %N(\n", generatedClassName)
+        .indent()
+        .apply {
+            for (member in model.allMembers) {
+                val valueCode = if (member.name in ownMemberNames) {
+                    CodeBlock.of("%N", member.name)
+                } else {
+                    val parent = model.parentByMemberName.getValue(member.name)
+                    parentBindingCode(member, parent.paramName, parent.generatedClassName)
+                }
+                addStatement("%N = %L,", "${member.name}Binding", valueCode)
+            }
+        }
+        .unindent()
+        .add(")\n")
+        .build()
+
+    return builderFun.addCode(callCode).build()
+}
+
+/**
  * Emits every `copy` extension function for [model]:
  * - a no-argument `copy()` that returns the receiver unchanged, so a copy with no overrides doesn't
  *   allocate one. Always emitted.
  * - a `copy(...)` taking one `Binding`/`SuspendBinding` per member in [ModuleModel.allMembers],
- *   building through the "full" `Generated<Module>` class. Only emitted when there is at least one
- *   member - with none, it would take no parameters and collide with the no-arg overload. See
- *   [buildMemberOverrideCopyFunction] and [copyBindingDefaultCode] for how each parameter defaults
- *   to the receiver's current binding for that member.
+ *   building the `Generated<Module>` class. Only emitted when there is at least one member - with
+ *   none, it would take no parameters and collide with the no-arg overload. See
+ *   [buildMemberOverrideCopyFunction] and [storedBindingOrDelegateCode] for how each parameter
+ *   defaults to the binding the receiver currently holds for that member.
  * - if [ModuleModel.isComposed], an extra `copy(...)` taking one already-built module instance per
- *   `@DIModule` parent (each defaulting to the receiver itself), building through the "delegated"
- *   `GeneratedDelegated<Module>` class - lets a caller swap out a whole parent module at once
- *   instead of rebinding its members individually.
+ *   `@DIModule` parent (each defaulting to the receiver itself), also building `Generated<Module>` -
+ *   lets a caller swap out a whole parent module at once instead of rebinding its members
+ *   individually. See [buildModuleOverrideCopyFunction].
  */
 internal fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName): List<FunSpec> {
     val moduleClassName = model.moduleClassName
     val generatedClassName = "Generated${model.generatedBaseName}"
-    val delegatedClassName = "GeneratedDelegated${model.generatedBaseName}"
-    val ownMemberNames = model.ownMembers.mapTo(mutableSetOf()) { it.name }
-
-    // The generated implementation classes that expose a stored `<member>Binding` property for
-    // this member (see `copyBindingDefaultCode`): the full class always; the delegated class too
-    // for a composed module's own member - an inherited member is delegated to a parent instance
-    // and has no binding property on `GeneratedDelegated<Module>`.
-    fun bindingHolders(member: MemberModel): List<String> = buildList {
-        add(generatedClassName)
-        if (model.isComposed && member.name in ownMemberNames) add(delegatedClassName)
-    }
+    val selfGeneratedClass = ClassName(moduleClassName.packageName, generatedClassName)
 
     val noArgCopy = FunSpec.builder("copy")
         .receiver(moduleClassName)
@@ -491,14 +536,11 @@ internal fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName): L
     val copyFunctions = mutableListOf(noArgCopy)
 
     if (model.allMembers.isNotEmpty()) {
-        copyFunctions += buildMemberOverrideCopyFunction(moduleClassName, argsClassName, generatedClassName, model.allMembers, model.visibility, ::bindingHolders)
+        copyFunctions += buildMemberOverrideCopyFunction(moduleClassName, argsClassName, generatedClassName, selfGeneratedClass, model.allMembers, model.visibility)
     }
 
     if (model.isComposed) {
-        copyFunctions += buildModuleOverrideCopyFunction(
-            moduleClassName, argsClassName, delegatedClassName, model.ownMembers, model.parents, model.visibility,
-            holdersFor = { listOf(generatedClassName, delegatedClassName) },
-        )
+        copyFunctions += buildModuleOverrideCopyFunction(model, generatedClassName, selfGeneratedClass)
     }
 
     return copyFunctions
@@ -508,20 +550,20 @@ internal fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName): L
  * The `copy(...)` overload that lets any individual member's binding be overridden.
  *
  * Every parameter defaults to the binding the receiver currently holds for that member (see
- * [copyBindingDefaultCode]) - `holdersFor` gives the generated classes whose `<member>Binding`
- * property is read to obtain it. Omitting a parameter therefore changes nothing about that member,
- * including a `single`/`multiplex` binding's memo and a default-body member's `null` (its body then
- * re-runs against the *new* module, still observing any sibling overridden in the same call). A
- * default-body member keeps its nullable parameter so a caller can still pass an explicit `null` to
- * force it back to the interface's own body.
+ * [storedBindingOrDelegateCode]): `this@copy.<member>Binding` when the receiver is the generated
+ * implementation, a current-value `BindingImpls.Delegate` otherwise. Omitting a parameter therefore
+ * changes nothing about that member, including a `single`/`multiplex` binding's memo and a
+ * default-body member's `null` (its body then re-runs against the *new* module, still observing any
+ * sibling overridden in the same call). A default-body member keeps its nullable parameter so a
+ * caller can still pass an explicit `null` to force it back to the interface's own body.
  */
 private fun buildMemberOverrideCopyFunction(
     moduleClassName: ClassName,
     argsClassName: ClassName,
     generatedClassName: String,
+    selfGeneratedClass: ClassName,
     members: List<MemberModel>,
     visibility: Visibility,
-    holdersFor: (MemberModel) -> List<String>,
 ): FunSpec {
     val funBuilder = FunSpec.builder("copy")
         .receiver(moduleClassName)
@@ -529,13 +571,10 @@ private fun buildMemberOverrideCopyFunction(
     if (visibility == Visibility.INTERNAL) {
         funBuilder.addModifiers(KModifier.INTERNAL)
     }
-    // Every parameter's default falls back to a BindingImpls.Delegate for a foreign receiver, so
-    // the opt-in is always needed once there is at least one parameter.
-    funBuilder.addAnnotation(OPT_IN_INTERNAL_DI_BINDINGS)
 
     for (member in members) {
         val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, argsClassName, member))
-        paramBuilder.defaultValue(copyBindingDefaultCode(member, holdersFor(member)))
+        paramBuilder.defaultValue(storedBindingOrDelegateCode(member, CodeBlock.of("this@copy"), selfGeneratedClass))
         funBuilder.addParameter(paramBuilder.build())
     }
 
@@ -555,32 +594,30 @@ private fun buildMemberOverrideCopyFunction(
 }
 
 /**
- * The `copy(...)` overload that lets a whole `@DIModule` parent be swapped out at once. Each own
- * member's binding is carried across from the receiver (see [copyBindingDefaultCode]); `holdersFor`
- * gives the generated classes exposing its `<member>Binding` property.
+ * The `copy(...)` overload that lets a whole `@DIModule` parent be swapped out at once: one
+ * parameter per parent, each defaulting to the receiver itself, building the same `Generated<Module>`
+ * as every other builder/copy.
+ *
+ * An inherited member's binding comes from its (possibly swapped) parent - see
+ * [parentSwapInheritedCode], which carries the receiver's own binding straight across when that
+ * parent wasn't swapped. An own / plain-supertype member's comes from the receiver, exactly as in
+ * [buildMemberOverrideCopyFunction].
  */
 private fun buildModuleOverrideCopyFunction(
-    moduleClassName: ClassName,
-    argsClassName: ClassName,
+    model: ModuleModel,
     generatedClassName: String,
-    ownMembers: List<MemberModel>,
-    parents: List<ParentModel>,
-    visibility: Visibility,
-    holdersFor: (MemberModel) -> List<String>,
+    selfGeneratedClass: ClassName,
 ): FunSpec {
+    val ownMemberNames = model.ownMembers.mapTo(mutableSetOf()) { it.name }
+
     val funBuilder = FunSpec.builder("copy")
-        .receiver(moduleClassName)
-        .returns(moduleClassName)
-    if (visibility == Visibility.INTERNAL) {
+        .receiver(model.moduleClassName)
+        .returns(model.moduleClassName)
+    if (model.visibility == Visibility.INTERNAL) {
         funBuilder.addModifiers(KModifier.INTERNAL)
     }
-    // Every own member's binding falls back to a BindingImpls.Delegate for a foreign receiver, so
-    // the opt-in is needed whenever there is at least one own member.
-    if (ownMembers.isNotEmpty()) {
-        funBuilder.addAnnotation(OPT_IN_INTERNAL_DI_BINDINGS)
-    }
 
-    for (parent in parents) {
+    for (parent in model.parents) {
         funBuilder.addParameter(
             ParameterSpec.builder(parent.paramName, parent.moduleClassName)
                 .defaultValue("this")
@@ -592,11 +629,14 @@ private fun buildModuleOverrideCopyFunction(
         .add("return %N(\n", generatedClassName)
         .indent()
         .apply {
-            for (parent in parents) {
-                addStatement("%N = %N,", parent.paramName, parent.paramName)
-            }
-            for (member in ownMembers) {
-                addStatement("%N = %L,", "${member.name}Binding", copyBindingDefaultCode(member, holdersFor(member)))
+            for (member in model.allMembers) {
+                val valueCode = if (member.name in ownMemberNames) {
+                    storedBindingOrDelegateCode(member, CodeBlock.of("this@copy"), selfGeneratedClass)
+                } else {
+                    val parent = model.parentByMemberName.getValue(member.name)
+                    parentSwapInheritedCode(member, parent.paramName, parent.generatedClassName, selfGeneratedClass)
+                }
+                addStatement("%N = %L,", "${member.name}Binding", valueCode)
             }
         }
         .unindent()

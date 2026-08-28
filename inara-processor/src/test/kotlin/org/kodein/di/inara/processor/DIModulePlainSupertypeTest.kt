@@ -13,7 +13,8 @@ import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
  * Verifies the shape generated for a `@DIModule` interface that extends a *plain* (non-`@DIModule`)
  * interface: every member reachable through it is bound exactly like an own declaration - required
  * for an abstract member, optional/nullable for a default-bodied one - and, unlike a `@DIModule`
- * parent, it is never delegable: its members show up in the delegated variant's own bindings too.
+ * parent, it can't be sourced from an instance: its members stay binding parameters even on a
+ * `@DIModule(composed = true)` from-parents builder.
  */
 class DIModulePlainSupertypeTest {
 
@@ -174,15 +175,22 @@ class DIModulePlainSupertypeTest {
 
         val generated = compilation.generatedSource("sample/plain", "GeneratedModule2.kt")
 
-        val delegated = generated.substringAfter("private class GeneratedDelegatedModule2(")
-            .substringBefore("private class GeneratedModule2(")
+        // The composed builder: from its own `public fun Module2(` up to the first `copy`.
+        val composedBuilder = generated
+            .substringAfterLast("public fun Module2(")
+            .substringBefore("public fun Module2.copy")
 
-        // Api (plain) is not delegable: its member is bound directly in the delegated variant.
-        assertTrue("tagBinding: Binding<Module2, Unit, String>," in delegated, generated)
-        // Module1 (a @DIModule parent) is delegable: no binding for its member here, just the
-        // `module1: Module1` delegate parameter.
-        assertTrue("module1: Module1," in delegated, generated)
-        assertTrue("aBinding" !in delegated, generated)
+        // Api (plain) is not delegable: its member, and the own member `b`, are direct parameters.
+        assertTrue("tag: Binding<Module2, Unit, String>," in composedBuilder, generated)
+        assertTrue("b: Binding<Module2, Unit, Int>," in composedBuilder, generated)
+        // Module1 (a @DIModule parent) is: it comes in as a `module1: Module1` instance, no binding
+        // parameter for its member `a` - that binding is pulled off the instance instead.
+        assertTrue("module1: Module1," in composedBuilder, generated)
+        assertTrue("a: Binding" !in composedBuilder, generated)
+        assertTrue(
+            "aBinding = if (module1 is GeneratedModule1) module1.aBinding else BindingImpls.Delegate { module1.a }" in composedBuilder,
+            generated,
+        )
     }
 
     @Test

@@ -15,3 +15,15 @@ public interface MultiParamModule {
     public fun mult(s: List<String>, i: Int): Long
     public fun both(vararg ids: Int, flag: Boolean = false): String
 }
+
+/**
+ * A `@DIModule(composed = true)` whose parent has multi-parameter members. Their `Binding`'s
+ * argument type is a *per-module* `<Module>BindingArguments.<Name>` data class, so the parent's
+ * binding can't be handed to the composed implementation's slot - the from-parents builder forwards
+ * through a delegate instead. `va` (a lone vararg) has a module-independent array argument type and
+ * is carried across like any single-parameter member.
+ */
+@DIModule(composed = true)
+public interface ComposedMultiParamModule : MultiParamModule {
+    public val tag: String
+}

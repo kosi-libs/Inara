@@ -34,4 +34,24 @@ class ModuleMultiParamTest {
         assertEquals(1L, copy.mult(listOf("x"), 0))
         assertEquals("fixed-both", copy.both(1, 2))
     }
+
+    @Test
+    fun composedModule_inheritedMultiParamMember_forwardsThroughDelegate() {
+        val base = MultiParamModule(
+            va = Binding.factory { parts -> parts.joinToString("-") },
+            mult = Binding.factory { args -> args.s.size.toLong() + args.i },
+            both = Binding.factory { args -> "${args.ids.toList()}:${args.flag}" },
+        )
+
+        val composed = ComposedMultiParamModule(multiParamModule = base, tag = Binding.value("t"))
+
+        assertEquals("a-b", composed.va("a", "b"))
+        assertEquals(3L, composed.mult(listOf("x", "y"), 1))
+        assertEquals("[1, 2]:true", composed.both(1, 2, flag = true))
+        assertEquals("t", composed.tag)
+
+        val copy = composed.copy(tag = Binding.value("t2"))
+        assertEquals(3L, copy.mult(listOf("x", "y"), 1))
+        assertEquals("t2", copy.tag)
+    }
 }

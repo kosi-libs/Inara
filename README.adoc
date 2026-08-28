@@ -483,11 +483,10 @@ body can reach members declared on the child.
 Diamond inheritance is allowed here: a shared ancestor reached through two paths contributes its
 members exactly once.
 
-=== `composed = true` — delegation
+=== `composed = true` — building from parent modules
 
 When you want to build a module from _already-built_ parent modules rather than rebinding their
-members, pass `composed = true` to `@DIModule`. It additionally generates a delegating
-implementation:
+members, pass `composed = true` to `@DIModule`. It adds a second builder overload:
 
 .AppModule.kt
 [source,kotlin]
@@ -503,7 +502,7 @@ You now get *two* builders:
 .Main.kt
 [source,kotlin]
 ----
-// 1. Delegated: pass built parents, bind only the child's own members.
+// 1. From parents: pass built parent modules, bind only the child's own members.
 val app = AppModule(
     greeterModule = greeter,        // an existing GreeterModule instance
     counterModule = counter,        // an existing CounterModule instance
@@ -528,9 +527,14 @@ val withOtherGreeter = app.copy(greeterModule = differentGreeter)
 Parent parameter names are derived from the parent's name, decapitalized (`GreeterModule` →
 `greeterModule`).
 
-*Diamond inheritance is rejected for `composed = true`.* Two delegates both supplying the same
-ancestor's members is ambiguous in Kotlin, and the generator does not attempt to disambiguate it.
-Plain `@DIModule` has no such constraint.
+Both overloads build the same implementation. When a parent is an Inara-generated module compiled in
+the same Gradle module, each of its members' bindings is carried across *as-is* — a `single` keeps
+its memoised instance through a `copy`, for example. A parent that's hand-written, or compiled in a
+different Gradle module, is read through a lightweight delegate instead.
+
+*Diamond inheritance is rejected for `composed = true`.* Two parents both supplying the same
+ancestor's members is ambiguous — which instance would the child read that member from? — and the
+generator does not attempt to disambiguate it. Plain `@DIModule` has no such constraint.
 
 == Extending non-module interfaces
 
@@ -573,8 +577,9 @@ interface StringConverterModule : Converter<String> { val prefix: String }
 // convert is bound as Binding<StringConverterModule, String, String>
 ----
 
-A plain supertype is never _delegable_: under `@DIModule(composed = true)` its members appear as own
-bindings in the delegated builder, alongside the module's own declarations.
+A plain supertype's members can't be sourced from a parent module: under `@DIModule(composed = true)`
+they appear as binding parameters on the from-parents builder, alongside the module's own
+declarations.
 
 == Ignored members
 

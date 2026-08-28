@@ -9,8 +9,8 @@ public data class Greeting(public val text: String)
  * inheritance through real Gradle/KSP-generated code: `greet` (inherited, has a default body) and
  * `nextAsync` (inherited, `suspend`) both come from a parent, alongside `label`, declared directly
  * on `ComposedModule`. `ComposedModule` is `@DIModule(composed = true)` so it additionally gets the
- * delegated implementation/builder/`copy` set that takes already-built parent instances - see
- * [InheritedModule] for a plain `@DIModule` child, which doesn't.
+ * from-parents builder overload and the parent-swapping `copy` overload - see [InheritedModule] for
+ * a plain `@DIModule` child, which doesn't.
  */
 @DIModule
 public interface GreeterModule {
@@ -31,7 +31,7 @@ public interface ComposedModule : GreeterModule, AsyncCounterModule {
 /**
  * A plain `@DIModule` child of [GreeterModule]: it inherits `greet`/`greeting` (bindable through
  * its own full builder, like any other member) but gets no `InheritedModule(greeterModule, ...)`
- * delegated builder and no parent-swapping `copy` overload, since it isn't `composed = true`.
+ * from-parents builder and no parent-swapping `copy` overload, since it isn't `composed = true`.
  */
 @DIModule
 public interface InheritedModule : GreeterModule {

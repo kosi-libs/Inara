@@ -208,6 +208,47 @@ class DIModuleMultiParamTest {
     }
 
     @Test
+    fun composedModule_inheritedMultiParamMember_alwaysForwardsThroughDelegate() {
+        val source = SourceFile.kotlin(
+            "ComposedMultiParam.kt",
+            """
+            package sample.multiparam
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface BaseModule {
+                fun single(x: Int): Int
+                fun mult(s: List<String>, i: Int): Long
+            }
+
+            @DIModule(composed = true)
+            interface ChildModule : BaseModule {
+                val extra: Int
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/multiparam", "GeneratedChildModule.kt")
+
+        // `single` (one parameter, module-independent argument type) is carried across as-is.
+        assertTrue(
+            "singleBinding = if (baseModule is GeneratedBaseModule) baseModule.singleBinding else BindingImpls.Delegate { baseModule.single(it) }" in generated,
+            generated,
+        )
+        // `mult` (2+ parameters -> a per-module ChildModuleBindingArguments.Mult) can't be handed
+        // across at all - the from-parents builder always forwards through a delegate.
+        assertTrue(
+            "multBinding = BindingImpls.Delegate { baseModule.mult(s = it.s, i = it.i) }" in generated,
+            generated,
+        )
+        assertTrue("if (baseModule is GeneratedBaseModule) baseModule.multBinding" !in generated, generated)
+    }
+
+    @Test
     fun multiParamMember_inheritedFromPlainSupertype_regeneratesOwnArgsClass() {
         val source = SourceFile.kotlin(
             "InheritedMultiParamPlain.kt",

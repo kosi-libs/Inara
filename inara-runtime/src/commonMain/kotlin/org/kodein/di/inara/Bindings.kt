@@ -12,11 +12,16 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * `M` is always that module's own (leaf) type, so [get]'s body can reach any other member of the
  * module through its `module` receiver. `A` is `Unit` for a member with no parameter.
  *
+ * [M] is contravariant: it only ever appears as [get]'s `module` parameter, so a `Binding<Parent,
+ * A, T>` is usable wherever a `Binding<Child, A, T>` is expected. A `@DIModule(composed = true)`
+ * builder relies on this to hand a parent module's own bindings straight to the composed
+ * implementation.
+ *
  * Never implement this directly - build one through the factories on the [Bindings] companion
  * ([value], [provider], [factory], [single], [weakSingle], [multiplex]), which cover every
  * lifecycle Inara supports.
  */
-public interface Binding<M, A, T> {
+public interface Binding<in M, A, T> {
     /** Produces the value for [module] and [arg]. What "produces" means - recomputed on every
      * call, memoized, cached per argument - depends entirely on which [Bindings] factory built
      * this instance. */

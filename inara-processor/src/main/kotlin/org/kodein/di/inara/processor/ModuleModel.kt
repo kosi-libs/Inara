@@ -56,10 +56,17 @@ internal data class MemberModel(
 /**
  * A direct `@DIModule` supertype of a module. [paramName] is the name of the constructor/builder
  * parameter that accepts an already-built instance of it, e.g. `module1` for `Module1`.
+ *
+ * [generatedClassName] is the parent's own `Generated<Parent>` implementation class - `null` when
+ * the parent comes from a compiled dependency rather than this compilation's sources, since that
+ * class is `internal` there and unreferenceable. A `@DIModule(composed = true)` builder reads each
+ * inherited member's binding straight off that class when it's available, and falls back to a
+ * `BindingImpls.Delegate` over the parent instance when it isn't.
  */
 internal data class ParentModel(
     val declaration: KSClassDeclaration,
     val moduleClassName: ClassName,
+    val generatedClassName: ClassName?,
     val paramName: String,
 )
 
@@ -70,13 +77,18 @@ internal data class ParentModel(
  * `@DIModule` [parents]' member closure, with no two members sharing a name (see [parseModule]). A
  * module with no `@DIModule` parents has `allMembers == ownMembers`.
  *
+ * [parentByMemberName] maps each [allMembers] member reached *only* through a `@DIModule` parent to
+ * that direct parent - the generator reads the member's binding off the parent instance in the
+ * `@DIModule(composed = true)` builder and parent-swapping `copy`. Own members and plain-supertype
+ * members are absent; the diamond rule (see [parseModule]) guarantees at most one parent per name.
+ *
  * [ancestorDeclarations] is every interface transitively reachable through any direct supertype -
  * `@DIModule` or plain alike - (deduplicated) - used only so the generator can register each of
  * their source files as an incremental-build dependency of the generated code.
  *
  * [isComposed] is true when the interface is annotated `@DIModule(composed = true)` - it alone decides
- * whether the generator emits the delegated implementation/builder/`copy` set on top of the plain
- * one; [parents] is populated regardless of its value.
+ * whether the generator emits the extra parent-instance builder/`copy` overloads on top of the
+ * plain full ones; [parents] is populated regardless of its value.
  */
 internal data class ModuleModel(
     val declaration: KSClassDeclaration,
@@ -87,6 +99,7 @@ internal data class ModuleModel(
     val ownMembers: List<MemberModel>,
     val allMembers: List<MemberModel>,
     val parents: List<ParentModel>,
+    val parentByMemberName: Map<String, ParentModel>,
     val ancestorDeclarations: List<KSClassDeclaration>,
     val isComposed: Boolean,
 )
@@ -115,8 +128,8 @@ private fun KSClassDeclaration.hasAnnotation(qualifiedName: String): Boolean =
 internal fun KSClassDeclaration.isDIModule(): Boolean =
     hasAnnotation(DI_MODULE_ANNOTATION)
 
-/** True only for `@DIModule(composed = true)` - drives whether the delegated variant is
- * generated. */
+/** True only for `@DIModule(composed = true)` - drives whether the extra from-parents builder and
+ * parent-swapping `copy` overload are generated. */
 private fun KSClassDeclaration.isComposedDIModule(): Boolean {
     val annotation = annotations.firstOrNull {
         it.annotationType.resolve().declaration.qualifiedName?.asString() == DI_MODULE_ANNOTATION
@@ -150,7 +163,7 @@ private fun KSClassDeclaration.superInterfaces(): List<KSClassDeclaration> =
  * [classDecl] plus every interface transitively reachable through its supertypes - `@DIModule` or
  * not, annotation doesn't matter here - keyed by qualified name. Used both to find the most
  * derived owner of a member reached through more than one path (see [resolveClosure]) and to
- * detect a shared ancestor pulled in by two different `@DIModule(composed = true)` delegate parents.
+ * detect a shared ancestor pulled in by two different `@DIModule(composed = true)` parents.
  */
 private fun interfaceClosure(classDecl: KSClassDeclaration): Map<String, KSClassDeclaration> {
     val result = LinkedHashMap<String, KSClassDeclaration>()
@@ -197,10 +210,16 @@ private fun superDeclarationClosure(classDecl: KSClassDeclaration): List<Closure
  * [node] - the direct supertype reference on the interface being parsed, used to anchor a
  * diagnostic on the user's own code - and [ownFromPlain] - whether it was reached through a plain
  * supertype (needs its own binding, [ModuleModel.ownMembers] included) rather than a `@DIModule`
- * parent (satisfied by that parent's delegate in the `@DIModule(composed = true)` variant, [ModuleModel.allMembers]
- * only).
+ * parent (pulled off that parent instance in the `@DIModule(composed = true)` builder,
+ * [ModuleModel.allMembers] only). [directParent] is that `@DIModule` parent, `null` for a
+ * plain-supertype candidate.
  */
-private data class Candidate(val closureDecl: ClosureDecl, val node: KSTypeReference, val ownFromPlain: Boolean)
+private data class Candidate(
+    val closureDecl: ClosureDecl,
+    val node: KSTypeReference,
+    val ownFromPlain: Boolean,
+    val directParent: ParentModel?,
+)
 
 /**
  * Resolves [candidates] into at most one [Candidate] per member name, reporting every genuine
@@ -326,8 +345,8 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
         reportError("A @DIModule interface may not have type parameters.", classDecl)
     }
 
-    // Resolve direct supertypes into @DIModule parents (delegable - eligible for a
-    // @DIModule(composed = true) "Parent by parent" clause) and plain supertypes (their members are bound
+    // Resolve direct supertypes into @DIModule parents (a @DIModule(composed = true) module can be
+    // built from instances of these) and plain supertypes (their members are bound
     // directly, like this interface's own). A supertype that doesn't resolve to an interface at
     // all (an unresolved/error reference) makes the rest of this function unsafe to run, so bail
     // out immediately after reporting every such supertype.
@@ -357,12 +376,11 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
     }
 
     // Diamond inheritance: two direct @DIModule parents that both reach the same ancestor
-    // interface (annotated or not - a plain shared ancestor is just as ambiguous once delegated
-    // twice). Kotlin would need an explicit override for that ancestor's members in the delegated
-    // implementation, which the generator does not attempt, so this is rejected for a
-    // @DIModule(composed = true) interface outright. A plain @DIModule interface has no delegated
-    // implementation to trip over this, so a shared ancestor's members are simply folded in once
-    // (see [resolveClosure]).
+    // interface (annotated or not - a plain shared ancestor is just as ambiguous). The from-parents
+    // builder would have no way to decide which parent instance to read that ancestor's members
+    // from, so this is rejected for a @DIModule(composed = true) interface outright. A plain
+    // @DIModule interface has no from-parents builder to trip over this, so a shared ancestor's
+    // members are simply folded in once (see [resolveClosure]).
     if (isComposed && parentDecls.size > 1) {
         val closures = parentDecls.map { it to interfaceClosure(it) }
         for (i in closures.indices) {
@@ -395,8 +413,16 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
                 )
             }
         }
-        parentModels += ParentModel(parent, parent.toClassName(), paramName)
+        // The parent's own Generated<Parent> class is only referenceable when the parent is
+        // compiled from this run's sources - a parent from a dependency has an `internal` one we
+        // can't touch, so leave it null and let the generator fall back to a delegate.
+        val parentGeneratedClassName = parent.containingFile?.let {
+            ClassName(parent.packageName.asString(), "Generated${parent.generatedBaseName()}")
+        }
+        parentModels += ParentModel(parent, parent.toClassName(), parentGeneratedClassName, paramName)
     }
+    val parentModelByDecl: Map<KSClassDeclaration, ParentModel> =
+        parentDecls.zip(parentModels).toMap()
 
     /**
      * Validates [decl] (declared on [owner]) against every `@DIModule` member rule and, if it
@@ -479,24 +505,26 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
 
     val allMembers = mutableListOf<MemberModel>()
     val ownMembers = mutableListOf<MemberModel>()
+    val parentByMemberName = mutableMapOf<String, ParentModel>()
 
-    // Every member reachable through a @DIModule parent (allMembers only - satisfied by that
-    // parent's delegate in the @DIModule(composed = true) variant) or a plain supertype (both - nothing
-    // delegates it, so it needs its own binding just like an own declaration), resolved together
-    // so an override spanning both groups, or a shared ancestor reached through either, collapses
-    // to one candidate instead of a false clash.
+    // Every member reachable through a @DIModule parent (allMembers only - pulled off that parent
+    // instance in the @DIModule(composed = true) builder) or a plain supertype (both - nothing
+    // supplies it from a parent, so it needs its own binding just like an own declaration),
+    // resolved together so an override spanning both groups, or a shared ancestor reached through
+    // either, collapses to one candidate instead of a false clash.
     val candidates = parentEntries.flatMap { (node, parent) ->
-        superDeclarationClosure(parent).map { Candidate(it, node, ownFromPlain = false) }
+        superDeclarationClosure(parent).map { Candidate(it, node, ownFromPlain = false, directParent = parentModelByDecl[parent]) }
     } + plainEntries.flatMap { (node, plain) ->
-        superDeclarationClosure(plain).map { Candidate(it, node, ownFromPlain = true) }
+        superDeclarationClosure(plain).map { Candidate(it, node, ownFromPlain = true, directParent = null) }
     }
 
     for (candidate in resolveClosure(candidates, classDecl, ::reportError)) {
-        val (closureDecl, node, ownFromPlain) = candidate
+        val (closureDecl, node, ownFromPlain, directParent) = candidate
         val member = parseMember(closureDecl.decl, closureDecl.owner, node, isOwn = false) ?: continue
         nameOwners[closureDecl.decl.simpleName.asString()] = closureDecl.owner
         allMembers += member
         if (ownFromPlain) ownMembers += member
+        else directParent?.let { parentByMemberName[member.name] = it }
     }
 
     fun claimName(name: String, node: KSNode): Boolean {
@@ -572,6 +600,7 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
         ownMembers = ownMembers,
         allMembers = allMembers,
         parents = parentModels,
+        parentByMemberName = parentByMemberName,
         ancestorDeclarations = ancestorDeclarations,
         isComposed = isComposed,
     )

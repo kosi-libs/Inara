@@ -72,8 +72,8 @@ public annotation class DIFactory(
 
 /**
  * Opts into the parts of Inara's public API that exist only to support generated code -
- * [BindingImpls], [SuspendBindingImpls], and their public members - and are not meant to be used
- * directly.
+ * [BindingImpls], [SuspendBindingImpls] and their public members, and the `internal Generated<...>`
+ * module implementation classes the processor emits - and are not meant to be used directly.
  */
 @RequiresOptIn
 @Retention(AnnotationRetention.BINARY)

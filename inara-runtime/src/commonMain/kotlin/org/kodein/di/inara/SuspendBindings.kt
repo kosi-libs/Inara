@@ -8,7 +8,8 @@ import kotlin.concurrent.Volatile
 
 /**
  * The `suspend` counterpart to [Binding] - identical shape, generated for any `@DIModule` member
- * declared `suspend fun`. `M`/`A`/`T` mean exactly what they mean on [Binding].
+ * declared `suspend fun`. `M`/`A`/`T` mean exactly what they mean on [Binding], [M] contravariance
+ * included.
  *
  * Build one through the factories on the [Bindings] companion ([value], [provider], [factory],
  * [single], [weakSingle], [multiplex]) - every [Binding] factory has a `suspend` equivalent here,
@@ -16,7 +17,7 @@ import kotlin.concurrent.Volatile
  * `SingleThreadSafety` choice. An existing non-`suspend` [Binding] can be lifted into one with
  * [suspend].
  */
-public interface SuspendBinding<M, A, T> {
+public interface SuspendBinding<in M, A, T> {
     /** Produces the value for [module] and [arg] - the `suspend` counterpart to [Binding.get]. */
     public suspend fun get(module: M, arg: A): T
 

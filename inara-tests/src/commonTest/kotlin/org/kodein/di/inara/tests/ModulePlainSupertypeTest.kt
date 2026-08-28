@@ -51,7 +51,7 @@ class ModulePlainSupertypeTest {
     }
 
     @Test
-    fun composedModule_delegatedBuilder_bindsPlainSupertypeMemberDirectly() {
+    fun composedModule_fromParentsBuilder_bindsPlainSupertypeMemberDirectly() {
         val counter = CounterModule(
             next = Binding.value(1),
             instance = Binding.value(Service(1)),

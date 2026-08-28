@@ -10,13 +10,13 @@ import com.google.devtools.ksp.validate
 import com.squareup.kotlinpoet.ksp.writeTo
 
 /**
- * For every interface annotated with `@DIModule`, generates a private `Binding`-backed
+ * For every interface annotated with `@DIModule`, generates an internal `Binding`-backed
  * implementation (`SuspendBinding` for `suspend` members) and a builder function named after the
- * interface. A `@DIModule(composed = true)` interface additionally gets a second, delegated
- * implementation/builder/`copy` set for its `@DIModule` parents. The interface may extend any
- * interface, not just other `@DIModule` ones - a plain supertype's members are bound exactly like
- * the module's own. See [parseModule] for the validation rules and [generateModuleFile] for the
- * generated shape(s).
+ * interface. A `@DIModule(composed = true)` interface additionally gets a second builder overload
+ * taking its `@DIModule` parents as built instances, plus a parent-swapping `copy` overload. The
+ * interface may extend any interface, not just other `@DIModule` ones - a plain supertype's members
+ * are bound exactly like the module's own. See [parseModule] for the validation rules and
+ * [generateModuleFile] for the generated shape(s).
  *
  * For every `internal object` annotated with `@DIFactory`, generates a top-level builder function
  * for the class it `builds`, resolving each of that class's primary constructor arguments off an
