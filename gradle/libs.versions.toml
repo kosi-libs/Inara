@@ -1,7 +1,5 @@
 [versions]
-android-gradle-plugin = "9.1.1"     # https://developer.android.com/build/releases/about-agp
 coroutines = "1.11.0"               # https://github.com/Kotlin/kotlinx.coroutines/releases
-gradle-pluginPublish = "2.1.1"      # https://plugins.gradle.org/plugin/com.gradle.plugin-publish
 kctfork = "0.13.0"                  # https://github.com/ZacSweers/kotlin-compile-testing/releases
 kotlin = "2.4.10"                   # https://kotlinlang.org/docs/releases.html#release-history
 kotlinPoet = "2.3.0"                # https://github.com/square/kotlinpoet/releases
@@ -9,8 +7,6 @@ ksp = "2.3.11"                      # https://github.com/google/ksp/releases
 mavenPublish = "0.37.0"             # https://github.com/vanniktech/gradle-maven-publish-plugin/releases
 
 [plugins]
-android-multiplatformLibrary = { id = "com.android.kotlin.multiplatform.library", version.ref = "android-gradle-plugin" }
-gradle-pluginPublish = { id = "com.gradle.plugin-publish", version.ref = "gradle-pluginPublish" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
@@ -21,7 +17,6 @@ kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotl
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
 kotlinx-coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
-kotlin-gradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 kotlinPoet-ksp = { module = "com.squareup:kotlinpoet-ksp", version.ref = "kotlinPoet" }
 kctfork-ksp = { module = "dev.zacsweers.kctfork:ksp", version.ref = "kctfork" }
 ksp-symbolProcessingApi = { module = "com.google.devtools.ksp:symbol-processing-api", version.ref = "ksp" }

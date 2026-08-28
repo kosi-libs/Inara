@@ -3,6 +3,10 @@ plugins {
     alias(libs.plugins.mavenPublish)
 }
 
+kotlin {
+    jvmToolchain(17)
+}
+
 dependencies {
     implementation(libs.ksp.symbolProcessingApi)
     implementation(libs.kotlinPoet.ksp)
