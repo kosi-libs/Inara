@@ -38,7 +38,7 @@ class DIModuleMultiParamTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/multiparam", "GeneratedModule.kt")
+        val generated = compilation.generatedSource("sample/multiparam", "InaraModule.kt")
 
         // Container: private constructor, one data class per multi-param member, no defaults, and
         // @Suppress("ArrayInDataClass") only on the one with an array field.
@@ -103,7 +103,7 @@ class DIModuleMultiParamTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/multiparam", "GeneratedPrimitiveVarargModule.kt")
+        val generated = compilation.generatedSource("sample/multiparam", "InaraPrimitiveVarargModule.kt")
         assertTrue("Binding<PrimitiveVarargModule, IntArray, Int>" in generated, generated)
         assertTrue("Binding<PrimitiveVarargModule, LongArray, Long>" in generated, generated)
         assertTrue("Binding<PrimitiveVarargModule, BooleanArray, Boolean>" in generated, generated)
@@ -129,7 +129,7 @@ class DIModuleMultiParamTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/multiparam", "GeneratedSuspendMultiParamModule.kt")
+        val generated = compilation.generatedSource("sample/multiparam", "InaraSuspendMultiParamModule.kt")
         assertTrue("public data class Combine(" in generated, generated)
         assertTrue("public val combineBinding:" in generated, generated)
         assertTrue(
@@ -158,7 +158,7 @@ class DIModuleMultiParamTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/multiparam", "GeneratedDefaultMultiParamModule.kt")
+        val generated = compilation.generatedSource("sample/multiparam", "InaraDefaultMultiParamModule.kt")
         assertTrue("public val bothBinding:" in generated, generated)
         assertTrue(
             "Binding<DefaultMultiParamModule, DefaultMultiParamModuleBindingArguments.Both, String>?," in generated,
@@ -195,10 +195,10 @@ class DIModuleMultiParamTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generatedBase = compilation.generatedSource("sample/multiparam", "GeneratedBaseModule.kt")
+        val generatedBase = compilation.generatedSource("sample/multiparam", "InaraBaseModule.kt")
         assertTrue("public class BaseModuleBindingArguments private constructor()" in generatedBase, generatedBase)
 
-        val generatedChild = compilation.generatedSource("sample/multiparam", "GeneratedChildModule.kt")
+        val generatedChild = compilation.generatedSource("sample/multiparam", "InaraChildModule.kt")
         assertTrue("public class ChildModuleBindingArguments private constructor()" in generatedChild, generatedChild)
         assertTrue("public data class Mult(" in generatedChild, generatedChild)
         assertTrue(
@@ -232,11 +232,11 @@ class DIModuleMultiParamTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/multiparam", "GeneratedChildModule.kt")
+        val generated = compilation.generatedSource("sample/multiparam", "InaraChildModule.kt")
 
         // `single` (one parameter, module-independent argument type) is carried across as-is.
         assertTrue(
-            "singleBinding = if (baseModule is GeneratedBaseModule) baseModule.singleBinding else BindingImpls.Delegate { baseModule.single(it) }" in generated,
+            "singleBinding = if (baseModule is InaraBaseModule) baseModule.singleBinding else BindingImpls.Delegate { baseModule.single(it) }" in generated,
             generated,
         )
         // `mult` (2+ parameters -> a per-module ChildModuleBindingArguments.Mult) can't be handed
@@ -245,7 +245,7 @@ class DIModuleMultiParamTest {
             "multBinding = BindingImpls.Delegate { baseModule.mult(s = it.s, i = it.i) }" in generated,
             generated,
         )
-        assertTrue("if (baseModule is GeneratedBaseModule) baseModule.multBinding" !in generated, generated)
+        assertTrue("if (baseModule is InaraBaseModule) baseModule.multBinding" !in generated, generated)
     }
 
     @Test
@@ -271,7 +271,7 @@ class DIModuleMultiParamTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/multiparam", "GeneratedModule1.kt")
+        val generated = compilation.generatedSource("sample/multiparam", "InaraModule1.kt")
         assertTrue("public class Module1BindingArguments private constructor()" in generated, generated)
         assertTrue("public data class Mult(" in generated, generated)
         assertTrue("public val multBinding: Binding<Module1, Module1BindingArguments.Mult, Long>," in generated, generated)

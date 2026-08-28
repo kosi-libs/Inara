@@ -36,7 +36,7 @@ class DIModuleMemberSelectionTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/selection", "GeneratedDefaultBodyModule.kt")
+        val generated = compilation.generatedSource("sample/selection", "InaraDefaultBodyModule.kt")
         assertTrue("nameBinding" in generated, generated)
         assertTrue(
             "public val greetingBinding: Binding<DefaultBodyModule, Unit, String>?" in generated,
@@ -71,7 +71,7 @@ class DIModuleMemberSelectionTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/selection", "GeneratedSuspendModule.kt")
+        val generated = compilation.generatedSource("sample/selection", "InaraSuspendModule.kt")
         assertTrue("public val nameBinding: Binding<SuspendModule, Unit, String>" in generated, generated)
         assertTrue(
             "public val loadDataBinding: SuspendBinding<SuspendModule, Unit, String>" in generated,
@@ -108,7 +108,7 @@ class DIModuleMemberSelectionTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/selection", "GeneratedSuspendDefaultModule.kt")
+        val generated = compilation.generatedSource("sample/selection", "InaraSuspendDefaultModule.kt")
         assertTrue(
             "public val loadDataBinding: SuspendBinding<SuspendDefaultModule, Unit, String>?" in generated,
             generated,

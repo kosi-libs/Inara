@@ -41,7 +41,7 @@ class DIFactorySuspendTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedSessionDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraSessionDIFactory.kt")
         assertTrue("public suspend fun Session(module: TokenModule): Session" in generated, generated)
         assertTrue("token = module.token()," in generated, generated)
     }
@@ -68,7 +68,7 @@ class DIFactorySuspendTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedGreeterDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
         assertTrue("public fun Greeter(module: GreetingModule): Greeter" in generated, generated)
         assertTrue("suspend" !in generated, generated)
     }
@@ -97,7 +97,7 @@ class DIFactorySuspendTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedGreeterDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
         assertTrue("public suspend fun Greeter(module: GreetingModule): Greeter" in generated, generated)
         assertTrue("greeting = module.argGreeting()," in generated, generated)
     }
@@ -125,7 +125,7 @@ class DIFactorySuspendTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedGreeterDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
         assertTrue("public suspend fun Greeter(module: GreetingModule): Greeter" in generated, generated)
     }
 
@@ -152,7 +152,7 @@ class DIFactorySuspendTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedGreeterDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
         assertTrue("public fun Greeter(module: GreetingModule): Greeter" in generated, generated)
         assertTrue("suspend" !in generated, generated)
     }

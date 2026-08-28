@@ -40,7 +40,7 @@ class DIModuleIgnoredMemberTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/ignored", "GeneratedVarModule.kt")
+        val generated = compilation.generatedSource("sample/ignored", "InaraVarModule.kt")
         assertTrue("valueBinding" !in generated, generated)
         assertTrue("override var value" !in generated, generated)
         assertTrue("public val extraBinding: Binding<VarModule, Unit, Int>," in generated, generated)
@@ -68,7 +68,7 @@ class DIModuleIgnoredMemberTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/ignored", "GeneratedExtensionFunctionModule.kt")
+        val generated = compilation.generatedSource("sample/ignored", "InaraExtensionFunctionModule.kt")
         assertTrue("shoutBinding" !in generated, generated)
         assertTrue("shout" !in generated, generated)
     }
@@ -93,7 +93,7 @@ class DIModuleIgnoredMemberTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/ignored", "GeneratedExtensionPropertyModule.kt")
+        val generated = compilation.generatedSource("sample/ignored", "InaraExtensionPropertyModule.kt")
         assertTrue("doubledBinding" !in generated, generated)
         assertTrue("doubled" !in generated, generated)
     }
@@ -118,7 +118,7 @@ class DIModuleIgnoredMemberTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/ignored", "GeneratedGenericModule.kt")
+        val generated = compilation.generatedSource("sample/ignored", "InaraGenericModule.kt")
         assertTrue("identityBinding" !in generated, generated)
         assertTrue("identity" !in generated, generated)
     }
@@ -143,7 +143,7 @@ class DIModuleIgnoredMemberTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/ignored", "GeneratedGenericExtensionModule.kt")
+        val generated = compilation.generatedSource("sample/ignored", "InaraGenericExtensionModule.kt")
         assertTrue("identityBinding" !in generated, generated)
         assertTrue("identity" !in generated, generated)
     }
@@ -174,7 +174,7 @@ class DIModuleIgnoredMemberTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/ignored", "GeneratedChildModule.kt")
+        val generated = compilation.generatedSource("sample/ignored", "InaraChildModule.kt")
         assertTrue("valueBinding" !in generated, generated)
         assertTrue("public val extraBinding: Binding<ChildModule, Unit, Int>," in generated, generated)
     }
@@ -202,7 +202,7 @@ class DIModuleIgnoredMemberTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/ignored", "GeneratedModule1.kt")
+        val generated = compilation.generatedSource("sample/ignored", "InaraModule1.kt")
         assertTrue("identityBinding" !in generated, generated)
         assertTrue("public val extraBinding: Binding<Module1, Unit, Int>," in generated, generated)
     }
@@ -228,7 +228,7 @@ class DIModuleIgnoredMemberTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/ignored", "GeneratedOnlyIgnoredModule.kt")
+        val generated = compilation.generatedSource("sample/ignored", "InaraOnlyIgnoredModule.kt")
         assertTrue("valueBinding" !in generated, generated)
         assertTrue("public fun OnlyIgnoredModule(): OnlyIgnoredModule" in generated, generated)
         assertTrue("public fun OnlyIgnoredModule.copy(): OnlyIgnoredModule = this" in generated, generated)

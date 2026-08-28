@@ -561,7 +561,7 @@ class DIModuleValidationTest {
         )
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/validation", "GeneratedExtensionDefaultModule.kt")
+        val generated = compilation.generatedSource("sample/validation", "InaraExtensionDefaultModule.kt")
         assertTrue("shoutBinding" !in generated, generated)
         assertTrue("shout" !in generated, generated)
     }
@@ -585,7 +585,7 @@ class DIModuleValidationTest {
         )
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/validation", "GeneratedGenericDefaultModule.kt")
+        val generated = compilation.generatedSource("sample/validation", "InaraGenericDefaultModule.kt")
         assertTrue("identityBinding" !in generated, generated)
         assertTrue("identity" !in generated, generated)
     }
@@ -611,7 +611,7 @@ class DIModuleValidationTest {
         )
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/validation", "GeneratedVarDefaultModule.kt")
+        val generated = compilation.generatedSource("sample/validation", "InaraVarDefaultModule.kt")
         assertTrue("valueBinding" !in generated, generated)
         assertTrue("value" !in generated, generated)
     }

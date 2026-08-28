@@ -51,7 +51,7 @@ class DIFactoryTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedUserControllerDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraUserControllerDIFactory.kt")
 
         assertTrue("public fun UsersController(module: NetworkModule): UsersController" in generated, generated)
         assertTrue("with(UserControllerDIFactory)" in generated, generated)
@@ -85,7 +85,7 @@ class DIFactoryTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedGreeterDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
         assertTrue("public fun Greeter(module: GreetingModule): Greeter" in generated, generated)
         assertTrue("greeting = module.greeting," in generated, generated)
     }
@@ -118,7 +118,7 @@ class DIFactoryTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedShelterDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraShelterDIFactory.kt")
         assertTrue("animal = module.dog()," in generated, generated)
     }
 
@@ -153,7 +153,7 @@ class DIFactoryTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedSessionDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraSessionDIFactory.kt")
         assertTrue("token = module.argToken()," in generated, generated)
     }
 
@@ -182,7 +182,7 @@ class DIFactoryTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedInternalGreeterDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraInternalGreeterDIFactory.kt")
         assertTrue("internal fun InternalGreeter(module: GreetingModule): InternalGreeter" in generated, generated)
     }
 
@@ -215,7 +215,7 @@ class DIFactoryTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedWrappedDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraWrappedDIFactory.kt")
         assertTrue("computed = module.argComputed()," in generated, generated)
     }
 
@@ -247,7 +247,7 @@ class DIFactoryTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedGreeterDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
         assertTrue("count = module.count," in generated, generated)
     }
 
@@ -279,7 +279,7 @@ class DIFactoryTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedGreeterDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
         assertTrue("greeting = module.greeting," in generated, generated)
     }
 
@@ -315,7 +315,7 @@ class DIFactoryTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedGreeterDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
         assertTrue("prefix = module.argPrefix()," in generated, generated)
         assertTrue("suffix = module.argSuffix()," in generated, generated)
         assertTrue("label" !in generated, generated)
@@ -348,7 +348,7 @@ class DIFactoryTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "GeneratedGreeterDIFactory.kt")
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
         assertTrue("internal fun Greeter(module: GreetingModule): Greeter" in generated, generated)
     }
 }

@@ -41,7 +41,7 @@ class DIModulePlainSupertypeTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/plain", "GeneratedModule1.kt")
+        val generated = compilation.generatedSource("sample/plain", "InaraModule1.kt")
 
         assertTrue("public val nameBinding: Binding<Module1, Unit, String>," in generated, generated)
         assertTrue("override val name: String" in generated, generated)
@@ -72,7 +72,7 @@ class DIModulePlainSupertypeTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/plain", "GeneratedModule1.kt")
+        val generated = compilation.generatedSource("sample/plain", "InaraModule1.kt")
 
         assertTrue("public val tagBinding: Binding<Module1, Unit, String>?," in generated, generated)
         assertTrue("super<Module1>.tag()" in generated, generated)
@@ -101,7 +101,7 @@ class DIModulePlainSupertypeTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/plain", "GeneratedModule1.kt")
+        val generated = compilation.generatedSource("sample/plain", "InaraModule1.kt")
 
         // The substituted concrete type shows up, not Api's own type parameter name.
         assertTrue("public val valueBinding: Binding<Module1, Unit, String>," in generated, generated)
@@ -136,7 +136,7 @@ class DIModulePlainSupertypeTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/plain", "GeneratedModule1.kt")
+        val generated = compilation.generatedSource("sample/plain", "InaraModule1.kt")
 
         // `tag` appears once, and as the *derived* (default-bodied) declaration, not Api's abstract
         // one - a required binding would mean the abstract version won.
@@ -173,7 +173,7 @@ class DIModulePlainSupertypeTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/plain", "GeneratedModule2.kt")
+        val generated = compilation.generatedSource("sample/plain", "InaraModule2.kt")
 
         // The composed builder: from its own `public fun Module2(` up to the first `copy`.
         val composedBuilder = generated
@@ -188,7 +188,7 @@ class DIModulePlainSupertypeTest {
         assertTrue("module1: Module1," in composedBuilder, generated)
         assertTrue("a: Binding" !in composedBuilder, generated)
         assertTrue(
-            "aBinding = if (module1 is GeneratedModule1) module1.aBinding else BindingImpls.Delegate { module1.a }" in composedBuilder,
+            "aBinding = if (module1 is InaraModule1) module1.aBinding else BindingImpls.Delegate { module1.a }" in composedBuilder,
             generated,
         )
     }
@@ -221,7 +221,7 @@ class DIModulePlainSupertypeTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/plain", "GeneratedModule2.kt")
+        val generated = compilation.generatedSource("sample/plain", "InaraModule2.kt")
 
         assertTrue("public val tagBinding: Binding<Module2, Unit, String>," in generated, generated)
         assertTrue("override val tag: String" in generated, generated)

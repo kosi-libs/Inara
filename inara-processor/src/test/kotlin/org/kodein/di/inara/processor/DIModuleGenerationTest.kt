@@ -46,10 +46,10 @@ class DIModuleGenerationTest {
         val compilation = compile(networkModuleSource)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample", "GeneratedNetworkModule.kt")
+        val generated = compilation.generatedSource("sample", "InaraNetworkModule.kt")
 
-        assertTrue("@file:OptIn(InternalDIBindings::class)" in generated, generated)
-        assertTrue("@InternalDIBindings\ninternal class GeneratedNetworkModule(" in generated, generated)
+        assertTrue("@file:OptIn(InternalInaraGeneration::class)" in generated, generated)
+        assertTrue("@InternalInaraGeneration\npublic class InaraNetworkModule(" in generated, generated)
         assertTrue("public val baseUrlBinding: Binding<NetworkModule, Unit, String>" in generated, generated)
         assertTrue("public val httpClientBinding: Binding<NetworkModule, Unit, HttpClient>" in generated, generated)
         assertTrue("public val contextBinding: Binding<NetworkModule, Int, Context>" in generated, generated)

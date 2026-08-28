@@ -22,7 +22,7 @@ import org.kodein.di.inara.processor.ArgumentSource.ModuleProperty
  * already guarantees that).
  */
 internal fun generateFactoryFile(model: FactoryModel): FileSpec {
-    val fileBuilder = FileSpec.builder(model.factoryClassName.packageName, "Generated${model.factoryClassName.simpleName}")
+    val fileBuilder = FileSpec.builder(model.factoryClassName.packageName, inaraName(model.factoryClassName.simpleName))
     fileBuilder.addFunction(buildFactoryFunction(model))
     return fileBuilder.build()
 }

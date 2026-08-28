@@ -22,7 +22,7 @@ public interface SuspendBinding<in M, A, T> {
     public suspend fun get(module: M, arg: A): T
 
     /** Every way to build a [SuspendBinding]. */
-    @OptIn(InternalDIBindings::class)
+    @OptIn(InternalInaraGeneration::class)
     public companion object Bindings {
         /** A [SuspendBinding] that always returns [value] - nothing is computed, ever. */
         public fun <M, T> value(value: T) : SuspendBinding<M, Unit, T> = SuspendBindingImpls.Value(value)
@@ -54,7 +54,7 @@ public interface SuspendBinding<in M, A, T> {
 
 /** Adapts an existing non-`suspend` [Binding] into a [SuspendBinding] with the same lifecycle,
  * simply calling through to [Binding.get] from a `suspend` context. */
-@OptIn(InternalDIBindings::class)
+@OptIn(InternalInaraGeneration::class)
 public fun <M, A, T> Binding<M, A, T>.suspend(): SuspendBinding<M, A, T> = SuspendBindingImpls.SuspendDelegate { this@suspend.get(this, it) }
 
 /**
@@ -62,7 +62,7 @@ public fun <M, A, T> Binding<M, A, T>.suspend(): SuspendBinding<M, A, T> = Suspe
  * produce - the `suspend` counterpart to [BindingImpls]. Not for direct use, same as there -
  * [SuspendDelegate] is public only because a generated `copy(...)` function needs it.
  */
-@InternalDIBindings
+@InternalInaraGeneration
 public class SuspendBindingImpls {
     internal class Value<M, T>(private val value: T) : SuspendBinding<M, Unit, T> { override suspend fun get(module: M, arg: Unit): T = value }
 

@@ -210,7 +210,7 @@ AppModule(
 The processor generates a function with the same name as the interface, taking one parameter per
 member:
 
-.GeneratedAppModule.kt
+.InaraAppModule.kt
 [source,kotlin]
 ----
 public fun AppModule(
@@ -378,7 +378,7 @@ interface Module {
 
 generates
 
-.GeneratedModuleBindingArguments.kt
+.InaraModule.kt
 [source,kotlin]
 ----
 public class ModuleBindingArguments private constructor() {
@@ -527,10 +527,10 @@ val withOtherGreeter = app.copy(greeterModule = differentGreeter)
 Parent parameter names are derived from the parent's name, decapitalized (`GreeterModule` →
 `greeterModule`).
 
-Both overloads build the same implementation. When a parent is an Inara-generated module compiled in
-the same Gradle module, each of its members' bindings is carried across *as-is* — a `single` keeps
-its memoised instance through a `copy`, for example. A parent that's hand-written, or compiled in a
-different Gradle module, is read through a lightweight delegate instead.
+Both overloads build the same implementation. When a parent is an Inara-generated module — from any
+Gradle module — each of its members' bindings is carried across *as-is*: a `single` keeps its
+memoised instance through a `copy`, for example. A parent that's hand-written (or an inherited member
+taking two or more parameters) is read through a lightweight delegate instead.
 
 *Diamond inheritance is rejected for `composed = true`.* Two parents both supplying the same
 ancestor's members is ambiguous — which instance would the child read that member from? — and the
@@ -622,7 +622,8 @@ something unsatisfiable.
 
 == Visibility and nesting
 
-An `internal` module interface gets an `internal` builder and `internal` `copy` functions:
+An `internal` module interface gets an `internal` implementation class, builder, and `copy`
+functions:
 
 .InternalModule.kt
 [source,kotlin]
@@ -643,7 +644,7 @@ interface Outer {
 }
 
 val inner: Outer.Inner = Inner(label = Binding.value("inner"))
-// generated: private class GeneratedOuterInner(...) : Outer.Inner
+// generated: public class InaraOuterInner(...) : Outer.Inner
 ----
 
 == Building plain classes
@@ -666,7 +667,7 @@ internal object UserControllerDIFactory {
 
 generates
 
-.GeneratedUserControllerDIFactory.kt
+.InaraUserControllerDIFactory.kt
 [source,kotlin]
 ----
 public fun UsersController(module: NetworkModule): UsersController = with(UserControllerDIFactory) {
@@ -714,7 +715,7 @@ class AsyncGreeter(val service: Service)
 internal object AsyncGreeterDIFactory
 ----
 
-.GeneratedAsyncGreeterDIFactory.kt
+.InaraAsyncGreeterDIFactory.kt
 [source,kotlin]
 ----
 // generated:

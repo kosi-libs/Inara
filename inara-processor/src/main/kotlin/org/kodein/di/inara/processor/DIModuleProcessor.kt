@@ -10,8 +10,8 @@ import com.google.devtools.ksp.validate
 import com.squareup.kotlinpoet.ksp.writeTo
 
 /**
- * For every interface annotated with `@DIModule`, generates an internal `Binding`-backed
- * implementation (`SuspendBinding` for `suspend` members) and a builder function named after the
+ * For every interface annotated with `@DIModule`, generates a `Binding`-backed implementation
+ * (`SuspendBinding` for `suspend` members) and a builder function named after the
  * interface. A `@DIModule(composed = true)` interface additionally gets a second builder overload
  * taking its `@DIModule` parents as built instances, plus a parent-swapping `copy` overload. The
  * interface may extend any interface, not just other `@DIModule` ones - a plain supertype's members

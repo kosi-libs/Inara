@@ -28,7 +28,7 @@ public interface Binding<in M, A, T> {
     public fun get(module: M, arg: A): T
 
     /** Every way to build a [Binding]. */
-    @OptIn(InternalDIBindings::class)
+    @OptIn(InternalInaraGeneration::class)
     public companion object Bindings {
         /** A [Binding] that always returns [value] - nothing is computed, ever. */
         public fun <M, T> value(value: T) : Binding<M, Unit, T> = BindingImpls.Value(value)
@@ -95,9 +95,9 @@ public interface Binding<in M, A, T> {
  *
  * Not for direct use - [Delegate] is public only because a generated `copy(...)` function needs it
  * to express "keep the module's current value for this member" as its parameter default; the rest
- * is `internal`. Gated behind [InternalDIBindings] as a signal, not an enforcement mechanism.
+ * is `internal`. Gated behind [InternalInaraGeneration] as a signal, not an enforcement mechanism.
  */
-@InternalDIBindings
+@InternalInaraGeneration
 public class BindingImpls {
     internal class Value<M, T>(private val value: T) : Binding<M, Unit, T> { override fun get(module: M, arg: Unit): T = value }
 

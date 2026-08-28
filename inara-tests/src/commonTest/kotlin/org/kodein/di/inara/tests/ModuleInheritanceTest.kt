@@ -63,7 +63,7 @@ class ModuleInheritanceTest {
     @Test
     fun composedModule_copyPreservesInheritedSingletonBinding() {
         // The bug this design fixes: a composed module built from parent instances used to become a
-        // GeneratedDelegated* with no binding property for inherited members, so copy() couldn't
+        // InaraDelegated* with no binding property for inherited members, so copy() couldn't
         // carry them across and rebuilt a delegate - dropping the single's memo. Now it holds the
         // parent's actual binding, so the memo survives the copy.
         var builds = 0

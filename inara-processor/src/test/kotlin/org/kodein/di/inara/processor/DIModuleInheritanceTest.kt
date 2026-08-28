@@ -12,7 +12,7 @@ import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 /**
  * Verifies the shape generated for an interface that extends other `@DIModule` interfaces.
  *
- * Every `@DIModule` child gets one `internal Generated<Module>` implementation and its full builder
+ * Every `@DIModule` child gets one `internal Inara<Module>` implementation and its full builder
  * (one binding per member, inherited included, parameterized on the leaf module type) - see
  * [plainModule_generatesOnlyFullVariant]. A `@DIModule(composed = true)` child additionally gets a
  * second builder overload taking parent instances, which builds that *same* class by pulling each
@@ -47,13 +47,13 @@ class DIModuleInheritanceTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/inheritance", "GeneratedModule3.kt")
+        val generated = compilation.generatedSource("sample/inheritance", "InaraModule3.kt")
 
         // One implementation class, no delegated variant.
-        assertTrue("GeneratedDelegatedModule3" !in generated, generated)
-        assertEquals(1, Regex("""class GeneratedModule3\(""").findAll(generated).count(), generated)
-        assertTrue("@file:OptIn(InternalDIBindings::class)" in generated, generated)
-        assertTrue("@InternalDIBindings\ninternal class GeneratedModule3(" in generated, generated)
+        assertTrue("InaraDelegatedModule3" !in generated, generated)
+        assertEquals(1, Regex("""class InaraModule3\(""").findAll(generated).count(), generated)
+        assertTrue("@file:OptIn(InternalInaraGeneration::class)" in generated, generated)
+        assertTrue("@InternalInaraGeneration\npublic class InaraModule3(" in generated, generated)
         assertTrue("public val aBinding: Binding<Module3, Unit, TypeA>," in generated, generated)
         assertTrue("public val bBinding: Binding<Module3, Unit, TypeB>," in generated, generated)
         assertTrue("public val cBinding: Binding<Module3, Unit, TypeC>," in generated, generated)
@@ -68,11 +68,11 @@ class DIModuleInheritanceTest {
         assertTrue("module1: Module1," in generated, generated)
         assertTrue("module2: Module2," in generated, generated)
         assertTrue(
-            "aBinding = if (module1 is GeneratedModule1) module1.aBinding else BindingImpls.Delegate { module1.a }" in generated,
+            "aBinding = if (module1 is InaraModule1) module1.aBinding else BindingImpls.Delegate { module1.a }" in generated,
             generated,
         )
         assertTrue(
-            "bBinding = if (module2 is GeneratedModule2) module2.bBinding else BindingImpls.Delegate { module2.b }" in generated,
+            "bBinding = if (module2 is InaraModule2) module2.bBinding else BindingImpls.Delegate { module2.b }" in generated,
             generated,
         )
         assertTrue("cBinding = c," in generated, generated)
@@ -105,11 +105,11 @@ class DIModuleInheritanceTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/inheritance", "GeneratedModule3.kt")
+        val generated = compilation.generatedSource("sample/inheritance", "InaraModule3.kt")
 
-        // No delegated variant at all - just the one Generated<Module> with every member's binding.
-        assertTrue("GeneratedDelegatedModule3" !in generated, generated)
-        assertTrue("internal class GeneratedModule3(" in generated, generated)
+        // No delegated variant at all - just the one Inara<Module> with every member's binding.
+        assertTrue("InaraDelegatedModule3" !in generated, generated)
+        assertTrue("public class InaraModule3(" in generated, generated)
         assertTrue("public val aBinding: Binding<Module3, Unit, TypeA>," in generated, generated)
         assertTrue("public val bBinding: Binding<Module3, Unit, TypeB>," in generated, generated)
         assertTrue("public val cBinding: Binding<Module3, Unit, TypeC>," in generated, generated)
@@ -156,7 +156,7 @@ class DIModuleInheritanceTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/inheritance", "GeneratedLeaf.kt")
+        val generated = compilation.generatedSource("sample/inheritance", "InaraLeaf.kt")
 
         // The shared ancestor's members are folded in exactly once, not once per path: each gets a
         // single constructor-parameter declaration, not one per path reaching Base.
@@ -191,7 +191,7 @@ class DIModuleInheritanceTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/inheritance", "GeneratedChildModule.kt")
+        val generated = compilation.generatedSource("sample/inheritance", "InaraChildModule.kt")
 
         assertTrue(
             "public val greetingBinding: Binding<ChildModule, Unit, String>?" in generated,
@@ -228,7 +228,7 @@ class DIModuleInheritanceTest {
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/inheritance", "GeneratedAsyncChildModule.kt")
+        val generated = compilation.generatedSource("sample/inheritance", "InaraAsyncChildModule.kt")
 
         assertTrue(
             "public val loadBinding: SuspendBinding<AsyncChildModule, Unit, String>" in generated,

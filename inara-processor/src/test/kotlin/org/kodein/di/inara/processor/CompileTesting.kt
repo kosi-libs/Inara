@@ -36,7 +36,7 @@ internal class CompileTestResult(
 
     /**
      * Reads the KSP-generated Kotlin source at `<packagePath>/<fileName>`, e.g.
-     * `generatedSource("org/kodein/di/inara/sample", "GeneratedNetworkModule.kt")`.
+     * `generatedSource("org/kodein/di/inara/sample", "InaraNetworkModule.kt")`.
      */
     fun generatedSource(packagePath: String, fileName: String): String =
         compilation.kspSourcesDir.resolve("kotlin").resolve(packagePath).resolve(fileName).readText()

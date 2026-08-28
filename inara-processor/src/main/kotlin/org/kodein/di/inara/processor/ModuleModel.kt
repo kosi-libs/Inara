@@ -57,16 +57,16 @@ internal data class MemberModel(
  * A direct `@DIModule` supertype of a module. [paramName] is the name of the constructor/builder
  * parameter that accepts an already-built instance of it, e.g. `module1` for `Module1`.
  *
- * [generatedClassName] is the parent's own `Generated<Parent>` implementation class - `null` when
- * the parent comes from a compiled dependency rather than this compilation's sources, since that
- * class is `internal` there and unreferenceable. A `@DIModule(composed = true)` builder reads each
- * inherited member's binding straight off that class when it's available, and falls back to a
- * `BindingImpls.Delegate` over the parent instance when it isn't.
+ * [generatedClassName] is the parent's own `Inara<Parent>` implementation class. It is `public`
+ * (behind `@InternalInaraGeneration`), so a `@DIModule(composed = true)` builder always reads each
+ * inherited member's binding straight off it - whichever compilation the parent came from. A member
+ * with 2+ parameters still falls back to a `BindingImpls.Delegate` (its per-module arguments data
+ * class makes the `Binding`'s `A` invariant).
  */
 internal data class ParentModel(
     val declaration: KSClassDeclaration,
     val moduleClassName: ClassName,
-    val generatedClassName: ClassName?,
+    val generatedClassName: ClassName,
     val paramName: String,
 )
 
@@ -119,6 +119,10 @@ private fun KSClassDeclaration.generatedBaseName(): String {
     }
     return names.joinToString("")
 }
+
+/** The simple name of the generated implementation class / file for a flattened [baseName] (see
+ * [generatedBaseName]) - also used for the `@DIFactory` builder file name. */
+internal fun inaraName(baseName: String): String = "Inara$baseName"
 
 private fun KSClassDeclaration.hasAnnotation(qualifiedName: String): Boolean =
     annotations.any { it.annotationType.resolve().declaration.qualifiedName?.asString() == qualifiedName }
@@ -413,12 +417,9 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
                 )
             }
         }
-        // The parent's own Generated<Parent> class is only referenceable when the parent is
-        // compiled from this run's sources - a parent from a dependency has an `internal` one we
-        // can't touch, so leave it null and let the generator fall back to a delegate.
-        val parentGeneratedClassName = parent.containingFile?.let {
-            ClassName(parent.packageName.asString(), "Generated${parent.generatedBaseName()}")
-        }
+        // The parent's own Inara<Parent> class is public (behind @InternalInaraGeneration), so it's
+        // always referenceable - whichever compilation the parent came from.
+        val parentGeneratedClassName = ClassName(parent.packageName.asString(), inaraName(parent.generatedBaseName()))
         parentModels += ParentModel(parent, parent.toClassName(), parentGeneratedClassName, paramName)
     }
     val parentModelByDecl: Map<KSClassDeclaration, ParentModel> =
