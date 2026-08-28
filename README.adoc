@@ -1,21 +1,25 @@
-# Inara
+= Inara
+:toc: macro
+:toclevels: 2
+:idprefix:
+:idseparator: -
+:source-highlighter: highlight.js
 
-**Compile-time dependency injection for Kotlin Multiplatform — your modules are just interfaces.**
+*Compile-time dependency injection for Kotlin Multiplatform — your modules are just interfaces.*
 
-Inara turns a plain Kotlin interface into a dependency-injection module. You declare *what* a module
-offers as ordinary interface members; you decide *how* each member is produced by supplying a
+Inara turns a plain Kotlin interface into a dependency-injection module. You declare _what_ a module
+offers as ordinary interface members; you decide _how_ each member is produced by supplying a
 `Binding` at construction time. A KSP processor generates the implementation.
 
-```kotlin
+.Main.kt
+[source,kotlin]
+----
 @DIModule
 interface NetworkModule {
     val baseUrl: String
     fun httpClient(): HttpClient
     fun endpoint(path: String): String
 }
-
-@DIFactory(builds = LoginController::class, from = NetworkModule::class)
-internal object LoginControllerFactory
 
 // Thanks to @DIModule
 val network = NetworkModule(
@@ -26,101 +30,89 @@ val network = NetworkModule(
 
 val endpoint = network.endpoint("users")   // "https://api.example.com/users"
 
+@DIFactory(builds = LoginController::class, from = NetworkModule::class)
+internal object LoginControllerFactory
+
 // Thanks to @DIFactory
 val loginController = LoginController(network)
-```
+----
 
 No reflection. No service locator. No runtime graph. Just an interface, a generated implementation,
 and a compiler that tells you when a dependency is missing.
 
----
+toc::[]
 
-## Table of contents
+== Why Inara
 
-- [Why Inara](#why-inara)
-- [Setup](#setup)
-- [Core concepts](#core-concepts)
-- [Bindings reference](#bindings-reference)
-- [Member shapes](#member-shapes)
-- [Default implementations](#default-implementations)
-- [Copying a module](#copying-a-module)
-- [Inheritance and composition](#inheritance-and-composition)
-- [Extending non-module interfaces](#extending-non-module-interfaces)
-- [Ignored members](#ignored-members)
-- [Visibility and nesting](#visibility-and-nesting)
-- [Building plain classes](#building-plain-classes)
-- [Generated code reference](#generated-code-reference)
-- [Rules and diagnostics](#rules-and-diagnostics)
-- [Thread safety](#thread-safety)
-- [Supported platforms](#supported-platforms)
-- [Project layout](#project-layout)
-- [License](#license)
-
----
-
-## Why Inara
-
-**Your module *is* its own API.** A `@DIModule` interface is the contract consumers depend on.
+*Your module _is_ its own API.* A `@DIModule` interface is the contract consumers depend on.
 There is no separate "component" type, no qualifier annotations, no `get<T>()` lookups. Consumers
 call `module.httpClient()` — a normal method on a normal interface.
 
-**Opinionated, by design.** No global context, no mutable context, and business code is always
+*Opinionated, by design.* No global context, no mutable context, and business code is always
 independent from the DI layer — it has no notion that Inara even exists.
-[`@DIFactory`](#building-plain-classes) takes that further still, generating a class with zero
+<<building-plain-classes,`@DIFactory`>> takes that further still, generating a class with zero
 imports from Inara at all.
 
-**Wiring is a value, not a configuration language.** A module instance is built by calling a
+*Wiring is a value, not a configuration language.* A module instance is built by calling a
 generated function with one `Binding` per member. Bindings are ordinary values you can pass around,
 store, and swap.
 
-**Every dependency is checked by the compiler.** Forget a binding and the builder call doesn't
+*Every dependency is checked by the compiler.* Forget a binding and the builder call doesn't
 compile. There is no runtime "unresolved dependency" failure mode.
 
-**Bodies see the whole module.** A `Binding`'s lambda runs with the module as its receiver, so any
+*Bodies see the whole module.* A `Binding`'s lambda runs with the module as its receiver, so any
 member can reach any sibling member — including inherited ones — without you wiring anything up:
 
-```kotlin
+[source,kotlin]
+----
 Binding.single { HttpClient(baseUrl) }   // `baseUrl` is this module's own member
-```
+----
 
-**`suspend` members are native.** Mark a member `suspend` and it is bound with a `SuspendBinding`,
+*`suspend` members are native.* Mark a member `suspend` and it is bound with a `SuspendBinding`,
 whose every factory takes a suspending body. The generated override is itself `suspend`, so
 asynchronous construction propagates the way it should instead of hiding behind `runBlocking` or a
 `Deferred` you have to unwrap at every call site.
 
-```kotlin
+[source,kotlin]
+----
 suspend fun token(): Token   // bound with SuspendBinding.single { authClient.fetchToken() }
-```
+----
 
-**Overriding is first-class.** Every module gets generated `copy(...)` overloads, so building a test
+*Overriding is first-class.* Every module gets generated `copy(...)` overloads, so building a test
 variant means overriding one member and inheriting the rest.
 
-**Multiplatform, with no platform-specific surprises.** Inara targets every platform it supports and
-behaves **exactly** the same on each of them — the sole exception is the JS/Wasm targets, where
+*Multiplatform, with no platform-specific surprises.* Inara targets every platform it supports and
+behaves *exactly* the same on each of them — the sole exception is the JS/Wasm targets, where
 thread synchronization is a no-op, since there is no thread to synchronize.
 
----
-
-## Setup
+== Setup
 
 Inara ships two artifacts:
 
-| Artifact | Purpose |
-| --- | --- |
-| `org.kodein.di.inara:inara-runtime` | The `Binding` types and annotations. A normal dependency. |
-| `org.kodein.di.inara:inara-processor` | The KSP processor that generates implementations. |
+[cols="1,2",options="header"]
+|===
+| Artifact | Purpose
 
-### Kotlin Multiplatform
+| `org.kodein.di.inara:inara-runtime`
+| The `Binding` types and annotations. A normal dependency.
+
+| `org.kodein.di.inara:inara-processor`
+| The KSP processor that generates implementations.
+|===
+
+=== Kotlin Multiplatform
 
 Declare your modules in `commonMain` and run the processor once over the common metadata source set,
 then feed the generated sources back into `commonMain`:
 
-```kotlin
+.build.gradle.kts
+[source,kotlin]
+----
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompilationTask
 
 plugins {
-    alias(libs.plugins.kotlin.multiplatform)
-    alias(libs.plugins.ksp)
+    kotlin("multiplatform")
+    id("com.google.devtools.ksp") // Add the KSP plugin - it hosts the Inara processor
 }
 
 kotlin {
@@ -130,8 +122,12 @@ kotlin {
 
     sourceSets {
         commonMain {
+            // Add the KSP-generated common sources to commonMain. KSP already registers this
+            // directory as an output, but IntelliJ only indexes it as source code if it is
+            // also declared here explicitly.
             kotlin.srcDir(layout.buildDirectory.dir("generated/ksp/metadata/commonMain/kotlin"))
             dependencies {
+                // The Inara runtime: Binding types and annotations. A normal dependency.
                 implementation("org.kodein.di.inara:inara-runtime:0.1.0")
             }
         }
@@ -139,6 +135,8 @@ kotlin {
 }
 
 dependencies {
+    // Run the Inara KSP processor over the common metadata source set, once, so a single
+    // set of implementations is generated for commonMain rather than one per target.
     add("kspCommonMainMetadata", "org.kodein.di.inara:inara-processor:0.1.0")
 }
 
@@ -150,137 +148,172 @@ tasks.matching { it.name != "kspCommonMainKotlinMetadata" }.configureEach {
         dependsOn("kspCommonMainKotlinMetadata")
     }
 }
-```
+----
 
-### JVM-only
+=== JVM-only
 
-```kotlin
+.build.gradle.kts
+[source,kotlin]
+----
 plugins {
     kotlin("jvm")
-    id("com.google.devtools.ksp")
+    id("com.google.devtools.ksp") // Add the KSP plugin - it hosts the Inara processor
 }
 
 dependencies {
+    // The Inara runtime: Binding types and annotations. A normal dependency.
     implementation("org.kodein.di.inara:inara-runtime:0.1.0")
+    // Run the Inara KSP processor over this source set. KSP wires its generated
+    // output into the compilation and IntelliJ's index automatically here.
     ksp("org.kodein.di.inara:inara-processor:0.1.0")
 }
-```
+----
 
----
+== Core concepts
 
-## Core concepts
-
-### The module interface
+=== The module interface
 
 Annotate an interface with `@DIModule`. Every member becomes a slot to be bound:
 
-```kotlin
+.AppModule.kt
+[source,kotlin]
+----
 @DIModule
 interface AppModule {
     val config: Config           // Binding<AppModule, Unit, Config>
     fun repository(): Repository // Binding<AppModule, Unit, Repository>  - same shape as above
     fun user(id: Int): User      // Binding<AppModule, Int, User>         - takes an argument
 }
-```
+----
 
-**A property and a zero-argument function are the same thing to Inara.** Both produce a
+*A property and a zero-argument function are the same thing to Inara.* Both produce a
 `Binding<AppModule, Unit, …>`; choosing between them is purely about how you want the call site to
-read. The only thing a member's declaration decides is its *argument* type — no parameters means
-`Unit`, parameters are passed through to the binding (see [Member shapes](#member-shapes)).
+read. The only thing a member's declaration decides is its _argument_ type — no parameters means
+`Unit`, parameters are passed through to the binding (see <<member-shapes,Member shapes>>).
 
-What a declaration does **not** decide is the member's lifecycle. Nothing about `val` implies a
+What a declaration does *not* decide is the member's lifecycle. Nothing about `val` implies a
 stored constant, and nothing about `fun` implies recomputation on every call — that is entirely the
 binding's job, and every choice is open to both:
 
-```kotlin
+.AppModule.kt
+[source,kotlin]
+----
 AppModule(
     config = Binding.provider { loadConfig() },  // a `val`, recomputed on every read
     repository = Binding.value(FixedRepository), // a `fun`, returning a constant
     user = Binding.factory { id -> User(id) },
 )
-```
+----
 
-### The generated builder
+=== The generated builder
 
 The processor generates a function with the same name as the interface, taking one parameter per
 member:
 
-```kotlin
+.GeneratedAppModule.kt
+[source,kotlin]
+----
 public fun AppModule(
     config: Binding<AppModule, Unit, Config>,
     repository: Binding<AppModule, Unit, Repository>,
     user: Binding<AppModule, Int, User>,
 ): AppModule
-```
+----
 
 Because the parameters are named after the members, call sites read like the interface itself:
 
-```kotlin
+.Main.kt
+[source,kotlin]
+----
 val app = AppModule(
     config = Binding.value(Config(debug = true)),
     repository = Binding.single { SqlRepository(config) },
     user = Binding.factory { id -> repository().findUser(id) },
 )
-```
+----
 
-### `Binding<M, A, T>`
+=== `Binding<M, A, T>`
 
 A binding is a recipe for producing a `T`:
 
-```kotlin
+.Binding.kt
+[source,kotlin]
+----
 public interface Binding<M, A, T> {
     public fun get(module: M, arg: A): T
 }
-```
+----
 
-- `M` — the module type. It is always the *leaf* module the binding is being supplied to, which is
+* `M` — the module type. It is always the _leaf_ module the binding is being supplied to, which is
   what lets a body reach any sibling member through its receiver.
-- `A` — the argument type: `Unit` for a property or a no-argument function, otherwise derived from
-  the member's parameters (see [Member shapes](#member-shapes)).
-- `T` — the produced type.
+* `A` — the argument type: `Unit` for a property or a no-argument function, otherwise derived from
+  the member's parameters (see <<member-shapes,Member shapes>>).
+* `T` — the produced type.
 
 `SuspendBinding<M, A, T>` is the identical shape with a `suspend fun get`, used automatically for
 `suspend` members.
 
----
-
-## Bindings reference
+== Bindings reference
 
 All factories live on the `Binding` companion (and mirror onto `SuspendBinding`).
 
-| Factory                  | Signature                    | Behaviour                                                    |
-|--------------------------|------------------------------|--------------------------------------------------------------|
-| `value(v)`               | `T`                          | Always returns the same pre-built `v`. Nothing is computed.  |
-| `provider { }`           | `M.() -> T`                  | Runs the body on **every** access.                           |
-| `factory { }`            | `M.(A) -> T`                 | Runs the body on every access, with the caller's argument.   |
-| `single(safety) { }`     | `M.() -> T`                  | Runs the body **once**, memoizes the result forever.         |
-| `weakSingle(safety) { }` | `M.() -> T`, `T : Any`       | Memoizes behind a weak reference; rebuilds after collection. |
-| `multiplex { }`          | `(A) -> Binding<M, Unit, T>` | Builds and caches one sub-binding **per argument value**.    |
+[cols="1,1,2",options="header"]
+|===
+| Factory | Signature | Behaviour
 
-```kotlin
+| `value(v)`
+| `T`
+| Always returns the same pre-built `v`. Nothing is computed.
+
+| `provider { }`
+| `M.() -> T`
+| Runs the body on *every* access.
+
+| `factory { }`
+| `M.(A) -> T`
+| Runs the body on every access, with the caller's argument.
+
+| `single(safety) { }`
+| `M.() -> T`
+| Runs the body *once*, memoizes the result forever.
+
+| `weakSingle(safety) { }`
+| `M.() -> T`, `T : Any`
+| Memoizes behind a weak reference; rebuilds after collection.
+
+| `multiplex { }`
+| `(A) -> Binding<M, Unit, T>`
+| Builds and caches one sub-binding *per argument value*.
+|===
+
+[source,kotlin]
+----
 Binding.value(Config(debug = true))
 Binding.provider { System.currentTimeMillis() }
 Binding.factory { id -> User(id) }
 Binding.single { SqlRepository(config) }
 Binding.weakSingle { ExpensiveCache() }
 Binding.multiplex { key -> Binding.single { Connection(key) } }
-```
+----
 
-### `multiplex` — per-argument lifecycles
+=== `multiplex` — per-argument lifecycles
 
 `multiplex` is how you give an argument-taking member a lifecycle. On its own, `factory` recomputes
-every call. Wrapping a `single` in a `multiplex` gives you *one instance per distinct argument*:
+every call. Wrapping a `single` in a `multiplex` gives you _one instance per distinct argument_:
 
-```kotlin
+[source,kotlin]
+----
 // One Connection per host, each built once, cached forever.
 Binding.multiplex { host -> Binding.single { Connection(host) } }
-```
+----
 
-### `suspend` members
+=== `suspend` members
 
 A `suspend` member gets a `SuspendBinding` automatically:
 
-```kotlin
+.AsyncModule.kt
+[source,kotlin]
+----
 @DIModule
 interface AsyncModule {
     suspend fun load(): Service
@@ -291,89 +324,102 @@ AsyncModule(
     load = SuspendBinding.single { fetchService() },
     loadKeyed = SuspendBinding.factory { key -> fetchService(key) },
 )
-```
+----
 
 `SuspendBinding` mirrors every factory above. Two differences: its `single` and `weakSingle` take no
 `safety` parameter (they always use a coroutine `Mutex`), and its bodies are `suspend`.
 
-An existing non-suspend `Binding` can be adapted with `.suspend()`:
-
-```kotlin
-import org.kodein.di.inara.suspend   // required: `suspend` is a soft keyword, so it is not auto-imported
-
-val binding: Binding<M, Unit, T> = Binding.value(x)
-val suspending: SuspendBinding<M, Unit, T> = binding.suspend()
-```
-
----
-
-## Member shapes
+== Member shapes
 
 The member's parameters determine the binding's argument type `A`:
 
-| Member                          | Binding type                            |
-|---------------------------------|-----------------------------------------|
-| `val name: T`                   | `Binding<M, Unit, T>`                   |
-| `fun make(): T`                 | `Binding<M, Unit, T>`                   |
-| `fun make(id: Int): T`          | `Binding<M, Int, T>`                    |
-| `fun make(vararg s: String): T` | `Binding<M, Array<out String>, T>`      |
-| `fun make(vararg i: Int): T`    | `Binding<M, IntArray, T>`               |
-| `fun make(a: A, b: B): T`       | `Binding<M, MBindingArguments.Make, T>` |
-| `suspend fun …`                 | the same, as `SuspendBinding`           |
+[cols="1,1",options="header"]
+|===
+| Member | Binding type
 
-### Multiple parameters
+| `val name: T`
+| `Binding<M, Unit, T>`
+
+| `fun make(): T`
+| `Binding<M, Unit, T>`
+
+| `fun make(id: Int): T`
+| `Binding<M, Int, T>`
+
+| `fun make(vararg s: String): T`
+| `Binding<M, Array<out String>, T>`
+
+| `fun make(vararg i: Int): T`
+| `Binding<M, IntArray, T>`
+
+| `fun make(a: A, b: B): T`
+| `Binding<M, MBindingArguments.Make, T>`
+
+| `suspend fun …`
+| the same, as `SuspendBinding`
+|===
+
+=== Multiple parameters
 
 `Binding` carries exactly one argument. When a member takes two or more parameters, the processor
 generates a `<Module>BindingArguments` container holding one `data class` per such member, named
 after the member capitalized:
 
-```kotlin
+.Module.kt
+[source,kotlin]
+----
 @DIModule
 interface Module {
     fun va(vararg str: String): String
     fun mult(s: List<String>, i: Int): Long
     fun both(vararg ids: Int, flag: Boolean = false): String
 }
-```
+----
 
 generates
 
-```kotlin
+.GeneratedModuleBindingArguments.kt
+[source,kotlin]
+----
 public class ModuleBindingArguments private constructor() {
     public data class Mult(val s: List<String>, val i: Int)
 
     @Suppress("ArrayInDataClass")
     public data class Both(val ids: IntArray, val flag: Boolean)
 }
-```
+----
 
 and you bind against those:
 
-```kotlin
+.Module.kt
+[source,kotlin]
+----
 Module(
     va = Binding.factory { parts -> parts.joinToString("-") },
     mult = Binding.factory { args -> args.s.size.toLong() + args.i },
     both = Binding.factory { args -> "${args.ids.toList()}:${args.flag}" },
 )
-```
+----
 
----
+== Default implementations
 
-## Default implementations
-
-A member with a body in the interface gets an **optional**, nullable binding that defaults to `null`,
+A member with a body in the interface gets an *optional*, nullable binding that defaults to `null`,
 meaning "keep the interface's own implementation":
 
-```kotlin
+.DefaultsModule.kt
+[source,kotlin]
+----
 @DIModule
 interface DefaultsModule {
     val name: String
     val greeting: String get() = "Hello, $name"
     fun shout(): String = "$greeting!!!"
 }
-```
+----
 
-```kotlin
+.DefaultsModule.kt
+[source,kotlin]
+----
 // Defaults kept - only the abstract member must be bound.
 val m = DefaultsModule(name = Binding.value("World"))
 m.greeting   // "Hello, World"
@@ -382,39 +428,39 @@ m.shout()    // "Hello, World!!!"
 // Any default can still be overridden.
 val n = DefaultsModule(name = Binding.value("World"), greeting = Binding.value("Hi $name"))
 n.shout()    // "Hi World!!!"  - shout()'s default body re-reads the overridden greeting
-```
+----
 
-Default bodies are re-evaluated against the *built* module, so a default that reads a sibling member
+Default bodies are re-evaluated against the _built_ module, so a default that reads a sibling member
 observes whatever that sibling was bound to.
 
----
+== Copying a module
 
-## Copying a module
-
-Every module gets a `copy` extension function that takes one parameter per member, each defaulting to the module's *current* behaviour,
+Every module gets a `copy` extension function that takes one parameter per member, each defaulting to the module's _current_ behaviour,
 so you override exactly what you name:
 
-```kotlin
+.Main.kt
+[source,kotlin]
+----
 val testModule = appModule.copy(
     repository = Binding.value(FakeRepository()),
 )
-```
+----
 
 Members with a default implementation behave slightly differently under `copy`: their parameter still
 defaults to `null` (meaning "run the interface's default body") rather than freezing the current
-value. That is deliberate — the default body is re-run against the *new* module, so it observes
+value. That is deliberate — the default body is re-run against the _new_ module, so it observes
 siblings you overrode in the very same `copy` call.
 
----
+== Inheritance and composition
 
-## Inheritance and composition
-
-### `@DIModule` inheritance — flattening
+=== `@DIModule` inheritance — flattening
 
 A `@DIModule` interface may extend other `@DIModule` interfaces. Inherited members are bound exactly
 as if declared directly on the child:
 
-```kotlin
+.AppModule.kt
+[source,kotlin]
+----
 @DIModule interface GreeterModule { val greeting: String }
 @DIModule interface CounterModule { fun next(): Int }
 
@@ -428,7 +474,7 @@ AppModule(
     next = Binding.provider { 0 },    // inherited
     label = Binding.value("app"),     // own
 )
-```
+----
 
 Every binding is parameterized on the leaf module (`Binding<AppModule, …>`), so an inherited member's
 body can reach members declared on the child.
@@ -436,22 +482,26 @@ body can reach members declared on the child.
 Diamond inheritance is allowed here: a shared ancestor reached through two paths contributes its
 members exactly once.
 
-### `composed = true` — delegation
+=== `composed = true` — delegation
 
-When you want to build a module from *already-built* parent modules rather than rebinding their
+When you want to build a module from _already-built_ parent modules rather than rebinding their
 members, pass `composed = true` to `@DIModule`. It additionally generates a delegating
 implementation:
 
-```kotlin
+.AppModule.kt
+[source,kotlin]
+----
 @DIModule(composed = true)
 interface AppModule : GreeterModule, CounterModule {
     val label: String
 }
-```
+----
 
-You now get **two** builders:
+You now get *two* builders:
 
-```kotlin
+.Main.kt
+[source,kotlin]
+----
 // 1. Delegated: pass built parents, bind only the child's own members.
 val app = AppModule(
     greeterModule = greeter,        // an existing GreeterModule instance
@@ -465,29 +515,30 @@ val app2 = AppModule(
     next = Binding.provider { 0 },
     label = Binding.value("app"),
 )
-```
+----
 
 …and an extra `copy` overload that swaps out a whole parent at once:
 
-```kotlin
+[source,kotlin]
+----
 val withOtherGreeter = app.copy(greeterModule = differentGreeter)
-```
+----
 
 Parent parameter names are derived from the parent's name, decapitalized (`GreeterModule` →
 `greeterModule`).
 
-**Diamond inheritance is rejected for `composed = true`.** Two delegates both supplying the same
+*Diamond inheritance is rejected for `composed = true`.* Two delegates both supplying the same
 ancestor's members is ambiguous in Kotlin, and the generator does not attempt to disambiguate it.
 Plain `@DIModule` has no such constraint.
 
----
+== Extending non-module interfaces
 
-## Extending non-module interfaces
-
-A `@DIModule` interface may extend **any** interface, not just annotated ones. Members reachable
+A `@DIModule` interface may extend *any* interface, not just annotated ones. Members reachable
 through a plain supertype are bound exactly like the module's own:
 
-```kotlin
+.TaggableModule.kt
+[source,kotlin]
+----
 interface Taggable {
     val id: String
     fun tag(): String = "tag:$id"
@@ -503,11 +554,13 @@ TaggableModule(
     extra = Binding.value(7),
     // `tag` is also from Taggable, but it has a default body, so its binding is optional
 )
-```
+----
 
 Generic supertypes work too — type arguments are substituted:
 
-```kotlin
+.StringConverterModule.kt
+[source,kotlin]
+----
 interface Converter<T> {
     val default: T
     fun convert(input: T): T
@@ -517,27 +570,27 @@ interface Converter<T> {
 interface StringConverterModule : Converter<String> { val prefix: String }
 
 // convert is bound as Binding<StringConverterModule, String, String>
-```
+----
 
-A plain supertype is never *delegable*: under `@DIModule(composed = true)` its members appear as own
+A plain supertype is never _delegable_: under `@DIModule(composed = true)` its members appear as own
 bindings in the delegated builder, alongside the module's own declarations.
 
----
-
-## Ignored members
+== Ignored members
 
 Three member shapes cannot be represented by a `Binding` at all — it has no setter, no extension
 receiver, and its type arguments are fixed per instance:
 
-- `var` properties
-- extension members
-- generic functions
+* `var` properties
+* extension members
+* generic functions
 
-If such a member **has a default implementation**, it is silently excluded from the module's bindable
+If such a member *has a default implementation*, it is silently excluded from the module's bindable
 surface: no `Binding` parameter, no override in the generated class. Ordinary Kotlin inheritance
 resolves it to the interface's own body.
 
-```kotlin
+.Module.kt
+[source,kotlin]
+----
 @DIModule
 interface Module {
     val name: String                                  // bound normally
@@ -555,27 +608,29 @@ interface Module {
 val m = Module(name = Binding.value("x"))   // only `name` is a parameter
 m.tag                                        // "default-tag"
 m.identity(42)                               // 42
-```
+----
 
-Without a default implementation these are **compile errors** — there would be no way to satisfy
-them. A `var` needs *both* accessors implemented to qualify; one abstract accessor still leaves
+Without a default implementation these are *compile errors* — there would be no way to satisfy
+them. A `var` needs _both_ accessors implemented to qualify; one abstract accessor still leaves
 something unsatisfiable.
 
----
-
-## Visibility and nesting
+== Visibility and nesting
 
 An `internal` module interface gets an `internal` builder and `internal` `copy` functions:
 
-```kotlin
+.InternalModule.kt
+[source,kotlin]
+----
 @DIModule
 internal interface InternalModule { val secret: String }
-```
+----
 
 A nested module interface is supported. The generated implementation class flattens the enclosing
 scopes to avoid collisions, while the builder keeps the interface's simple name:
 
-```kotlin
+.Outer.kt
+[source,kotlin]
+----
 interface Outer {
     @DIModule
     interface Inner { val label: String }
@@ -583,93 +638,102 @@ interface Outer {
 
 val inner: Outer.Inner = Inner(label = Binding.value("inner"))
 // generated: private class GeneratedOuterInner(...) : Outer.Inner
-```
+----
 
----
-
-## Building plain classes
+== Building plain classes
 
 Everything so far builds a `@DIModule` interface itself. `@DIFactory` builds something else with it:
 a plain constructor-shaped function for a class that never references Inara at all. Annotate an
 `internal object` with `builds`/`from`, and the processor generates a top-level function that
 resolves every constructor argument off a module instance:
 
-```kotlin
+.UsersController.kt
+[source,kotlin]
+----
 class UsersController(val httpClient: HttpClient, val endpoint: String)
 
 @DIFactory(builds = UsersController::class, from = NetworkModule::class)
 internal object UserControllerDIFactory {
     fun NetworkModule.argEndpoint(): String = endpoint("users")
 }
-```
+----
 
 generates
 
-```kotlin
+.GeneratedUserControllerDIFactory.kt
+[source,kotlin]
+----
 public fun UsersController(module: NetworkModule): UsersController = with(UserControllerDIFactory) {
     UsersController(
         httpClient = module.httpClient(),
         endpoint = module.argEndpoint(),
     )
 }
-```
+----
 
 `UsersController` itself has no idea Inara exists — call the generated function like any other:
 
-```kotlin
+[source,kotlin]
+----
 val controller = UsersController(network)   // `network` is a built NetworkModule
-```
+----
 
-### Resolving constructor arguments
+=== Resolving constructor arguments
 
 Each constructor argument is resolved independently, in priority order:
 
-1. An `arg<Argument>` extension function declared on the annotated object — `fun
-   NetworkModule.argEndpoint(): String` resolves an argument named `endpoint`. This is the *only*
-   thing a `@DIFactory` object may declare; anything else is a compile error.
-2. Otherwise, a uniquely-typed member of `from` — `httpClient` above resolves automatically because
-   `NetworkModule.httpClient()` is the only member returning `HttpClient`, exactly.
-3. Failing an exact match, a uniquely-typed *assignable* (supertype) member.
-4. Otherwise, a compile error recommending the `arg` function to add.
+. An `arg<Argument>` extension function declared on the annotated object — `fun
+  NetworkModule.argEndpoint(): String` resolves an argument named `endpoint`. This is the _only_
+  thing a `@DIFactory` object may declare; anything else is a compile error.
+. Otherwise, a uniquely-typed member of `from` — `httpClient` above resolves automatically because
+  `NetworkModule.httpClient()` is the only member returning `HttpClient`, exactly.
+. Failing an exact match, a uniquely-typed _assignable_ (supertype) member.
+. Otherwise, a compile error recommending the `arg` function to add.
 
 Because `arg<Argument>` is a reserved naming convention, a `@DIModule` member itself may not be named
 `arg` followed by an uppercase letter.
 
-### `suspend` arguments
+=== `suspend` arguments
 
 By default (`Suspend.Allow`), a `suspend` provider — an `arg` function or a `suspend` module member —
 is just as eligible as a non-`suspend` one, and the generated function itself becomes `suspend` if
 and only if an argument actually resolved to one:
 
-```kotlin
+.AsyncGreeter.kt
+[source,kotlin]
+----
 class AsyncGreeter(val service: Service)
 
 @DIFactory(builds = AsyncGreeter::class, from = AsyncModule::class)
 internal object AsyncGreeterDIFactory
-```
+----
 
-```kotlin
+.GeneratedAsyncGreeterDIFactory.kt
+[source,kotlin]
+----
 // generated:
 public suspend fun AsyncGreeter(module: AsyncModule): AsyncGreeter = with(AsyncGreeterDIFactory) {
     AsyncGreeter(
         service = module.load(),   // AsyncModule.load() is a suspend member
     )
 }
-```
+----
 
 `suspend = Suspend.Forbid` excludes every `suspend` candidate from resolution entirely — a
 `suspend`-only argument becomes unresolvable rather than silently skipped — and the generated
 function is never `suspend`. `suspend = Suspend.Force` resolves exactly like `Allow` but always
 generates a `suspend` function, whether or not any provider actually is.
 
-### `constructorIndex` — building through a non-primary constructor
+=== `constructorIndex` — building through a non-primary constructor
 
 By default `@DIFactory` calls `builds`'s primary constructor. `constructorIndex` selects a different
 one instead, in declaration order (`0` the primary, `1` the first secondary, `2` the second, …) —
 useful when the intended entry point isn't the primary constructor, e.g. a `private` primary paired
 with a public secondary:
 
-```kotlin
+.Greeter.kt
+[source,kotlin]
+----
 class Greeter private constructor(val greeting: String, private val marker: Int) {
     constructor(baseUrl: String) : this("Hello from $baseUrl", 0)
 }
@@ -679,25 +743,30 @@ internal object GreeterDIFactory
 // generated: public fun Greeter(module: NetworkModule): Greeter = with(GreeterDIFactory) {
 //                Greeter(baseUrl = module.baseUrl)
 //            }
-```
+----
 
 Only the selected constructor's parameters are resolved — every other constructor, including the
 primary, is ignored entirely, `arg<Argument>` name-matching included.
 
----
-
-## Thread safety
+== Thread safety
 
 `Binding.single` and `Binding.weakSingle` take a `SingleThreadSafety` mode:
 
-| Mode | Guarantee |
-| --- | --- |
-| `Synchronized` (default) | The builder runs **exactly once**, under a lock. |
-| `Published` | Lock-free. Concurrent callers may each run the builder, but all callers converge on a single winning instance. |
+[cols="1,2",options="header"]
+|===
+| Mode | Guarantee
 
-```kotlin
+| `Synchronized` (default)
+| The builder runs *exactly once*, under a lock.
+
+| `Published`
+| Lock-free. Concurrent callers may each run the builder, but all callers converge on a single winning instance.
+|===
+
+[source,kotlin]
+----
 Binding.single(SingleThreadSafety.Published) { ExpensiveButPureValue() }
-```
+----
 
 `multiplex` isolates arguments: concurrent access with distinct arguments never contends.
 
@@ -706,51 +775,54 @@ after collection.
 
 `SuspendBinding.single` / `weakSingle` always use a coroutine `Mutex` and take no mode parameter (coroutines mutex are very lightweight).
 
----
-
-## Supported platforms
+== Supported platforms
 
 `inara-runtime` is a Kotlin Multiplatform library targeting:
 
-- **JVM**
-- **iOS** — `iosArm64`, `iosSimulatorArm64`, `iosX64`
-- **watchOS** — `watchosArm32`, `watchosArm64`, `watchosDeviceArm64`, `watchosSimulatorArm64`
-- **tvOS** — `tvosArm64`, `tvosSimulatorArm64`
-- **macOS** — `macosArm64`
-- **Android Native** — `androidNativeArm32`, `androidNativeArm64`, `androidNativeX64`, `androidNativeX86`
-- **Linux** — `linuxX64`, `linuxArm64`
-- **Windows** — `mingwX64`
-- **JS** — browser, Node.js
-- **Wasm/JS** — browser, Node.js
+* *JVM*
+* *iOS* — `iosArm64`, `iosSimulatorArm64`, `iosX64`
+* *watchOS* — `watchosArm32`, `watchosArm64`, `watchosDeviceArm64`, `watchosSimulatorArm64`
+* *tvOS* — `tvosArm64`, `tvosSimulatorArm64`
+* *macOS* — `macosArm64`
+* *Android Native* — `androidNativeArm32`, `androidNativeArm64`, `androidNativeX64`, `androidNativeX86`
+* *Linux* — `linuxX64`, `linuxArm64`
+* *Windows* — `mingwX64`
+* *JS* — browser, Node.js
+* *Wasm/JS* — browser, Node.js
 
----
+== Project layout
 
-## Project layout
+[cols="1,3",options="header"]
+|===
+| Module | Contents
 
-| Module | Contents |
-| --- | --- |
-| `inara-runtime` | `Binding`, `SuspendBinding`, `@DIModule`, `@DIFactory`. Multiplatform, `explicitApi()` enabled. |
-| `inara-processor` | The KSP `SymbolProcessor`: `ModuleModel.kt` (parsing/validation) and `ModuleFileGenerator.kt` (KotlinPoet generation). |
-| `inara-tests` | Integration tests running the real processor through Gradle/KSP across every target. |
+| `inara-runtime`
+| `Binding`, `SuspendBinding`, `@DIModule`, `@DIFactory`. Multiplatform, `explicitApi()` enabled.
 
-### Building
+| `inara-processor`
+| The KSP `SymbolProcessor`: `ModuleModel.kt` (parsing/validation) and `ModuleFileGenerator.kt` (KotlinPoet generation).
 
-```bash
+| `inara-tests`
+| Integration tests running the real processor through Gradle/KSP across every target.
+|===
+
+=== Building
+
+[source,bash]
+----
 ./gradlew build                  # everything, all targets
 ./gradlew :inara-processor:test  # processor golden-source + validation tests
 ./gradlew :inara-tests:jvmTest   # real KSP round-trip
-```
+----
 
 Processor tests compile sources in-memory with
-[kotlin-compile-testing](https://github.com/ZacSweers/kotlin-compile-testing) and assert on the
+https://github.com/ZacSweers/kotlin-compile-testing[kotlin-compile-testing] and assert on the
 generated output; `inara-tests` exercises the same processor through a real Gradle KSP run.
 
----
+== License
 
-## License
+Inara is released under the link:LICENSE[MIT License].
 
-Inara is released under the [MIT License](LICENSE).
-
-```
+----
 Copyright (c) 2026 Salomon BRYS
-```
+----
