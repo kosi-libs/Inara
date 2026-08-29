@@ -33,9 +33,24 @@ public annotation class DIModule(val composed: Boolean = false)
  * the `arg` function to add. The object may declare nothing but such `arg` functions - anything else
  * is a compile error.
  *
+ * With [with] set to a type other than `Unit`, the generated function takes a second parameter `fun
+ * <Builds>(module: <From>, with: <With>): <Builds>`, that value is passed to every `arg<Argument>`
+ * function (each of which must then take exactly one parameter of type [with]) and to any member of
+ * [from] taking a single [with]-castable parameter, and such one-parameter members join the
+ * zero-parameter ones in the automatic-resolution candidate pool. See [with].
+ *
  * @param builds The class to construct. Must be a concrete (non-abstract, non-`sealed`) class with
  *   the constructor selected by [constructorIndex] public or internal, itself public or internal.
  * @param from The `@DIModule` interface the generated function's `module` parameter is built from.
+ * @param with The type of a call-time argument the generated function takes alongside `module`, for
+ *   a value that isn't knowable at module level (a request context, a screen route, ...). `Unit`
+ *   (the default) generates no such parameter - the function stays `fun <Builds>(module: <From>)`
+ *   and `arg<Argument>` functions take nothing, exactly as if this argument didn't exist. Any other
+ *   type adds a `with: <With>` parameter: every `arg<Argument>` function on the annotated object
+ *   must then declare exactly one parameter of that type (no parameter, or another type, is a
+ *   compile error), and a member of [from] taking a single parameter the `with` value casts into -
+ *   or a `vararg` whose array type it is - becomes eligible for automatic resolution on equal
+ *   footing with a zero-parameter member.
  * @param suspend Whether a `suspend` provider - a `suspend` `arg` function, or a `suspend` member
  *   of [from] - may be used to resolve an argument, and whether the generated function itself is
  *   `suspend`. See [Suspend].
@@ -50,6 +65,7 @@ public annotation class DIModule(val composed: Boolean = false)
 public annotation class DIFactory(
     val builds: KClass<*>,
     val from: KClass<*>,
+    val with: KClass<*> = Unit::class,
     val suspend: Suspend = Suspend.Allow,
     val constructorIndex: Int = 0,
 ) {

@@ -351,4 +351,136 @@ class DIFactoryTest {
         val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
         assertTrue("internal fun Greeter(module: GreetingModule): Greeter" in generated, generated)
     }
+
+    @Test
+    fun withArgument_isPassedToArgFunctionsAndOneParameterMembers() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class HttpClient
+
+            @DIModule
+            interface NetworkModule {
+                val baseUrl: String
+                fun clientFor(scope: String): HttpClient
+            }
+
+            class Controller(val client: HttpClient, val base: String, val tag: String)
+
+            @DIFactory(builds = Controller::class, from = NetworkModule::class, with = String::class)
+            internal object ControllerDIFactory {
+                fun NetworkModule.argTag(scope: String): String = scope.uppercase()
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraControllerDIFactory.kt")
+        assertTrue("public fun Controller(module: NetworkModule, with: String): Controller" in generated, generated)
+        assertTrue("kotlin.with(ControllerDIFactory)" in generated, generated)
+        assertTrue("client = module.clientFor(with)," in generated, generated)
+        assertTrue("base = module.baseUrl," in generated, generated)
+        assertTrue("tag = module.argTag(with)," in generated, generated)
+    }
+
+    @Test
+    fun withArgument_varargMemberReceivesItAsANamedArgument() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface PathModule {
+                fun join(vararg parts: String): String
+            }
+
+            class Thing(val text: String)
+
+            @DIFactory(builds = Thing::class, from = PathModule::class, with = Array<String>::class)
+            internal object ThingDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraThingDIFactory.kt")
+        assertTrue("with: Array<String>" in generated, generated)
+        assertTrue("text = module.join(parts = with)," in generated, generated)
+    }
+
+    @Test
+    fun internalWithType_generatesInternalFunction() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            internal class Ctx
+
+            @DIModule
+            interface GreetingModule {
+                val greeting: String
+            }
+
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = Ctx::class)
+            internal object GreeterDIFactory {
+                fun GreetingModule.argGreeting(ctx: Ctx): String = greeting
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("internal fun Greeter(module: GreetingModule, with: Ctx): Greeter" in generated, generated)
+    }
+
+    @Test
+    fun defaultWithUnit_leavesTheGeneratedShapeUnchanged() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val greeting: String
+            }
+
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("public fun Greeter(module: GreetingModule): Greeter" in generated, generated)
+        assertTrue("= with(GreeterDIFactory)" in generated, generated)
+        assertTrue("with:" !in generated, generated)
+    }
 }

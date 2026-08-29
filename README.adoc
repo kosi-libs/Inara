@@ -693,12 +693,53 @@ Each constructor argument is resolved independently, in priority order:
   NetworkModule.argEndpoint(): String` resolves an argument named `endpoint`. This is the _only_
   thing a `@DIFactory` object may declare; anything else is a compile error.
 . Otherwise, a uniquely-typed member of `from` — `httpClient` above resolves automatically because
-  `NetworkModule.httpClient()` is the only member returning `HttpClient`, exactly.
+  `NetworkModule.httpClient()` is the only member returning `HttpClient`, exactly. A member that
+  takes one argument is a candidate only under `with` (see below); every other member must take none.
 . Failing an exact match, a uniquely-typed _assignable_ (supertype) member.
 . Otherwise, a compile error recommending the `arg` function to add.
 
 Because `arg<Argument>` is a reserved naming convention, a `@DIModule` member itself may not be named
 `arg` followed by an uppercase letter.
+
+=== `with` — a call-time argument
+
+Some values aren't knowable at module level — a request context, a screen route, the id of the user
+this instance is for. `with` gives the generated function a second parameter for one:
+
+.UserSession.kt
+[source,kotlin]
+----
+class UserSession(val httpClient: HttpClient, val greeting: String)
+
+data class RequestContext(val userId: String)
+
+@DIFactory(builds = UserSession::class, from = NetworkModule::class, with = RequestContext::class)
+internal object UserSessionDIFactory {
+    fun NetworkModule.argGreeting(context: RequestContext): String = "Hello, ${context.userId}"
+}
+----
+
+.InaraUserSessionDIFactory.kt
+[source,kotlin]
+----
+public fun UserSession(module: NetworkModule, with: RequestContext): UserSession =
+    kotlin.with(UserSessionDIFactory) {
+        UserSession(
+            httpClient = module.httpClient(),      // resolved as usual, no `with`
+            greeting = module.argGreeting(with),   // the call-time value flows in
+        )
+    }
+----
+
+When `with` is set (it defaults to `Unit` — no parameter, everything above unchanged):
+
+* Every `arg<Argument>` function must take exactly one parameter of the `with` type — no parameter,
+  or another type, is a compile error.
+* A member of `from` taking a single parameter the `with` value fits into — or a `vararg` whose array
+  type it is — joins the automatic-resolution candidate pool, on equal footing with a zero-parameter
+  member. A zero- and a one-parameter member matching the same argument is an ambiguity error, just
+  as two zero-parameter members are.
+* An `internal` `with` type makes the generated function `internal`, like an `internal` `builds`.
 
 === `suspend` arguments
 

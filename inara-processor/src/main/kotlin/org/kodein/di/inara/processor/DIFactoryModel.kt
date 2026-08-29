@@ -13,7 +13,9 @@ import com.google.devtools.ksp.symbol.KSType
 import com.google.devtools.ksp.symbol.Modifier
 import com.google.devtools.ksp.symbol.Visibility
 import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.ksp.toClassName
+import com.squareup.kotlinpoet.ksp.toTypeName
 
 /** Mirrors `org.kodein.di.inara.DIFactory.Suspend` - read from the annotation via [readSuspendMode]
  * since the processor has no compile-time dependency on `inara-runtime`'s actual enum class. */
@@ -48,19 +50,35 @@ private fun readConstructorIndex(annotation: KSAnnotation): Int {
 }
 
 /**
+ * How a `@DIFactory`'s `with` value is passed to a candidate provider that takes one parameter -
+ * `null` everywhere when `with` is `Unit` (no `with` parameter is generated at all).
+ */
+internal sealed class WithArgument {
+    /** `provider(with)` - the parameter is non-vararg and the `with` value casts straight into it. */
+    internal data object Positional : WithArgument()
+
+    /** `provider(<parameterName> = with)` - the parameter is a vararg whose array type `with` is;
+     * a named argument assigns straight into a vararg, no spread operator needed. */
+    internal data class Named(val parameterName: String) : WithArgument()
+}
+
+/**
  * Where a `@DIFactory`-generated constructor argument's value comes from: an `arg<Argument>`
  * extension function declared on the `@DIFactory` object itself, or a member of the `from` module
  * resolved automatically (see [parseFactory]).
  */
 internal sealed class ArgumentSource {
-    /** `module.<functionName>()` - an `arg<Argument>` function on the `@DIFactory` object. */
+    /** `module.<functionName>()` - an `arg<Argument>` function on the `@DIFactory` object. Takes the
+     * `with` value (`module.<functionName>(with)`) when `with` is not `Unit` - uniformly, so the
+     * generator reads that off [FactoryModel.withTypeName] rather than from here. */
     internal data class FactoryFunction(val functionName: String) : ArgumentSource()
 
     /** `module.<memberName>` - a `val` (or no-arg `fun`, see [ModuleFunction]) on `from`. */
     internal data class ModuleProperty(val memberName: String) : ArgumentSource()
 
-    /** `module.<memberName>()` - a no-argument `fun` on `from`. */
-    internal data class ModuleFunction(val memberName: String) : ArgumentSource()
+    /** `module.<memberName>()` - a `fun` on `from`, called with no argument ([withArgument] `null`)
+     * or with the `with` value per [withArgument]. */
+    internal data class ModuleFunction(val memberName: String, val withArgument: WithArgument?) : ArgumentSource()
 }
 
 /** One argument of `builds`'s selected constructor (see `constructorIndex`), resolved to where its
@@ -89,6 +107,7 @@ internal data class FactoryModel(
     val factoryClassName: ClassName,
     val buildsClassName: ClassName,
     val fromClassName: ClassName,
+    val withTypeName: TypeName?,
     val visibility: Visibility,
     val arguments: List<FactoryArgumentModel>,
     val isSuspend: Boolean,
@@ -102,6 +121,47 @@ private fun argFunctionName(paramName: String): String = "arg${paramName.replace
 /** True when [a] and [b] denote the same type - `KSType` has no reliable structural `equals`, so
  * mutual assignability is the robust way to ask this using only the documented API. */
 private fun sameType(a: KSType, b: KSType): Boolean = a.isAssignableFrom(b) && b.isAssignableFrom(a)
+
+/**
+ * Reads `@DIFactory`'s `with` argument - the type of the second parameter the generated builder
+ * function takes. `Unit` (the default) means no such parameter: this returns `null`, and every
+ * `with`-dependent branch downstream treats `null` as "no `with`". Same `arguments` ->
+ * `defaultArguments` fallback as [readSuspendMode]; a `KClass`-typed argument surfaces as a [KSType].
+ */
+private fun readWithType(annotation: KSAnnotation): KSType? {
+    val arg = annotation.arguments.find { it.name?.asString() == "with" }
+        ?: annotation.defaultArguments.find { it.name?.asString() == "with" }
+    val type = arg?.value as? KSType ?: return null
+    return type.takeUnless { it.declaration.qualifiedName?.asString() == "kotlin.Unit" }
+}
+
+/**
+ * How a `@DIFactory`'s [withType] value would be passed to [param] of a candidate module member -
+ * `null` if it can't be (so the member is not a candidate for that argument at all).
+ *
+ * A non-vararg parameter takes the value positionally when [withType] casts into it. A vararg
+ * parameter's declared [ParameterModel.type] is its *element* type; the value goes in as a named
+ * argument (which assigns straight into a vararg, no spread operator) when [withType] is exactly
+ * that vararg's array type as seen inside the function body - a dedicated primitive array for a
+ * non-nullable primitive element (see [PRIMITIVE_ARRAYS]), else `kotlin.Array` with a type argument
+ * assignable to the element type.
+ */
+private fun withArgumentFor(param: ParameterModel, withType: KSType): WithArgument? {
+    if (!param.isVararg) {
+        return if (param.type.isAssignableFrom(withType)) WithArgument.Positional else null
+    }
+    val elementType = param.type
+    val elementName = elementType.declaration.qualifiedName?.asString()
+    val withName = withType.declaration.qualifiedName?.asString()
+    val primitiveArray = if (!elementType.isMarkedNullable) PRIMITIVE_ARRAYS[elementName] else null
+    val matches = if (primitiveArray != null) {
+        withName == primitiveArray.canonicalName
+    } else {
+        withName == "kotlin.Array" &&
+            withType.arguments.singleOrNull()?.type?.resolve()?.let { elementType.isAssignableFrom(it) } == true
+    }
+    return if (matches) WithArgument.Named(param.name) else null
+}
 
 /**
  * Validates [objDecl] against every `@DIFactory` rule, resolves every one of `builds`'s selected
@@ -141,6 +201,10 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
     val fromArg = annotation.arguments.find { it.name?.asString() == "from" }
     val buildsDecl = (buildsArg?.value as? KSType)?.declaration as? KSClassDeclaration
     val fromDecl = (fromArg?.value as? KSType)?.declaration as? KSClassDeclaration
+    // `null` when `with` is `Unit` (the default) - no `with` parameter on the generated function,
+    // and `arg<Argument>` functions take nothing, exactly as before this argument existed.
+    val withType = readWithType(annotation)
+    val withDecl = withType?.declaration as? KSClassDeclaration
 
     if (buildsDecl == null) {
         reportError("The 'builds' argument must reference a class.", objDecl)
@@ -243,9 +307,24 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
             reportError("'$name' may not be 'suspend': 'suspend' is 'Suspend.Forbid' on '${objDecl.simpleName.asString()}'.", fn)
             continue
         }
-        if (fn.parameters.isNotEmpty()) {
-            reportError("'$name' may not take any parameter.", fn)
-            continue
+        if (withType == null) {
+            if (fn.parameters.isNotEmpty()) {
+                reportError("'$name' may not take any parameter.", fn)
+                continue
+            }
+        } else {
+            val singleParam = fn.parameters.singleOrNull()
+            val paramMatchesWith = singleParam != null && !singleParam.isVararg &&
+                sameType(singleParam.type.resolve(), withType)
+            if (!paramMatchesWith) {
+                reportError(
+                    "'$name' must take exactly one parameter of type " +
+                        "'${withDecl?.simpleName?.asString() ?: withType.declaration.simpleName.asString()}' " +
+                        "(the @DIFactory 'with' type).",
+                    fn,
+                )
+                continue
+            }
         }
         val receiverType = fn.extensionReceiver?.resolve()
         if (receiverType == null || !receiverType.isAssignableFrom(fromType)) {
@@ -268,8 +347,19 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
     // error. Under Suspend.Forbid, a suspend candidate is excluded here entirely (rather than
     // resolved and then rejected) - the same exclusion already applied to arg-functions above, so a
     // resolved FactoryArgumentModel can never end up suspend when the mode is Forbid.
-    val candidates = fromModel.allMembers.filter {
-        it.parameters.isEmpty() && (suspendMode != SuspendMode.FORBID || !it.isSuspend)
+    //
+    // A member takes no parameter (called plainly), or - only when `with` is not `Unit` - takes one
+    // parameter the `with` value can be passed to (see [withArgumentFor]). The two live in one pool:
+    // a zero-parameter and a one-parameter member matching the same argument type is an ambiguity,
+    // exactly as two zero-parameter members are.
+    val candidates: List<Pair<MemberModel, WithArgument?>> = fromModel.allMembers.mapNotNull { member ->
+        if (suspendMode == SuspendMode.FORBID && member.isSuspend) return@mapNotNull null
+        when {
+            member.parameters.isEmpty() -> member to null
+            withType != null && member.parameters.size == 1 ->
+                withArgumentFor(member.parameters.single(), withType)?.let { member to it }
+            else -> null
+        }
     }
     val arguments = mutableListOf<FactoryArgumentModel>()
     for ((paramName, paramType) in ctorParams) {
@@ -283,29 +373,31 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
             continue
         }
 
-        val exact = candidates.filter { sameType(it.returnType, paramType) }
+        val exact = candidates.filter { sameType(it.first.returnType, paramType) }
         if (exact.size == 1) {
-            arguments += exact.single().toFactoryArgumentModel(paramName)
+            val (member, withArgument) = exact.single()
+            arguments += member.toFactoryArgumentModel(paramName, withArgument)
             continue
         }
         if (exact.size > 1) {
             reportError(
                 "Argument '$paramName' of '$buildsName' is ambiguous: matched by " +
-                    exact.map { it.name }.sorted().joinToString(", ") { "'$it'" } + ", all exactly of that type.",
+                    exact.map { it.first.name }.sorted().joinToString(", ") { "'$it'" } + ", all exactly of that type.",
                 objDecl,
             )
             continue
         }
 
-        val assignable = candidates.filter { paramType.isAssignableFrom(it.returnType) }
+        val assignable = candidates.filter { paramType.isAssignableFrom(it.first.returnType) }
         if (assignable.size == 1) {
-            arguments += assignable.single().toFactoryArgumentModel(paramName)
+            val (member, withArgument) = assignable.single()
+            arguments += member.toFactoryArgumentModel(paramName, withArgument)
             continue
         }
         if (assignable.size > 1) {
             reportError(
                 "Argument '$paramName' of '$buildsName' is ambiguous: matched by " +
-                    assignable.map { it.name }.sorted().joinToString(", ") { "'$it'" } + ", all assignable to that type.",
+                    assignable.map { it.first.name }.sorted().joinToString(", ") { "'$it'" } + ", all assignable to that type.",
                 objDecl,
             )
             continue
@@ -324,6 +416,7 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
         objDecl.containingFile,
         buildsDecl.containingFile,
         fromDecl.containingFile,
+        withDecl?.containingFile,
     ) + fromModel.ancestorDeclarations.mapNotNull { it.containingFile }
 
     val isSuspend = when (suspendMode) {
@@ -332,18 +425,21 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
         SuspendMode.FORCE -> true
     }
 
-    // The generated function calls `ctor` directly, so it can only be as visible as the more
-    // restrictive of `builds` and the selected constructor - a public class with an internal
-    // constructor (only reachable once a non-primary constructor can be selected) still needs an
-    // internal generated function, or the call wouldn't compile.
+    // The generated function calls `ctor` directly and takes `with` as a parameter, so it can only
+    // be as visible as the most restrictive of `builds`, the selected constructor, and `with` - a
+    // public class with an internal constructor (only reachable once a non-primary constructor can
+    // be selected), or an internal `with` type, still needs an internal generated function, or the
+    // signature wouldn't compile.
     val visibility =
-        if (Visibility.INTERNAL in setOf(buildsDecl.getVisibility(), ctor.getVisibility())) Visibility.INTERNAL
+        if (Visibility.INTERNAL in setOfNotNull(buildsDecl.getVisibility(), ctor.getVisibility(), withDecl?.getVisibility()))
+            Visibility.INTERNAL
         else Visibility.PUBLIC
 
     return FactoryModel(
         factoryClassName = objDecl.toClassName(),
         buildsClassName = buildsDecl.toClassName(),
         fromClassName = fromDecl.toClassName(),
+        withTypeName = withType?.toTypeName(),
         visibility = visibility,
         arguments = arguments,
         isSuspend = isSuspend,
@@ -351,7 +447,7 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
     )
 }
 
-private fun MemberModel.toFactoryArgumentModel(paramName: String): FactoryArgumentModel {
-    val source = if (isFunction) ArgumentSource.ModuleFunction(name) else ArgumentSource.ModuleProperty(name)
+private fun MemberModel.toFactoryArgumentModel(paramName: String, withArgument: WithArgument?): FactoryArgumentModel {
+    val source = if (isFunction) ArgumentSource.ModuleFunction(name, withArgument) else ArgumentSource.ModuleProperty(name)
     return FactoryArgumentModel(paramName, source, isSuspend = isSuspend)
 }

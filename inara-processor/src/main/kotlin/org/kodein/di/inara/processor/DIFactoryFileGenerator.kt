@@ -9,6 +9,8 @@ import com.squareup.kotlinpoet.ksp.addOriginatingKSFile
 import org.kodein.di.inara.processor.ArgumentSource.FactoryFunction
 import org.kodein.di.inara.processor.ArgumentSource.ModuleFunction
 import org.kodein.di.inara.processor.ArgumentSource.ModuleProperty
+import org.kodein.di.inara.processor.WithArgument.Named
+import org.kodein.di.inara.processor.WithArgument.Positional
 
 /**
  * Emits the generated builder function for [model]: a top-level function named after `builds`,
@@ -40,6 +42,12 @@ private fun buildFactoryFunction(model: FactoryModel): FunSpec {
         funBuilder.addModifiers(KModifier.SUSPEND)
     }
     funBuilder.addParameter("module", model.fromClassName)
+    model.withTypeName?.let { funBuilder.addParameter("with", it) }
+
+    // When there's a `with` parameter it's passed to every arg-function and to any one-parameter
+    // module member; `with` as an argument name would otherwise shadow the `kotlin.with` scoping
+    // function below, so that call is fully qualified whenever the parameter exists.
+    val withArg = if (model.withTypeName != null) CodeBlock.of("with") else null
 
     val constructorCall = CodeBlock.builder()
         .add("%T(\n", model.buildsClassName)
@@ -47,9 +55,15 @@ private fun buildFactoryFunction(model: FactoryModel): FunSpec {
         .apply {
             for (argument in model.arguments) {
                 val accessCode = when (val source = argument.source) {
-                    is FactoryFunction -> CodeBlock.of("module.%N()", source.functionName)
+                    is FactoryFunction ->
+                        if (withArg != null) CodeBlock.of("module.%N(%L)", source.functionName, withArg)
+                        else CodeBlock.of("module.%N()", source.functionName)
                     is ModuleProperty -> CodeBlock.of("module.%N", source.memberName)
-                    is ModuleFunction -> CodeBlock.of("module.%N()", source.memberName)
+                    is ModuleFunction -> when (val w = source.withArgument) {
+                        null -> CodeBlock.of("module.%N()", source.memberName)
+                        is Positional -> CodeBlock.of("module.%N(%L)", source.memberName, withArg)
+                        is Named -> CodeBlock.of("module.%N(%N = %L)", source.memberName, w.parameterName, withArg)
+                    }
                 }
                 addStatement("%N = %L,", argument.paramName, accessCode)
             }
@@ -58,9 +72,10 @@ private fun buildFactoryFunction(model: FactoryModel): FunSpec {
         .add(")")
         .build()
 
+    val scopeFunction = if (withArg != null) "kotlin.with" else "with"
     funBuilder.addCode(
         CodeBlock.builder()
-            .add("return with(%T) {\n", model.factoryClassName)
+            .add("return $scopeFunction(%T) {\n", model.factoryClassName)
             .indent()
             .add(constructorCall)
             .add("\n")

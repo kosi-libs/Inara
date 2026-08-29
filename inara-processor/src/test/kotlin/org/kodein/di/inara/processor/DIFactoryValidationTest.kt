@@ -576,4 +576,96 @@ class DIFactoryValidationTest {
             """
         )
     }
+
+    @Test
+    fun argFunctionMissingTheWithParameter_isRejected() {
+        assertRejected(
+            "must take exactly one parameter of type 'Ctx'",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+            @DIModule
+            interface GreetingModule { val greeting: String }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = Ctx::class)
+            internal object GreeterDIFactory {
+                fun GreetingModule.argGreeting(): String = greeting
+            }
+            """
+        )
+    }
+
+    @Test
+    fun argFunctionWithAWrongTypedParameter_isRejected() {
+        assertRejected(
+            "must take exactly one parameter of type 'Ctx'",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+            @DIModule
+            interface GreetingModule { val greeting: String }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = Ctx::class)
+            internal object GreeterDIFactory {
+                fun GreetingModule.argGreeting(wrong: Int): String = greeting
+            }
+            """
+        )
+    }
+
+    @Test
+    fun withArgument_zeroAndOneParameterMembersMatchingTheSameArgument_isAmbiguous() {
+        assertRejected(
+            "is ambiguous",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val greeting: String
+                fun greetingFor(scope: String): String
+            }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = String::class)
+            internal object GreeterDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun withArgument_oneParameterMemberWhoseParameterTheWithValueCannotBePassedTo_isNotACandidate() {
+        assertRejected(
+            "Cannot resolve argument 'greeting'",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+            @DIModule
+            interface GreetingModule {
+                fun greetingFor(count: Int): String
+            }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = Ctx::class)
+            internal object GreeterDIFactory
+            """
+        )
+    }
 }

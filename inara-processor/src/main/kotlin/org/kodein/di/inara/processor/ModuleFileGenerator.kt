@@ -37,8 +37,9 @@ private val FILE_OPT_IN_INTERNAL_INARA_GENERATION: AnnotationSpec = AnnotationSp
 private val ARRAY = ClassName("kotlin", "Array")
 
 /** Every Kotlin type with a dedicated primitive array type - a non-nullable vararg of one of these
- * uses it (`IntArray`, ...) instead of `Array<out T>`. */
-private val PRIMITIVE_ARRAYS: Map<String, ClassName> = mapOf(
+ * uses it (`IntArray`, ...) instead of `Array<out T>`. Also read by `DIFactoryModel.kt` to decide
+ * whether a `@DIFactory` `with` type can be passed to a candidate member's vararg parameter. */
+internal val PRIMITIVE_ARRAYS: Map<String, ClassName> = mapOf(
     "kotlin.Boolean" to ClassName("kotlin", "BooleanArray"),
     "kotlin.Byte" to ClassName("kotlin", "ByteArray"),
     "kotlin.Char" to ClassName("kotlin", "CharArray"),
