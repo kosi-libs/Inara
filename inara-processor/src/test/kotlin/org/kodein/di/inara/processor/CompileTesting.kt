@@ -17,6 +17,7 @@ import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 internal fun compile(vararg sources: SourceFile): CompileTestResult {
     val compilation = KotlinCompilation().apply {
         this.sources = sources.toList()
+        this.jvmTarget = "17"
         inheritClassPath = true
         configureKsp {
             symbolProcessorProviders += DIModuleProcessorProvider()
