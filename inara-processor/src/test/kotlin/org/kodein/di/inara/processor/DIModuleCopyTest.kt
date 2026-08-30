@@ -49,15 +49,15 @@ class DIModuleCopyTest {
         // Each parameter defaults to the receiver's own stored binding when it's the generated
         // implementation, falling back to a current-value delegate for any other implementation.
         assertTrue(
-            "baseUrl: Binding<NetworkModule, Unit, String> = if (this@copy is InaraNetworkModule) this@copy.baseUrlBinding else BindingImpls.Delegate { this@copy.baseUrl }" in generated,
+            "baseUrl: Binding<NetworkModule, Unit, String> = if (this@copy is InaraNetworkModule) this@copy.baseUrlBinding else BindingImpls.Delegate(this@copy::class) { this@copy.baseUrl }" in generated,
             generated,
         )
         assertTrue(
-            "httpClient: Binding<NetworkModule, Unit, HttpClient> = if (this@copy is InaraNetworkModule) this@copy.httpClientBinding else BindingImpls.Delegate { this@copy.httpClient() }" in generated,
+            "httpClient: Binding<NetworkModule, Unit, HttpClient> = if (this@copy is InaraNetworkModule) this@copy.httpClientBinding else BindingImpls.Delegate(this@copy::class) { this@copy.httpClient() }" in generated,
             generated,
         )
         assertTrue(
-            "context: Binding<NetworkModule, Int, Context> = if (this@copy is InaraNetworkModule) this@copy.contextBinding else BindingImpls.Delegate { this@copy.context(it) }" in generated,
+            "context: Binding<NetworkModule, Int, Context> = if (this@copy is InaraNetworkModule) this@copy.contextBinding else BindingImpls.Delegate(this@copy::class) { this@copy.context(it) }" in generated,
             generated,
         )
         assertTrue("baseUrlBinding = baseUrl" in generated, generated)
@@ -114,7 +114,7 @@ class DIModuleCopyTest {
         // binding, so omitting it changes nothing - even a not-yet-resolved single/multiplex keeps
         // its memo. A non-generated implementation falls back to a current-value delegate.
         assertTrue(
-            "name: Binding<DefaultsModule, Unit, String> = if (this@copy is InaraDefaultsModule) this@copy.nameBinding else BindingImpls.Delegate { this@copy.name }" in generated,
+            "name: Binding<DefaultsModule, Unit, String> = if (this@copy is InaraDefaultsModule) this@copy.nameBinding else BindingImpls.Delegate(this@copy::class) { this@copy.name }" in generated,
             generated,
         )
 
@@ -123,7 +123,7 @@ class DIModuleCopyTest {
         // stored binding, which is itself `null` when the member was never bound - the body then
         // re-runs against the *new* module, seeing `name` if that's overridden in the same call.
         assertTrue(
-            "greeting: Binding<DefaultsModule, Unit, String>? = if (this@copy is InaraDefaultsModule) this@copy.greetingBinding else BindingImpls.Delegate { this@copy.greeting() }" in generated,
+            "greeting: Binding<DefaultsModule, Unit, String>? = if (this@copy is InaraDefaultsModule) this@copy.greetingBinding else BindingImpls.Delegate(this@copy::class) { this@copy.greeting() }" in generated,
             generated,
         )
 
@@ -153,7 +153,7 @@ class DIModuleCopyTest {
         val generated = compilation.generatedSource("sample/copy", "InaraAsyncModule.kt")
 
         assertTrue(
-            "load: SuspendBinding<AsyncModule, Unit, String> = if (this@copy is InaraAsyncModule) this@copy.loadBinding else SuspendBindingImpls.SuspendDelegate { this@copy.load() }" in generated,
+            "load: SuspendBinding<AsyncModule, Unit, String> = if (this@copy is InaraAsyncModule) this@copy.loadBinding else SuspendBindingImpls.SuspendDelegate(this@copy::class) { this@copy.load() }" in generated,
             generated,
         )
     }
@@ -225,11 +225,11 @@ class DIModuleCopyTest {
         // Member-override overload: one parameter per member, inherited included, all on Module3,
         // each a single-holder guard over the one implementation class.
         assertTrue(
-            "a: Binding<Module3, Unit, TypeA> = if (this@copy is InaraModule3) this@copy.aBinding else BindingImpls.Delegate { this@copy.a }" in generated,
+            "a: Binding<Module3, Unit, TypeA> = if (this@copy is InaraModule3) this@copy.aBinding else BindingImpls.Delegate(this@copy::class) { this@copy.a }" in generated,
             generated,
         )
         assertTrue(
-            "c: Binding<Module3, Unit, TypeC> = if (this@copy is InaraModule3) this@copy.cBinding else BindingImpls.Delegate { this@copy.c }" in generated,
+            "c: Binding<Module3, Unit, TypeC> = if (this@copy is InaraModule3) this@copy.cBinding else BindingImpls.Delegate(this@copy::class) { this@copy.c }" in generated,
             generated,
         )
 
@@ -240,14 +240,14 @@ class DIModuleCopyTest {
         assertTrue(
             Regex(
                 Regex.escape("aBinding = when {") + "\\s*" +
-                    Regex.escape("module1 !== this@copy -> if (module1 is InaraModule1) module1.aBinding else BindingImpls.Delegate { module1.a }") + "\\s*" +
+                    Regex.escape("module1 !== this@copy -> if (module1 is InaraModule1) module1.aBinding else BindingImpls.Delegate(module1::class) { module1.a }") + "\\s*" +
                     Regex.escape("this@copy is InaraModule3 -> this@copy.aBinding") + "\\s*" +
-                    Regex.escape("else -> BindingImpls.Delegate { this@copy.a }") + "\\s*\\}"
+                    Regex.escape("else -> BindingImpls.Delegate(this@copy::class) { this@copy.a }") + "\\s*\\}"
             ).containsMatchIn(generated),
             generated,
         )
         val moduleOverrideCall = generated.substringAfterLast("module1: Module1 = this")
-        assertTrue("cBinding = if (this@copy is InaraModule3) this@copy.cBinding else BindingImpls.Delegate { this@copy.c }" in moduleOverrideCall, generated)
+        assertTrue("cBinding = if (this@copy is InaraModule3) this@copy.cBinding else BindingImpls.Delegate(this@copy::class) { this@copy.c }" in moduleOverrideCall, generated)
     }
 
     @Test
@@ -285,15 +285,15 @@ class DIModuleCopyTest {
         assertTrue("public fun Module3.copy(): Module3 = this" in generated, generated)
         // No delegated class here, so every member's default is a single-holder guard.
         assertTrue(
-            "a: Binding<Module3, Unit, TypeA> = if (this@copy is InaraModule3) this@copy.aBinding else BindingImpls.Delegate { this@copy.a }" in generated,
+            "a: Binding<Module3, Unit, TypeA> = if (this@copy is InaraModule3) this@copy.aBinding else BindingImpls.Delegate(this@copy::class) { this@copy.a }" in generated,
             generated,
         )
         assertTrue(
-            "b: Binding<Module3, Unit, TypeB> = if (this@copy is InaraModule3) this@copy.bBinding else BindingImpls.Delegate { this@copy.b }" in generated,
+            "b: Binding<Module3, Unit, TypeB> = if (this@copy is InaraModule3) this@copy.bBinding else BindingImpls.Delegate(this@copy::class) { this@copy.b }" in generated,
             generated,
         )
         assertTrue(
-            "c: Binding<Module3, Unit, TypeC> = if (this@copy is InaraModule3) this@copy.cBinding else BindingImpls.Delegate { this@copy.c }" in generated,
+            "c: Binding<Module3, Unit, TypeC> = if (this@copy is InaraModule3) this@copy.cBinding else BindingImpls.Delegate(this@copy::class) { this@copy.c }" in generated,
             generated,
         )
     }

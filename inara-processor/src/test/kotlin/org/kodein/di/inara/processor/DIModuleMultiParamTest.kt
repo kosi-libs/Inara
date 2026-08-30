@@ -75,9 +75,9 @@ class DIModuleMultiParamTest {
         assertTrue("both: Binding<Module, ModuleBindingArguments.Both, String>," in generated, generated)
 
         // copy delegate reconstruction: named args, no spread anywhere.
-        assertTrue("BindingImpls.Delegate { this@copy.va(str = it) }" in generated, generated)
-        assertTrue("BindingImpls.Delegate { this@copy.mult(s = it.s, i = it.i) }" in generated, generated)
-        assertTrue("BindingImpls.Delegate { this@copy.both(ids = it.ids, flag = it.flag) }" in generated, generated)
+        assertTrue("BindingImpls.Delegate(this@copy::class) { this@copy.va(str = it) }" in generated, generated)
+        assertTrue("BindingImpls.Delegate(this@copy::class) { this@copy.mult(s = it.s, i = it.i) }" in generated, generated)
+        assertTrue("BindingImpls.Delegate(this@copy::class) { this@copy.both(ids = it.ids, flag = it.flag) }" in generated, generated)
         assertTrue("*" !in generated, generated)
     }
 
@@ -236,13 +236,13 @@ class DIModuleMultiParamTest {
 
         // `single` (one parameter, module-independent argument type) is carried across as-is.
         assertTrue(
-            "singleBinding = if (baseModule is InaraBaseModule) baseModule.singleBinding else BindingImpls.Delegate { baseModule.single(it) }" in generated,
+            "singleBinding = if (baseModule is InaraBaseModule) baseModule.singleBinding else BindingImpls.Delegate(baseModule::class) { baseModule.single(it) }" in generated,
             generated,
         )
         // `mult` (2+ parameters -> a per-module ChildModuleBindingArguments.Mult) can't be handed
         // across at all - the from-parents builder always forwards through a delegate.
         assertTrue(
-            "multBinding = BindingImpls.Delegate { baseModule.mult(s = it.s, i = it.i) }" in generated,
+            "multBinding = BindingImpls.Delegate(baseModule::class) { baseModule.mult(s = it.s, i = it.i) }" in generated,
             generated,
         )
         assertTrue("if (baseModule is InaraBaseModule) baseModule.multBinding" !in generated, generated)

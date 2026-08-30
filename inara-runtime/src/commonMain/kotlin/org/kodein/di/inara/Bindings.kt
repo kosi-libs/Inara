@@ -4,6 +4,8 @@ import org.kodein.di.inara.BindingImpls.Uninitialized.ifInitialized
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.reflect.KClass
+import kotlin.reflect.typeOf
 
 /**
  * A recipe for producing a [T] on demand, given the module [M] it belongs to and an argument [A].
@@ -20,25 +22,35 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * Never implement this directly - build one through the factories on the [Bindings] companion
  * ([value], [provider], [factory], [single], [weakSingle], [multiplex]), which cover every
  * lifecycle Inara supports.
+ *
+ * [A] and [T] are likewise declared `in`/`out` for the same reason - neither ever appears in an
+ * invariant position on any implementation this file builds.
  */
-public interface Binding<in M, A, T> {
+public interface Binding<in M, in A, out T> {
     /** Produces the value for [module] and [arg]. What "produces" means - recomputed on every
      * call, memoized, cached per argument - depends entirely on which [Bindings] factory built
      * this instance. */
     public fun get(module: M, arg: A): T
 
     /** Every way to build a [Binding]. */
+    @Suppress("UNCHECKED_CAST")
     @OptIn(InternalInaraGeneration::class)
     public companion object Bindings {
+        @PublishedApi
+        internal inline fun <reified T> cls(): KClass<T & Any>? = typeOf<T>().classifier as? KClass<T & Any>
+
         /** A [Binding] that always returns [value] - nothing is computed, ever. */
-        public fun <M, T> value(value: T) : Binding<M, Unit, T> = BindingImpls.Value(value)
+        public inline fun <M, reified T> value(value: T) : Binding<M, Unit, T> =
+            BindingImpls.Value(cls<T>(), value)
 
         /** A [Binding] that runs [provider] on every [get] call - a fresh result each time. */
-        public fun <M, T> provider(provider: M.() -> T) : Binding<M, Unit, T> = BindingImpls.Provider(provider)
+        public inline fun <M, reified T> provider(noinline provider: M.() -> T) : Binding<M, Unit, T> =
+            BindingImpls.Provider(cls<T>(), provider)
 
         /** A [Binding] that runs [factory] on every [get] call, with the caller's argument - the
          * argument-taking equivalent of [provider]. */
-        public fun <M, A, T> factory(factory: M.(A) -> T) : Binding<M, A, T> = BindingImpls.Factory(factory)
+        public inline fun <M, reified A, reified T> factory(noinline factory: M.(A) -> T) : Binding<M, A, T> =
+            BindingImpls.Factory(cls<A>(), cls<T>(), factory)
 
         /** How [single] and [weakSingle] guard their one-time build against concurrent callers. */
         public enum class SingleThreadSafety {
@@ -59,12 +71,12 @@ public interface Binding<in M, A, T> {
          * [safety] controls what happens when the first `get` call is itself concurrent - see
          * [SingleThreadSafety].
          */
-        public fun <M, T> single(
+        public inline fun <M, reified T> single(
             safety: SingleThreadSafety = SingleThreadSafety.Synchronized,
-            builder: M.() -> T
+            noinline builder: M.() -> T
         ) : Binding<M, Unit, T> = when (safety) {
-            SingleThreadSafety.Synchronized -> BindingImpls.SynchronizedSingle(builder)
-            SingleThreadSafety.Published -> BindingImpls.PublishedSingle(builder)
+            SingleThreadSafety.Synchronized -> BindingImpls.SynchronizedSingle(cls<T>(), builder)
+            SingleThreadSafety.Published -> BindingImpls.PublishedSingle(cls<T>(), builder)
         }
 
         /**
@@ -73,12 +85,12 @@ public interface Binding<in M, A, T> {
          * rebuilds it. Useful for an expensive-but-recreatable value you don't want to keep alive
          * forever just because a module holds a `Binding` to it.
          */
-        public fun <M, T : Any> weakSingle(
+        public inline fun <M, reified T : Any> weakSingle(
             safety: SingleThreadSafety = SingleThreadSafety.Synchronized,
-            builder: M.() -> T
+            noinline builder: M.() -> T
         ) : Binding<M, Unit, T> = when (safety) {
-            SingleThreadSafety.Synchronized -> BindingImpls.SynchronizedWeakSingle(builder)
-            SingleThreadSafety.Published -> BindingImpls.PublishedWeakSingle(builder)
+            SingleThreadSafety.Synchronized -> BindingImpls.SynchronizedWeakSingle(T::class, builder)
+            SingleThreadSafety.Published -> BindingImpls.PublishedWeakSingle(T::class, builder)
         }
 
         /**
@@ -86,7 +98,9 @@ public interface Binding<in M, A, T> {
          * [builder] - the way to give an argument-taking member its own lifecycle (typically
          * wrapping [single] or [provider]) instead of the argument-blind [factory].
          */
-        public fun <M, A, T> multiplex(builder: (A) -> Binding<M, Unit, T>) : Binding<M, A, T> = BindingImpls.Multiplex(builder)
+        public inline fun <M, reified A, reified T> multiplex(
+            noinline builder: (A) -> Binding<M, Unit, T>
+        ) : Binding<M, A, T> = BindingImpls.Multiplex(cls<A>(), cls<T>(), builder)
     }
 }
 
@@ -99,16 +113,34 @@ public interface Binding<in M, A, T> {
  */
 @InternalInaraGeneration
 public class BindingImpls {
-    internal class Value<M, T>(private val value: T) : Binding<M, Unit, T> { override fun get(module: M, arg: Unit): T = value }
+    @PublishedApi
+    internal class Value<in M, out T>(private val cls: KClass<T & Any>?, private val value: T) : Binding<M, Unit, T> {
+        override fun get(module: M, arg: Unit): T = value
+        override fun toString(): String = "value ( ${cls?.simpleName ?: "?"} )"
+    }
 
-    internal class Provider<M, T>(private val provider: M.() -> T) : Binding<M, Unit, T> { override fun get(module: M, arg: Unit): T = provider(module) }
+    @PublishedApi
+    internal class Provider<in M, out T>(private val cls: KClass<T & Any>?, private val provider: M.() -> T) : Binding<M, Unit, T> {
+        override fun get(module: M, arg: Unit): T = provider(module)
+        override fun toString(): String = "provider { ${cls?.simpleName ?: "?"} }"
+    }
 
-    internal class Factory<M, A, T>(private val factory: M.(A) -> T) : Binding<M, A, T> { override fun get(module: M, arg: A): T = factory(module, arg) }
+    @PublishedApi
+    internal class Factory<in M, in A, out T>(private val aCls: KClass<A & Any>?, private val tCls: KClass<T & Any>?, private val factory: M.(A) -> T) : Binding<M, A, T> {
+        override fun get(module: M, arg: A): T = factory(module, arg)
+        override fun toString(): String = "factory { ${aCls?.simpleName ?: "?"} -> ${tCls?.simpleName ?: "?"} }"
+    }
 
     /** Reads [delegate]'s *current* value off the receiver on every [get] - functionally identical
      * to [Factory], but under a name that reads correctly in generated `copy(...)` signatures
-     * (`= BindingImpls.Delegate { this@copy.member }`). */
-    public class Delegate<M, A, T>(private val delegate: M.(A) -> T) : Binding<M, A, T> { override fun get(module: M, arg: A): T = delegate(module, arg) }
+     * (`= BindingImpls.Delegate(this@copy::class) { this@copy.member }`). [cls] is the receiver's own
+     * runtime class - always a hand-written implementation or an inherited 2+-parameter member (see
+     * `ModuleFileGenerator.parentBindingCode`), since the generated implementation itself is read
+     * straight off its `<member>Binding` property instead - so [toString] can name it. */
+    public class Delegate<in M : Any, in A, out T>(private val cls: KClass<out M>, private val delegate: M.(A) -> T) : Binding<M, A, T> {
+        override fun get(module: M, arg: A): T = delegate(module, arg)
+        override fun toString(): String = "[delegated to ${cls.simpleName ?: "?"}]"
+    }
 
     internal object Uninitialized {
         inline fun <T> Any?.ifInitialized(then: (T) -> Unit) {
@@ -117,11 +149,11 @@ public class BindingImpls {
         }
     }
 
-    internal class SynchronizedSingle<M, T>(builder: M.() -> T) : Binding<M, Unit, T> {
+    @PublishedApi
+    internal class SynchronizedSingle<in M, out T>(private val cls: KClass<T & Any>?, builder: M.() -> T) : Binding<M, Unit, T> {
         private var builder: (M.() -> T)? = builder
         @Volatile private var value: Any? = Uninitialized
         private val lock = Lock()
-
         override fun get(module: M, arg: Unit): T {
             value.ifInitialized<T> { return it }
             return locked(lock) {
@@ -132,13 +164,14 @@ public class BindingImpls {
                 }
             }
         }
+        override fun toString(): String = "single(Synchronized) { ${cls?.simpleName ?: "?"} }"
     }
 
     @OptIn(ExperimentalAtomicApi::class)
-    internal class PublishedSingle<M, T>(builder: M.() -> T) : Binding<M, Unit, T> {
+    @PublishedApi
+    internal class PublishedSingle<in M, out T>(private val cls: KClass<T & Any>?, builder: M.() -> T) : Binding<M, Unit, T> {
         @Volatile private var builder: (M.() -> T)? = builder
         private val ref: AtomicReference<Any?> = AtomicReference(Uninitialized)
-
         override fun get(module: M, arg: Unit): T {
             ref.load().ifInitialized<T> { return it }
             val builder = this.builder
@@ -152,12 +185,13 @@ public class BindingImpls {
             }
             @Suppress("UNCHECKED_CAST") return ref.load() as T
         }
+        override fun toString(): String = "single(Published) { ${cls?.simpleName ?: "?"} }"
     }
 
-    internal class SynchronizedWeakSingle<M, T : Any>(val builder: M.() -> T) : Binding<M, Unit, T> {
+    @PublishedApi
+    internal class SynchronizedWeakSingle<in M, out T : Any>(private val cls: KClass<T>, private val builder: M.() -> T) : Binding<M, Unit, T> {
         @Volatile private var ref: Any? = Uninitialized
         private val lock = Lock()
-
         override fun get(module: M, arg: Unit): T {
             ref.ifInitialized<WeakRef<T>> { r -> r.value?.let { return it } }
             return locked(lock) {
@@ -167,12 +201,13 @@ public class BindingImpls {
                 }
             }
         }
+        override fun toString(): String = "weakSingle(Synchronized) { ${cls.simpleName ?: "?"} }"
     }
 
     @OptIn(ExperimentalAtomicApi::class)
-    internal class PublishedWeakSingle<M, T : Any>(val builder: M.() -> T) : Binding<M, Unit, T> {
+    @PublishedApi
+    internal class PublishedWeakSingle<in M, out T : Any>(private val cls: KClass<T>, private val builder: M.() -> T) : Binding<M, Unit, T> {
         private val refRef: AtomicReference<Any?> = AtomicReference(Uninitialized)
-
         override fun get(module: M, arg: Unit): T {
             while (true) {
                 val ref = refRef.load()
@@ -184,12 +219,13 @@ public class BindingImpls {
                 }
             }
         }
+        override fun toString(): String = "weakSingle(Published) { ${cls.simpleName ?: "?"} }"
     }
 
     @OptIn(ExperimentalAtomicApi::class)
-    internal class Multiplex<M, A, T>(private val delegate: (A) -> Binding<M, Unit, T>) : Binding<M, A, T> {
+    @PublishedApi
+    internal class Multiplex<in M, in A, out T>(private val aCls: KClass<A & Any>?, private val tCls: KClass<T & Any>?, private val delegate: (A) -> Binding<M, Unit, T>) : Binding<M, A, T> {
         private val bindingsRef: AtomicReference<Map<A, Binding<M, Unit, T>>> = AtomicReference(HashMap())
-
         override fun get(module: M, arg: A): T {
             while (true) {
                 val map = bindingsRef.load()
@@ -205,5 +241,6 @@ public class BindingImpls {
                 }
             }
         }
+        override fun toString(): String = "multiplex { ${aCls?.simpleName ?: "?"} -> ${tCls?.simpleName ?: "?"} }"
     }
 }

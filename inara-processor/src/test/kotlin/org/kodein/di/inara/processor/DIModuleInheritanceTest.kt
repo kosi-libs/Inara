@@ -68,11 +68,11 @@ class DIModuleInheritanceTest {
         assertTrue("module1: Module1," in generated, generated)
         assertTrue("module2: Module2," in generated, generated)
         assertTrue(
-            "aBinding = if (module1 is InaraModule1) module1.aBinding else BindingImpls.Delegate { module1.a }" in generated,
+            "aBinding = if (module1 is InaraModule1) module1.aBinding else BindingImpls.Delegate(module1::class) { module1.a }" in generated,
             generated,
         )
         assertTrue(
-            "bBinding = if (module2 is InaraModule2) module2.bBinding else BindingImpls.Delegate { module2.b }" in generated,
+            "bBinding = if (module2 is InaraModule2) module2.bBinding else BindingImpls.Delegate(module2::class) { module2.b }" in generated,
             generated,
         )
         assertTrue("cBinding = c," in generated, generated)

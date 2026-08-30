@@ -12,9 +12,13 @@ import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.PropertySpec
+import com.squareup.kotlinpoet.STAR
+import com.squareup.kotlinpoet.STRING
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.TypeVariableName
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.WildcardTypeName
 import com.squareup.kotlinpoet.joinToCode
@@ -76,6 +80,87 @@ private fun isArrayTypeName(typeName: TypeName): Boolean = when (typeName) {
 }
 
 /**
+ * Renders [this] using simple (unqualified) names - `List<String>` rather than
+ * `kotlin.collections.List<kotlin.String>` - for the debug `toString()` header line built by
+ * [memberSignature]. Mirrors the simple names a binding's own `toString()` already shows via
+ * `KClass.simpleName` (see `Bindings.kt`/`SuspendBindings.kt`).
+ */
+private fun TypeName.simpleString(): String {
+    val base = when (this) {
+        is ClassName -> simpleNames.joinToString(".")
+        is ParameterizedTypeName -> "${rawType.simpleString()}<${typeArguments.joinToString(", ") { it.simpleString() }}>"
+        is WildcardTypeName -> when {
+            inTypes.size == 1 -> "in ${inTypes[0].simpleString()}"
+            outTypes == STAR.outTypes -> "*"
+            else -> "out ${outTypes[0].simpleString()}"
+        }
+        is LambdaTypeName -> buildString {
+            if (isSuspending) append("suspend ")
+            receiver?.let { append(it.simpleString()); append(".") }
+            append('(')
+            append(parameters.joinToString(", ") { it.type.simpleString() })
+            append(") -> ")
+            append(returnType.simpleString())
+        }
+        is TypeVariableName -> name
+        else -> toString()
+    }
+    return if (isNullable && this !is LambdaTypeName) "$base?" else base
+}
+
+/**
+ * The literal member-signature text shown left of `=>` in the debug `toString()` [buildToStringFunction]
+ * generates - e.g. `val baseUrl: String` or `suspend fun loadKeyed(key: String): Service`. A
+ * parameter's declared default value is never reproduced - KSP doesn't expose the expression (the
+ * same limitation [buildArgsContainerType] documents), so `both(vararg ids: Int, flag: Boolean =
+ * false)` renders as `fun both(vararg ids: Int, flag: Boolean): String`.
+ */
+private fun memberSignature(member: MemberModel): String {
+    val returnTypeString = member.returnType.toTypeName().simpleString()
+    if (!member.isFunction) return "val ${member.name}: $returnTypeString"
+    val params = member.parameters.joinToString(", ") { p ->
+        val prefix = if (p.isVararg) "vararg " else ""
+        "$prefix${p.name}: ${p.type.toTypeName().simpleString()}"
+    }
+    val suspendPrefix = if (member.isSuspend) "suspend " else ""
+    return "${suspendPrefix}fun ${member.name}($params): $returnTypeString"
+}
+
+/**
+ * The debug `override fun toString()` emitted on the `Inara<Module>` class (see [buildModuleType]):
+ * one line per member in [members], each showing [memberSignature] followed by `=> ` and the
+ * current `toString()` of the binding backing it - `[default]` when a default-body member's binding
+ * is `null` (its interface's own default body runs instead), matching the `[delegated to ...]` marker
+ * `BindingImpls.Delegate`/`SuspendBindingImpls.SuspendDelegate` already use for "no real binding
+ * here". [builderName] (the module interface's own simple name) is used as the header, not the
+ * generated class name.
+ */
+private fun buildToStringFunction(builderName: String, members: List<MemberModel>): FunSpec {
+    val expression = if (members.isEmpty()) {
+        CodeBlock.of("%S", "module $builderName {}")
+    } else {
+        val body = CodeBlock.builder().add("%S", "module $builderName {\n")
+        for (member in members) {
+            val bindingPropertyName = "${member.name}Binding"
+            body.add(" +\n    %S + ", "    ${memberSignature(member)} => ")
+            if (member.hasDefaultImplementation) {
+                body.add("(%N ?: %S)", bindingPropertyName, "[default]")
+            } else {
+                body.add("%N", bindingPropertyName)
+            }
+            body.add(" + %S", "\n")
+        }
+        body.add(" +\n    %S", "}")
+        body.build()
+    }
+    return FunSpec.builder("toString")
+        .addModifiers(KModifier.OVERRIDE)
+        .returns(STRING)
+        .addStatement("return %L", expression)
+        .build()
+}
+
+/**
  * The `Binding`/`SuspendBinding` argument type (`A`) of [member]: `Unit` for no parameters, a
  * single parameter's own type (the vararg array type if it's a vararg), or - for two or more
  * parameters, vararg included - the generated `<argsClassName>.<Name>` data class.
@@ -110,10 +195,14 @@ private fun bindingTypeOf(
 }
 
 /**
- * `BindingImpls.Delegate { <receiver>.<member>(…) }` (`SuspendBindingImpls.SuspendDelegate` for a
- * `suspend` member): a binding that reads [member]'s *current* value off [receiver] on every `get`.
- * The fallback for when a real stored binding can't be reached - a hand-written `<Module>`
- * implementation, or an inherited member with 2+ parameters (see [parentBindingCode]).
+ * `BindingImpls.Delegate(<receiver>::class) { <receiver>.<member>(…) }`
+ * (`SuspendBindingImpls.SuspendDelegate` for a `suspend` member): a binding that reads [member]'s
+ * *current* value off [receiver] on every `get`. The fallback for when a real stored binding can't
+ * be reached - a hand-written `<Module>` implementation, or an inherited member with 2+ parameters
+ * (see [parentBindingCode]). [receiver]'s own runtime class is passed through so the delegate's
+ * `toString()` can name it (`[delegated to ManualModule]`) - always a hand-written implementation or
+ * such an inherited member, since the generated implementation itself is read straight off its
+ * `<member>Binding` property instead of ever reaching this fallback.
  *
  * A named argument assigns straight into a vararg parameter, no spread operator needed (using one
  * is flagged as redundant) - so a lone vararg parameter, and every parameter of a multi-parameter
@@ -135,7 +224,7 @@ private fun delegateBindingCode(member: MemberModel, receiver: CodeBlock): CodeB
             member.parameters.map { p -> CodeBlock.of("%N = it.%N", p.name, p.name) }.joinToCode(", "),
         )
     }
-    return CodeBlock.of("%T { %L }", delegateClass, accessCode)
+    return CodeBlock.of("%T(%L::class) { %L }", delegateClass, receiver, accessCode)
 }
 
 /**
@@ -422,6 +511,13 @@ private fun buildModuleType(
     }
     classBuilder.primaryConstructor(constructorBuilder.build())
     classBuilder.addSuperinterface(moduleClassName)
+
+    // A @DIModule interface may itself declare a zero-arg `toString(): String` (abstract or
+    // defaulted) - the loop above already generated an override backed by a `toStringBinding` for
+    // it, so the debug one below is skipped rather than emitting a second, non-compiling override.
+    if (members.none { it.isFunction && it.name == "toString" && it.parameters.isEmpty() }) {
+        classBuilder.addFunction(buildToStringFunction(builderName, members))
+    }
 
     val builderFun = FunSpec.builder(builderName)
         .returns(moduleClassName)

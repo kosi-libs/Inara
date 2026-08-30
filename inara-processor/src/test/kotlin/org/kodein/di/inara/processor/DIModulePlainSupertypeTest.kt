@@ -188,7 +188,7 @@ class DIModulePlainSupertypeTest {
         assertTrue("module1: Module1," in composedBuilder, generated)
         assertTrue("a: Binding" !in composedBuilder, generated)
         assertTrue(
-            "aBinding = if (module1 is InaraModule1) module1.aBinding else BindingImpls.Delegate { module1.a }" in composedBuilder,
+            "aBinding = if (module1 is InaraModule1) module1.aBinding else BindingImpls.Delegate(module1::class) { module1.a }" in composedBuilder,
             generated,
         )
     }

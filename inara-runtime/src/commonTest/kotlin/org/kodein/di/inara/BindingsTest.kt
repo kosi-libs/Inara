@@ -17,6 +17,9 @@ private class TestModule(val name: String = "module")
 
 private data class Key(val id: Int)
 
+private open class Animal
+private class Dog : Animal()
+
 class BindingsTest {
 
     @Test
@@ -179,5 +182,79 @@ class BindingsTest {
         binding.get(module, 1)
 
         assertEquals(1, innerBuilds)
+    }
+
+    @Test
+    fun value_toString_namesTheHeldType() {
+        assertEquals("value ( String )", value<TestModule, String>("x").toString())
+    }
+
+    @Test
+    fun value_toString_namesTheHeldType_evenWhenTheValueIsNull() {
+        // The reified type is still `String`, classifier resolution does not depend on nullability
+        // of the *value* held - only the "?: ..." fallback (an unreachable case here) would print "?".
+        assertEquals("value ( String )", value<TestModule, String?>(null).toString())
+    }
+
+    @Test
+    fun toString_showsTheDeclaredTypeNotTheRuntimeClassOfWhatItHolds() {
+        // Binding<M, A, out T> is covariant in T, so a Binding<TestModule, Unit, Animal> can hold a
+        // Dog instance. `cls<T>()` captures the reified `T` at the call site (Animal) - not the
+        // runtime class of the value the caller happened to pass (Dog) - which is exactly what makes
+        // that assignment sound: the binding is typed, and prints itself, as what it was declared to
+        // build, regardless of which subtype actually backs it.
+        val binding: Binding<TestModule, Unit, Animal> = value<TestModule, Animal>(Dog())
+        assertEquals("value ( Animal )", binding.toString())
+    }
+
+    @Test
+    fun provider_toString_namesTheReturnedType() {
+        assertEquals("provider { String }", provider<TestModule, String> { name }.toString())
+    }
+
+    @Test
+    fun factory_toString_namesArgAndReturnedTypes() {
+        assertEquals("factory { Int -> String }", factory<TestModule, Int, String> { "$it" }.toString())
+    }
+
+    @Test
+    fun single_toString_namesSafetyAndReturnedType() {
+        assertEquals(
+            "single(Synchronized) { String }",
+            single<TestModule, String>(SingleThreadSafety.Synchronized) { name }.toString(),
+        )
+        assertEquals(
+            "single(Published) { String }",
+            single<TestModule, String>(SingleThreadSafety.Published) { name }.toString(),
+        )
+    }
+
+    @Test
+    fun weakSingle_toString_namesSafetyAndReturnedType() {
+        assertEquals(
+            "weakSingle(Synchronized) { Any }",
+            weakSingle<TestModule, Any>(SingleThreadSafety.Synchronized) { Any() }.toString(),
+        )
+        assertEquals(
+            "weakSingle(Published) { Any }",
+            weakSingle<TestModule, Any>(SingleThreadSafety.Published) { Any() }.toString(),
+        )
+    }
+
+    @Test
+    fun multiplex_toString_namesArgAndReturnedTypes() {
+        assertEquals(
+            "multiplex { Key -> Any }",
+            multiplex<TestModule, Key, Any> { single { Any() } }.toString(),
+        )
+    }
+
+    @OptIn(InternalInaraGeneration::class)
+    @Test
+    fun delegate_toString_namesTheClassItDelegatesTo() {
+        assertEquals(
+            "[delegated to TestModule]",
+            BindingImpls.Delegate<TestModule, Unit, String>(TestModule::class) { name }.toString(),
+        )
     }
 }
