@@ -239,19 +239,21 @@ A binding is a recipe for producing a `T`:
 .Binding.kt
 [source,kotlin]
 ----
-public interface Binding<M, A, T> {
+public interface Binding<in M, in A, out T> {
     public fun get(module: M, arg: A): T
 }
 ----
 
 * `M` — the module type. It is always the _leaf_ module the binding is being supplied to, which is
-  what lets a body reach any sibling member through its receiver.
+  what lets a body reach any sibling member through its receiver. It is _contravariant_ (`in M`): a
+  `Binding<Parent, …>` satisfies a `Binding<Child, …>` slot, which is how a `composed = true` builder
+  hands a parent module's own bindings straight to the child.
 * `A` — the argument type: `Unit` for a property or a no-argument function, otherwise derived from
   the member's parameters (see <<member-shapes,Member shapes>>).
 * `T` — the produced type.
 
-`SuspendBinding<M, A, T>` is the identical shape with a `suspend fun get`, used automatically for
-`suspend` members.
+`SuspendBinding<in M, in A, out T>` is the identical shape with a `suspend fun get`, used
+automatically for `suspend` members.
 
 == Bindings reference
 
