@@ -95,8 +95,9 @@ internal data class FactoryArgumentModel(
 /**
  * A `@DIFactory` object, parsed and every one of `builds`'s selected constructor's arguments resolved.
  *
- * [visibility] is `builds`'s own visibility, not the `@DIFactory` object's (which is always
- * `internal`, see [parseFactory]) - it drives whether the generated builder function is `internal`.
+ * [visibility] is `internal` when any of `builds`, the selected constructor, `from`, or `with` is
+ * `internal`, else `public` - it is never the `@DIFactory` object's own visibility (which is always
+ * `internal`, see [parseFactory]). It drives whether the generated builder function is `internal`.
  *
  * [isSuspend] drives whether the generated builder function itself is `suspend` - see
  * [SuspendMode]: always `false` under `Suspend.Forbid` (structurally, since no `suspend` provider
@@ -428,13 +429,13 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
         SuspendMode.FORCE -> true
     }
 
-    // The generated function calls `ctor` directly and takes `with` as a parameter, so it can only
-    // be as visible as the most restrictive of `builds`, the selected constructor, and `with` - a
-    // public class with an internal constructor (only reachable once a non-primary constructor can
-    // be selected), or an internal `with` type, still needs an internal generated function, or the
-    // signature wouldn't compile.
+    // The generated function calls `ctor` directly and takes `from` (as `module`) and `with` as
+    // parameters, so it can only be as visible as the most restrictive of `builds`, the selected
+    // constructor, `from`, and `with` - a public class with an internal constructor (only reachable
+    // once a non-primary constructor can be selected), an internal `from` module, or an internal
+    // `with` type, still needs an internal generated function, or the signature wouldn't compile.
     val visibility =
-        if (Visibility.INTERNAL in setOfNotNull(buildsDecl.getVisibility(), ctor.getVisibility(), withDecl?.getVisibility()))
+        if (Visibility.INTERNAL in setOfNotNull(buildsDecl.getVisibility(), ctor.getVisibility(), fromDecl.getVisibility(), withDecl?.getVisibility()))
             Visibility.INTERNAL
         else Visibility.PUBLIC
 

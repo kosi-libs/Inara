@@ -187,6 +187,35 @@ class DIFactoryTest {
     }
 
     @Test
+    fun internalFromModule_generatesInternalFunction() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            internal interface SecretModule {
+                val greeting: String
+            }
+
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = SecretModule::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("internal fun Greeter(module: SecretModule): Greeter" in generated, generated)
+    }
+
+    @Test
     fun argFunctionReceiverOnSupertype_isAccepted() {
         val source = SourceFile.kotlin(
             "Factory.kt",

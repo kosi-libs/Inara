@@ -685,6 +685,10 @@ public fun UsersController(module: NetworkModule): UsersController = with(UserCo
 val controller = UsersController(network)   // `network` is a built NetworkModule
 ----
 
+The generated function is `internal` if any of `builds`, the selected constructor, `from`, or `with`
+is `internal` — otherwise it is `public`. A `public` function can't expose an `internal` type in its
+signature, so the narrowest of the four wins.
+
 === Resolving constructor arguments
 
 Each constructor argument is resolved independently, in priority order:
@@ -739,7 +743,6 @@ When `with` is set (it defaults to `Unit` — no parameter, everything above unc
   type it is — joins the automatic-resolution candidate pool, on equal footing with a zero-parameter
   member. A zero- and a one-parameter member matching the same argument is an ambiguity error, just
   as two zero-parameter members are.
-* An `internal` `with` type makes the generated function `internal`, like an `internal` `builds`.
 
 === `suspend` arguments
 
