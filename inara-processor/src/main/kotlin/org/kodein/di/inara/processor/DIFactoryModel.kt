@@ -180,7 +180,11 @@ private fun withArgumentFor(param: ParameterModel, withType: KSType): WithArgume
  * than a raw type. Either surfaces as an ordinary Kotlin compile error in the generated file rather
  * than a dedicated diagnostic here.
  */
-internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): FactoryModel? {
+internal fun parseFactory(
+    objDecl: KSClassDeclaration,
+    logger: KSPLogger,
+    moduleCache: MutableMap<String, ModuleModel?>,
+): FactoryModel? {
     var hasError = false
     fun reportError(message: String, node: KSNode) {
         logger.error(message, node)
@@ -264,7 +268,7 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
         )
         return null
     }
-    val fromModel = parseModule(fromDecl, logger) ?: return null
+    val fromModel = parseModule(fromDecl, logger, moduleCache) ?: return null
 
     val fromName = fromDecl.simpleName.asString()
     val fromType = fromDecl.asStarProjectedType()

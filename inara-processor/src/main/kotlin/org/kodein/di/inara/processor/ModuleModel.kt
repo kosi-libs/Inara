@@ -329,13 +329,29 @@ private fun buildMember(decl: KSDeclaration, moduleType: KSType, hasDefault: Boo
 internal fun MemberModel.argsClassSimpleName(): String = name.replaceFirstChar(Char::uppercaseChar)
 
 /**
+ * [parseModuleUncached], memoized for the lifetime of one processing round via [cache] (keyed by
+ * qualified name) - so a `@DIModule` that is also some `@DIFactory`'s `from` is validated, and its
+ * diagnostics emitted, exactly once rather than once per pointing factory. A failed parse is cached
+ * as `null` and not re-reported.
+ */
+internal fun parseModule(
+    classDecl: KSClassDeclaration,
+    logger: KSPLogger,
+    cache: MutableMap<String, ModuleModel?>,
+): ModuleModel? {
+    val key = classDecl.qualifiedName?.asString() ?: return parseModuleUncached(classDecl, logger)
+    if (key in cache) return cache[key]
+    return parseModuleUncached(classDecl, logger).also { cache[key] = it }
+}
+
+/**
  * Validates [classDecl] against every `@DIModule` rule and builds a [ModuleModel] out of it.
  *
  * Every violation found is reported through [logger] before returning - so a single compilation
  * surfaces every problem in the interface at once, rather than one error per run. Returns `null`
  * if the interface is invalid.
  */
-internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): ModuleModel? {
+private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger): ModuleModel? {
     var hasError = false
     fun reportError(message: String, node: KSNode) {
         logger.error(message, node)

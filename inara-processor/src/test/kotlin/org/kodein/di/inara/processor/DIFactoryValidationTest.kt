@@ -186,6 +186,42 @@ class DIFactoryValidationTest {
     }
 
     @Test
+    fun invalidFromModule_reportsEachErrorOnce() {
+        // Pre-fix: the @DIModule loop reports once, then each @DIFactory re-parses `from` and reports
+        // again - N+1 copies of one diagnostic. The module parse is now memoized per round.
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Factory.kt",
+                """
+                package sample.factory
+
+                import org.kodein.di.inara.DIFactory
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface BrokenModule {
+                    var broken: String
+                }
+
+                class Greeter(val broken: String)
+                class Shouter(val broken: String)
+
+                @DIFactory(builds = Greeter::class, from = BrokenModule::class)
+                internal object GreeterDIFactory
+
+                @DIFactory(builds = Shouter::class, from = BrokenModule::class)
+                internal object ShouterDIFactory
+                """
+            )
+        )
+
+        assertEquals(ExitCode.COMPILATION_ERROR, compilation.exitCode, compilation.messages)
+        val hits = Regex(Regex.escape("var properties are not supported: 'broken'."))
+            .findAll(compilation.messages).count()
+        assertEquals(1, hits, compilation.messages)
+    }
+
+    @Test
     fun nonDIModuleFrom_isRejected() {
         assertRejected(
             "must be a @DIModule interface",

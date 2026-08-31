@@ -30,6 +30,10 @@ public class DIModuleProcessor(
 ) : SymbolProcessor {
     override fun process(resolver: Resolver): List<KSAnnotated> {
         val deferred = mutableListOf<KSAnnotated>()
+        // Round-scoped: KSP invalidates KSNodes between rounds, so this must not outlive process().
+        // Shared between the two loops so a @DIFactory's `from` module is parsed (and its diagnostics
+        // reported) once, not again per factory - see parseModule.
+        val moduleCache = mutableMapOf<String, ModuleModel?>()
 
         for (symbol in resolver.getSymbolsWithAnnotation(DI_MODULE_ANNOTATION)) {
             if (!symbol.validate()) {
@@ -43,7 +47,7 @@ public class DIModuleProcessor(
                 continue
             }
 
-            val model = parseModule(classDecl, logger) ?: continue
+            val model = parseModule(classDecl, logger, moduleCache) ?: continue
             generateModuleFile(model).writeTo(codeGenerator, aggregating = false)
         }
 
@@ -59,7 +63,7 @@ public class DIModuleProcessor(
                 continue
             }
 
-            val model = parseFactory(objDecl, logger) ?: continue
+            val model = parseFactory(objDecl, logger, moduleCache) ?: continue
             generateFactoryFile(model).writeTo(codeGenerator, aggregating = false)
         }
 
