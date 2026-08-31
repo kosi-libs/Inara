@@ -105,6 +105,9 @@ internal data class FactoryArgumentModel(
  */
 internal data class FactoryModel(
     val factoryClassName: ClassName,
+    /** The `@DIFactory` object's simple name flattened across its enclosing scopes (`OuterA.Fac` ->
+     * `OuterAFac`), used to name the generated file - see `generateFactoryFile`. */
+    val generatedBaseName: String,
     val buildsClassName: ClassName,
     val fromClassName: ClassName,
     val withTypeName: TypeName?,
@@ -437,6 +440,7 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
 
     return FactoryModel(
         factoryClassName = objDecl.toClassName(),
+        generatedBaseName = objDecl.generatedBaseName(),
         buildsClassName = buildsDecl.toClassName(),
         fromClassName = fromDecl.toClassName(),
         withTypeName = withType?.toTypeName(),

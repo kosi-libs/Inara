@@ -20,11 +20,13 @@ import org.kodein.di.inara.processor.WithArgument.Positional
  *
  * The file is named after the `@DIFactory` object rather than `builds`, and lives in the object's
  * own package - two different `@DIFactory` objects could otherwise target `builds` classes that
- * happen to share a simple name, whereas two objects in the same package can never collide (Kotlin
- * already guarantees that).
+ * happen to share a simple name. The object's name is flattened across its enclosing scopes
+ * (`OuterA.Fac` -> `InaraOuterAFac`, see [FactoryModel.generatedBaseName]), because Kotlin's
+ * name-uniqueness guarantee only covers _top-level_ objects - two `Fac` objects nested in different
+ * enclosing classes of one package would otherwise both claim `InaraFac.kt`.
  */
 internal fun generateFactoryFile(model: FactoryModel): FileSpec {
-    val fileBuilder = FileSpec.builder(model.factoryClassName.packageName, inaraName(model.factoryClassName.simpleName))
+    val fileBuilder = FileSpec.builder(model.factoryClassName.packageName, inaraName(model.generatedBaseName))
     fileBuilder.addFunction(buildFactoryFunction(model))
     return fileBuilder.build()
 }

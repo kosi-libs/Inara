@@ -105,12 +105,13 @@ internal data class ModuleModel(
 )
 
 /**
- * The interface's simple name prefixed with every enclosing class/interface/object's simple name,
+ * The declaration's simple name prefixed with every enclosing class/interface/object's simple name,
  * e.g. `OuterInner` for `Outer.Inner`. Used as the base for the generated file/class name so two
- * same-named nested interfaces in different enclosing scopes can't collide, and as the base for a
+ * same-named nested declarations in different enclosing scopes can't collide - both for a `@DIModule`
+ * interface and for a `@DIFactory` object (see `generateFactoryFile`) - and as the base for a
  * `@DIModule` parent's constructor parameter name (decapitalized).
  */
-private fun KSClassDeclaration.generatedBaseName(): String {
+internal fun KSClassDeclaration.generatedBaseName(): String {
     val names = mutableListOf(simpleName.asString())
     var parent = parentDeclaration
     while (parent is KSClassDeclaration) {

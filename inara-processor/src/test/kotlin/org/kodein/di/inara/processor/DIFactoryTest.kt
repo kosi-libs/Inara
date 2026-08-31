@@ -483,4 +483,92 @@ class DIFactoryTest {
         assertTrue("= with(GreeterDIFactory)" in generated, generated)
         assertTrue("with:" !in generated, generated)
     }
+
+    @Test
+    fun twoSameNamedNestedFactoryObjectsInOnePackage_getDistinctGeneratedFiles() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface LabelModule {
+                val label: String
+            }
+
+            class Widget(val label: String)
+            class Gadget(val label: String)
+
+            class OuterA {
+                @DIFactory(builds = Widget::class, from = LabelModule::class)
+                internal object Fac
+            }
+
+            class OuterB {
+                @DIFactory(builds = Gadget::class, from = LabelModule::class)
+                internal object Fac
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        // A wrong file name would throw FileNotFoundException here, as it does for every other test.
+        val a = compilation.generatedSource("sample/factory", "InaraOuterAFac.kt")
+        val b = compilation.generatedSource("sample/factory", "InaraOuterBFac.kt")
+
+        assertTrue("public fun Widget(module: LabelModule): Widget" in a, a)
+        assertTrue("with(OuterA.Fac)" in a, a)
+        assertTrue("public fun Gadget(module: LabelModule): Gadget" in b, b)
+        assertTrue("with(OuterB.Fac)" in b, b)
+    }
+
+    @Test
+    fun twoFactoriesWithSameBuildsButDifferentFrom_generateValidOverloads() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface LabelModuleA {
+                val label: String
+            }
+
+            @DIModule
+            interface LabelModuleB {
+                val label: String
+            }
+
+            class Widget(val label: String)
+
+            class OuterA {
+                @DIFactory(builds = Widget::class, from = LabelModuleA::class)
+                internal object Fac
+            }
+
+            class OuterB {
+                @DIFactory(builds = Widget::class, from = LabelModuleB::class)
+                internal object Fac
+            }
+            """
+        )
+
+        // Both generated functions are named `Widget`; the Kotlin compiler accepts them because
+        // their `module` parameter types differ, so compiling the generated code is the assertion.
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val a = compilation.generatedSource("sample/factory", "InaraOuterAFac.kt")
+        val b = compilation.generatedSource("sample/factory", "InaraOuterBFac.kt")
+        assertTrue("public fun Widget(module: LabelModuleA): Widget" in a, a)
+        assertTrue("public fun Widget(module: LabelModuleB): Widget" in b, b)
+    }
 }
