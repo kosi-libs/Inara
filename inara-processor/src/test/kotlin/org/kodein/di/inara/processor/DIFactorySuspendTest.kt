@@ -156,4 +156,40 @@ class DIFactorySuspendTest {
         assertTrue("public fun Greeter(module: GreetingModule): Greeter" in generated, generated)
         assertTrue("suspend" !in generated, generated)
     }
+
+    @Test
+    fun forbid_defaultedParameterWhoseOnlyCandidateIsSuspend_fallsBackToTheDefault() {
+        // Under Forbid the suspend member is not a candidate; for a non-defaulted parameter that
+        // would be "Cannot resolve argument", but `verbose` has a default, so it is simply omitted
+        // and the generated function stays non-suspend.
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIFactory.Suspend
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val greeting: String
+                suspend fun verbose(): Boolean
+            }
+
+            class Greeter(val greeting: String, val verbose: Boolean = false)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, suspend = Suspend.Forbid)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("public fun Greeter(module: GreetingModule): Greeter" in generated, generated)
+        assertTrue("suspend" !in generated, generated)
+        assertTrue("verbose" !in generated, generated)
+    }
 }

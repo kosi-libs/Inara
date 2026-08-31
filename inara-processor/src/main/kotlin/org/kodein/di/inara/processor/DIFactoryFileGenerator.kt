@@ -53,28 +53,36 @@ private fun buildFactoryFunction(model: FactoryModel): FunSpec {
     // parameter, so it would still emit a bare `with` that resolves to the parameter.)
     val withArg = if (model.withTypeName != null) CodeBlock.of("with") else null
 
-    val constructorCall = CodeBlock.builder()
-        .add("%T(\n", model.buildsClassName)
-        .indent()
-        .apply {
-            for (argument in model.arguments) {
-                val accessCode = when (val source = argument.source) {
-                    is FactoryFunction ->
-                        if (withArg != null) CodeBlock.of("module.%N(%L)", source.functionName, withArg)
-                        else CodeBlock.of("module.%N()", source.functionName)
-                    is ModuleProperty -> CodeBlock.of("module.%N", source.memberName)
-                    is ModuleFunction -> when (val w = source.withArgument) {
-                        null -> CodeBlock.of("module.%N()", source.memberName)
-                        is Positional -> CodeBlock.of("module.%N(%L)", source.memberName, withArg)
-                        is Named -> CodeBlock.of("module.%N(%N = %L)", source.memberName, w.parameterName, withArg)
+    // Every constructor argument the model carries is emitted as a named argument; any parameter it
+    // omits (an `arg<Argument>`-less default or vararg) falls back to its own declared default. When
+    // the model carries no arguments at all, that is a bare `Builds()` - no newline, nothing to
+    // indent.
+    val constructorCall = if (model.arguments.isEmpty()) {
+        CodeBlock.of("%T()", model.buildsClassName)
+    } else {
+        CodeBlock.builder()
+            .add("%T(\n", model.buildsClassName)
+            .indent()
+            .apply {
+                for (argument in model.arguments) {
+                    val accessCode = when (val source = argument.source) {
+                        is FactoryFunction ->
+                            if (withArg != null) CodeBlock.of("module.%N(%L)", source.functionName, withArg)
+                            else CodeBlock.of("module.%N()", source.functionName)
+                        is ModuleProperty -> CodeBlock.of("module.%N", source.memberName)
+                        is ModuleFunction -> when (val w = source.withArgument) {
+                            null -> CodeBlock.of("module.%N()", source.memberName)
+                            is Positional -> CodeBlock.of("module.%N(%L)", source.memberName, withArg)
+                            is Named -> CodeBlock.of("module.%N(%N = %L)", source.memberName, w.parameterName, withArg)
+                        }
                     }
+                    addStatement("%N = %L,", argument.paramName, accessCode)
                 }
-                addStatement("%N = %L,", argument.paramName, accessCode)
             }
-        }
-        .unindent()
-        .add(")")
-        .build()
+            .unindent()
+            .add(")")
+            .build()
+    }
 
     // Passed as a `%L` argument rather than interpolated into the format string, so a stray `%` in
     // it could never be read as a placeholder.

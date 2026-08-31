@@ -634,4 +634,198 @@ class DIFactoryTest {
         assertTrue("public fun Widget(module: LabelModuleA): Widget" in a, a)
         assertTrue("public fun Widget(module: LabelModuleB): Widget" in b, b)
     }
+
+    @Test
+    fun defaultedParameter_withNoCandidate_isOmittedFromTheCall() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val greeting: String
+            }
+
+            class Greeter(val greeting: String, val verbose: Boolean = false)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("greeting = module.greeting," in generated, generated)
+        assertTrue("verbose" !in generated, generated)
+    }
+
+    @Test
+    fun defaultedParameter_outranksAMatchingModuleMember() {
+        // `flag` has a default AND `GreetingModule.flag` would match it exactly - the default wins,
+        // so the module member is never consulted and the argument is left out of the call.
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val greeting: String
+                val flag: Boolean
+            }
+
+            class Greeter(val greeting: String, val flag: Boolean = true)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("greeting = module.greeting," in generated, generated)
+        assertTrue("flag" !in generated, generated)
+    }
+
+    @Test
+    fun defaultedParameter_withAnArgFunction_usesTheArgFunction() {
+        // An explicit arg function still outranks the default - the escape hatch works even when a
+        // default exists.
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val greeting: String
+            }
+
+            class Greeter(val greeting: String, val verbose: Boolean = false)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            internal object GreeterDIFactory {
+                fun GreetingModule.argVerbose(): Boolean = true
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("verbose = module.argVerbose()," in generated, generated)
+    }
+
+    @Test
+    fun defaultedParameter_withAmbiguousModuleMembers_stillResolvesToTheDefault() {
+        // Two exactly-typed members would be an ambiguity error for a non-defaulted parameter; the
+        // default short-circuits the whole module lookup, so this compiles.
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val greeting: String
+                val a: Boolean
+                val b: Boolean
+            }
+
+            class Greeter(val greeting: String, val flag: Boolean = false)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("flag" !in generated, generated)
+    }
+
+    @Test
+    fun everyParameterDefaulted_generatesABareConstructorCall() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface EmptyModule {
+                val unrelated: Int
+            }
+
+            class Greeter(val greeting: String = "hi", val verbose: Boolean = false)
+
+            @DIFactory(builds = Greeter::class, from = EmptyModule::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("Greeter()" in generated, generated)
+    }
+
+    @Test
+    fun varargParameter_isOmittedEvenWhenAnElementTypedMemberExists() {
+        // `ctorParams` maps `vararg tags: String` to its element type `String`; without the
+        // vararg-is-omissible rule the generator would emit `tags = module.tag`, which doesn't
+        // compile. The vararg is left out and defaults to an empty array.
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val greeting: String
+                val tag: String
+            }
+
+            class Greeter(val greeting: String, vararg val tags: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            internal object GreeterDIFactory {
+                fun GreetingModule.argGreeting(): String = greeting
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("greeting = module.argGreeting()," in generated, generated)
+        assertTrue("tags" !in generated, generated)
+    }
 }

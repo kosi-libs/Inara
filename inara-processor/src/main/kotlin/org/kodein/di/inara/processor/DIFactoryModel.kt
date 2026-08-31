@@ -273,6 +273,12 @@ internal fun parseFactory(
     val fromName = fromDecl.simpleName.asString()
     val fromType = fromDecl.asStarProjectedType()
     val ctorParams = ctor.parameters.associate { p -> p.name!!.asString() to p.type.resolve() }
+    // Parameters Kotlin can supply itself when the generated call omits them: an explicit `= ...`
+    // default, or a `vararg` (omitted = empty array). KSP reports `hasDefault = false` for a
+    // vararg, so the two have to be OR-ed rather than relying on `hasDefault` alone.
+    val omissibleParams = ctor.parameters
+        .filter { it.hasDefault || it.isVararg }
+        .mapTo(mutableSetOf()) { it.name!!.asString() }
 
     // Every declaration in the object must be a well-shaped `fun M.arg<Argument>(): T` - collect
     // the valid ones (paramName -> the function itself, so its `suspend`-ness can be read later)
@@ -354,11 +360,15 @@ internal fun parseFactory(
         argFunctions[paramName] = fn
     }
 
-    // Every constructor argument must be uniquely resolvable: an arg function declared above, else
-    // a unique exactly-typed module member, else a unique assignable-typed module member, else an
-    // error. Under Suspend.Forbid, a suspend candidate is excluded here entirely (rather than
-    // resolved and then rejected) - the same exclusion already applied to arg-functions above, so a
-    // resolved FactoryArgumentModel can never end up suspend when the mode is Forbid.
+    // Every constructor argument must be uniquely resolvable, in priority order: an arg function
+    // declared above, else the parameter's own default (see `omissibleParams` - the generated call
+    // just omits it), else a unique exactly-typed module member, else a unique assignable-typed
+    // module member, else an error. The default outranks any module member on purpose: it is a
+    // deliberate, local statement of what the argument should be absent an override, whereas a
+    // module match is by type alone and can be coincidental.
+    // Under Suspend.Forbid, a suspend candidate is excluded here entirely (rather than resolved and
+    // then rejected) - the same exclusion already applied to arg-functions above, so a resolved
+    // FactoryArgumentModel can never end up suspend when the mode is Forbid.
     //
     // A member takes no parameter (called plainly), or - only when `with` is not `Unit` - takes one
     // parameter the `with` value can be passed to (see [withArgumentFor]). The two live in one pool:
@@ -384,6 +394,11 @@ internal fun parseFactory(
             )
             continue
         }
+
+        // Adding no FactoryArgumentModel is what applies the default - every emitted argument is
+        // named, so an omitted one falls back to the constructor's declared default (or, for a
+        // vararg, an empty array). An `arg<Argument>` function still wins, having been handled above.
+        if (paramName in omissibleParams) continue
 
         val exact = candidates.filter { sameType(it.first.returnType, paramType) }
         if (exact.size == 1) {

@@ -28,10 +28,12 @@ public annotation class DIModule(val composed: Boolean = false)
  * The processor generates a top-level `fun <Builds>(module: <From>): <Builds>` resolving each
  * argument of [builds]'s selected constructor (see [constructorIndex]) off [from], in priority
  * order: an `arg<Argument>` extension function declared on the annotated object (`fun
- * <From>.argFoo(): T`, for a constructor argument named `foo`) if present, else a uniquely-typed
- * member of [from] (an exact type match, else a subtype match), else a compile error recommending
- * the `arg` function to add. The object may declare nothing but such `arg` functions - anything else
- * is a compile error.
+ * <From>.argFoo(): T`, for a constructor argument named `foo`) if present, else - if the parameter
+ * can be left out of the call, i.e. it declares a default value or is a `vararg` - that default,
+ * else a uniquely-typed member of [from] (an exact type match, else a subtype match), else a compile
+ * error recommending the `arg` function to add. A parameter's own default thus outranks any [from]
+ * member, and a defaulted parameter needs no `arg` function. The object may declare nothing but such
+ * `arg` functions - anything else is a compile error.
  *
  * With [with] set to a type other than `Unit`, the generated function takes a second parameter `fun
  * <Builds>(module: <From>, with: <With>): <Builds>`, that value is passed to every `arg<Argument>`

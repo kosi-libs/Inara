@@ -713,6 +713,11 @@ Each constructor argument is resolved independently, in priority order:
   thing a `@DIFactory` object may declare; anything else is a compile error. It must be `public` or
   `internal` — the generated top-level function calls it from outside the object, so a `private` one
   is a compile error too.
+. Otherwise, if the parameter can be omitted from the call — it declares a default value, or is a
+  `vararg` — it is left out, and Kotlin applies the default (an empty array for a `vararg`). A
+  default written on the `builds` class thus outranks any `from` member: it is a deliberate local
+  statement of intent, a type match is not. A parameter that already has a default needs no
+  `arg<Argument>` function to restate it.
 . Otherwise, a uniquely-typed member of `from` — `httpClient` above resolves automatically because
   `NetworkModule.httpClient()` is the only member returning `HttpClient`, exactly. A member that
   takes one argument is a candidate only under `with` (see below); every other member must take none.
