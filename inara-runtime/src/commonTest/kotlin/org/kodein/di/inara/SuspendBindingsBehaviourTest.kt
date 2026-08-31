@@ -21,8 +21,8 @@ private data class SuspendBehaviourKey(val id: Int)
 /**
  * Behaviour mirror of [BindingsTest] for [SuspendBindingImpls] - the `suspend get` lifecycle that
  * [SuspendBindingsTest] (only `toString`) and `inara-tests`' generated-code lifecycle tests leave to
- * indirect coverage. The `SingleThreadSafety` pairs from [BindingsTest] collapse to one test each:
- * the suspend side always uses a coroutine `Mutex`, there is no mode to choose.
+ * indirect coverage. `single` / `weakSingle` take the same [SingleThreadSafety] as on [Binding], so
+ * the mode-pair tests from [BindingsTest] are mirrored here too.
  */
 class SuspendBindingsBehaviourTest {
 
@@ -80,9 +80,18 @@ class SuspendBindingsBehaviourTest {
     }
 
     @Test
-    fun single_buildsOnceAndCaches() = runTest {
+    fun single_synchronized_buildsOnceAndCaches() = runTest {
+        assertSingleBuildsOnce(SingleThreadSafety.Synchronized)
+    }
+
+    @Test
+    fun single_publication_buildsOnceAndCaches() = runTest {
+        assertSingleBuildsOnce(SingleThreadSafety.Published)
+    }
+
+    private suspend fun assertSingleBuildsOnce(safety: SingleThreadSafety) {
         var calls = 0
-        val binding = single<SuspendBehaviourModule, String> {
+        val binding = single<SuspendBehaviourModule, String>(safety) {
             calls++
             name
         }
@@ -99,9 +108,18 @@ class SuspendBindingsBehaviourTest {
     }
 
     @Test
-    fun single_memoizesNullResult() = runTest {
+    fun single_synchronized_memoizesNullResult() = runTest {
+        assertSingleMemoizesNull(SingleThreadSafety.Synchronized)
+    }
+
+    @Test
+    fun single_publication_memoizesNullResult() = runTest {
+        assertSingleMemoizesNull(SingleThreadSafety.Published)
+    }
+
+    private suspend fun assertSingleMemoizesNull(safety: SingleThreadSafety) {
         var calls = 0
-        val binding = single<SuspendBehaviourModule, String?> {
+        val binding = single<SuspendBehaviourModule, String?>(safety) {
             calls++
             null
         }
@@ -113,9 +131,18 @@ class SuspendBindingsBehaviourTest {
     }
 
     @Test
-    fun weakSingle_cachesWhileStronglyReferenced() = runTest {
+    fun weakSingle_synchronized_cachesWhileStronglyReferenced() = runTest {
+        assertWeakSingleCaches(SingleThreadSafety.Synchronized)
+    }
+
+    @Test
+    fun weakSingle_publication_cachesWhileStronglyReferenced() = runTest {
+        assertWeakSingleCaches(SingleThreadSafety.Published)
+    }
+
+    private suspend fun assertWeakSingleCaches(safety: SingleThreadSafety) {
         var calls = 0
-        val binding = weakSingle<SuspendBehaviourModule, Any> {
+        val binding = weakSingle<SuspendBehaviourModule, Any>(safety) {
             calls++
             Any()
         }
@@ -165,6 +192,28 @@ class SuspendBindingsBehaviourTest {
         binding.get(module, 1)
 
         assertEquals(1, innerBuilds)
+    }
+
+    @Test
+    fun multiplex_handlesManyDistinctArgs() = runTest {
+        var delegateBuilds = 0
+        val binding = multiplex<SuspendBehaviourModule, Int, Any> { arg ->
+            delegateBuilds++
+            single { arg.toString() }
+        }
+        val module = SuspendBehaviourModule()
+        val count = 500
+
+        // Fill the copy-on-write cache with `count` distinct keys, then read them all back.
+        val firstPass = (0 until count).map { binding.get(module, it) }
+        val secondPass = (0 until count).map { binding.get(module, it) }
+
+        assertEquals(count, delegateBuilds)
+        assertEquals(count, firstPass.toSet().size)
+        firstPass.forEachIndexed { arg, instance ->
+            assertEquals(arg.toString(), instance)
+            assertSame(instance, secondPass[arg])
+        }
     }
 
     @Test

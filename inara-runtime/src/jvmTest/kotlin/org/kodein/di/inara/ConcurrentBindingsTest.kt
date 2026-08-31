@@ -1,6 +1,6 @@
 package org.kodein.di.inara
 
-import org.kodein.di.inara.Binding.Bindings.SingleThreadSafety
+import kotlinx.coroutines.runBlocking
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
@@ -101,6 +101,42 @@ class ConcurrentBindingsTest {
 
         val resultsByArg = (0 until argCount).associateWith { arg ->
             runConcurrently { binding.get(module, arg) }
+        }
+
+        resultsByArg.forEach { (arg, results) ->
+            val first = results.first()
+            results.forEach {
+                assertSame(first, it)
+                assertEquals(arg, it)
+            }
+        }
+    }
+
+    @Test
+    fun suspendSingleton_publication_alwaysConvergesOnOneInstance() {
+        val builds = AtomicInteger(0)
+        val binding = SuspendBinding.single<ConcurrentTestModule, Any>(SingleThreadSafety.Published) {
+            builds.incrementAndGet()
+            Any()
+        }
+
+        val results = runConcurrently { runBlocking { binding.get(ConcurrentTestModule(), Unit) } }
+
+        val first = results.first()
+        results.forEach { assertSame(first, it) }
+        assertTrue(builds.get() >= 1)
+    }
+
+    @Test
+    fun suspendMultiplex_isolatesConcurrentArgs() {
+        val argCount = 4
+        val binding = SuspendBinding.multiplex<ConcurrentTestModule, Int, Any> { arg ->
+            SuspendBinding.single { arg }
+        }
+        val module = ConcurrentTestModule()
+
+        val resultsByArg = (0 until argCount).associateWith { arg ->
+            runConcurrently { runBlocking { binding.get(module, arg) } }
         }
 
         resultsByArg.forEach { (arg, results) ->

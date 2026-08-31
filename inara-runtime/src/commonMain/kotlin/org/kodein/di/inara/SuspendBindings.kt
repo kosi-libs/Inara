@@ -2,9 +2,12 @@ package org.kodein.di.inara
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.kodein.di.inara.Binding.Bindings.cls
 import org.kodein.di.inara.BindingImpls.Uninitialized
 import org.kodein.di.inara.BindingImpls.Uninitialized.ifInitialized
 import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.reflect.KClass
 
 /**
@@ -12,10 +15,12 @@ import kotlin.reflect.KClass
  * declared `suspend fun`. `M`/`A`/`T` mean exactly what they mean on [Binding], variance included.
  *
  * Build one through the factories on the [Bindings] companion ([value], [provider], [factory],
- * [single], [weakSingle], [multiplex]) - every [Binding] factory has a `suspend` equivalent here,
- * with `single`/`weakSingle` always using a coroutine `Mutex` rather than [Binding]'s
- * `SingleThreadSafety` choice. An existing non-`suspend` [Binding] can be lifted into one with
- * [suspend].
+ * [single], [weakSingle], [multiplex]) - every [Binding] factory has a `suspend` equivalent here.
+ * `single`/`weakSingle` take the same [SingleThreadSafety] as on [Binding]: `Synchronized` guards
+ * the one-time build with a coroutine `Mutex`, `Published` is lock-free. (The suspend side used to
+ * be `Mutex`-only; a coroutine `Mutex` turned out to be no cheaper than a system lock, so the
+ * lock-free mode is worth offering here too.) An existing non-`suspend` [Binding] can be lifted
+ * into one with [suspend].
  */
 public interface SuspendBinding<in M, in A, out T> {
     /** Produces the value for [module] and [arg] - the `suspend` counterpart to [Binding.get]. */
@@ -38,17 +43,32 @@ public interface SuspendBinding<in M, in A, out T> {
         public inline fun <M, reified A, reified T> factory(noinline factory: suspend M.(A) -> T) : SuspendBinding<M, A, T> =
             SuspendBindingImpls.Factory(Binding.cls<A>(), Binding.cls<T>(), factory)
 
-        /** A [SuspendBinding] that runs [builder] once, under a coroutine `Mutex`, and memoizes
-         * the result forever - every subsequent [get] returns the same instance without
-         * re-running [builder]. */
-        public inline fun <M, reified T> single(noinline builder: suspend M.() -> T) : SuspendBinding<M, Unit, T> =
-            SuspendBindingImpls.Single(Binding.cls<T>(), builder)
+        /**
+         * A [SuspendBinding] that runs [builder] once and memoizes the result forever - every
+         * subsequent [get] returns the same instance without re-running [builder].
+         *
+         * [safety] controls what happens when the first `get` call is itself concurrent - see
+         * [SingleThreadSafety]. `Synchronized` guards the one-time build with a coroutine `Mutex`;
+         * `Published` is lock-free.
+         */
+        public inline fun <M, reified T> single(
+            safety: SingleThreadSafety = SingleThreadSafety.Synchronized,
+            noinline builder: suspend M.() -> T
+        ) : SuspendBinding<M, Unit, T> = when (safety) {
+            SingleThreadSafety.Synchronized -> SuspendBindingImpls.SynchronizedSingle(cls<T>(), builder)
+            SingleThreadSafety.Published -> SuspendBindingImpls.PublishedSingle(cls<T>(), builder)
+        }
 
         /** Like [single], but the memoized result is held behind a platform weak reference: once
          * nothing else strongly references it, it may be collected, and the next [get] call
-         * rebuilds it. */
-        public inline fun <M, reified T : Any> weakSingle(noinline builder: suspend M.() -> T) : SuspendBinding<M, Unit, T> =
-            SuspendBindingImpls.WeakSingle(T::class, builder)
+         * rebuilds it. [safety] controls the first concurrent build, exactly as on [single]. */
+        public inline fun <M, reified T : Any> weakSingle(
+            safety: SingleThreadSafety = SingleThreadSafety.Synchronized,
+            noinline builder: suspend M.() -> T
+        ) : SuspendBinding<M, Unit, T> = when (safety) {
+            SingleThreadSafety.Synchronized -> SuspendBindingImpls.SynchronizedWeakSingle(T::class, builder)
+            SingleThreadSafety.Published -> SuspendBindingImpls.PublishedWeakSingle(T::class, builder)
+        }
 
         /** A [SuspendBinding] that builds and caches one sub-[SuspendBinding] per distinct
          * argument value, via [builder] - the way to give an argument-taking member its own
@@ -112,7 +132,7 @@ public class SuspendBindingImpls {
     }
 
     @PublishedApi
-    internal class Single<in M, out T>(private val cls: KClass<T & Any>?, builder: suspend M.() -> T) : SuspendBinding<M, Unit, T> {
+    internal class SynchronizedSingle<in M, out T>(private val cls: KClass<T & Any>?, builder: suspend M.() -> T) : SuspendBinding<M, Unit, T> {
         private var builder: (suspend M.() -> T)? = builder
         @Volatile private var value: Any? = Uninitialized
         private val mutex = Mutex()
@@ -127,11 +147,35 @@ public class SuspendBindingImpls {
                 }
             }
         }
-        override fun toString(): String = "single { ${cls?.simpleName ?: "?"} }"
+        override fun toString(): String = "single(Synchronized) { ${cls?.simpleName ?: "?"} }"
+    }
+
+    /** Lock-free counterpart of [SynchronizedSingle], mirroring [BindingImpls.PublishedSingle]:
+     * concurrent first callers may each run [builder], but a single CAS on [ref] picks the winner
+     * and every caller returns it. See [SuspendBinding] for why the suspend side offers this. */
+    @OptIn(ExperimentalAtomicApi::class)
+    @PublishedApi
+    internal class PublishedSingle<in M, out T>(private val cls: KClass<T & Any>?, builder: suspend M.() -> T) : SuspendBinding<M, Unit, T> {
+        @Volatile private var builder: (suspend M.() -> T)? = builder
+        private val ref: AtomicReference<Any?> = AtomicReference(Uninitialized)
+        override suspend fun get(module: M, arg: Unit): T {
+            ref.load().ifInitialized<T> { return it }
+            val builder = this.builder
+            if (builder != null) {
+                builder(module).also {
+                    if (ref.compareAndSet(Uninitialized, it)) {
+                        this.builder = null
+                        return it
+                    }
+                }
+            }
+            @Suppress("UNCHECKED_CAST") return ref.load() as T
+        }
+        override fun toString(): String = "single(Published) { ${cls?.simpleName ?: "?"} }"
     }
 
     @PublishedApi
-    internal class WeakSingle<in M, out T : Any>(private val cls: KClass<T>, private val builder: suspend M.() -> T) : SuspendBinding<M, Unit, T> {
+    internal class SynchronizedWeakSingle<in M, out T : Any>(private val cls: KClass<T>, private val builder: suspend M.() -> T) : SuspendBinding<M, Unit, T> {
         @Volatile private var ref: Any? = Uninitialized
         private val mutex = Mutex()
 
@@ -144,21 +188,63 @@ public class SuspendBindingImpls {
                 }
             }
         }
-        override fun toString(): String = "weakSingle { ${cls.simpleName ?: "?"} }"
+        override fun toString(): String = "weakSingle(Synchronized) { ${cls.simpleName ?: "?"} }"
     }
 
+    /** Lock-free counterpart of [SynchronizedWeakSingle], mirroring [BindingImpls.PublishedWeakSingle].
+     * See [SuspendBinding] for why the suspend side offers this. */
+    @OptIn(ExperimentalAtomicApi::class)
     @PublishedApi
-    internal class Multiplex<in M, in A, out T>(private val aCls: KClass<A & Any>?, private val tCls: KClass<T & Any>?, private val delegate: (A) -> SuspendBinding<M, Unit, T>) : SuspendBinding<M, A, T> {
-        @Volatile private var bindings: Map<A, SuspendBinding<M, Unit, T>> = HashMap()
-        private val mutex = Mutex()
-
-        override suspend fun get(module: M, arg: A): T {
-            val binding = bindings[arg] ?: mutex.withLock {
-                bindings[arg] ?: delegate(arg).also {
-                    bindings = bindings + (arg to it)
+    internal class PublishedWeakSingle<in M, out T : Any>(private val cls: KClass<T>, private val builder: suspend M.() -> T) : SuspendBinding<M, Unit, T> {
+        private val refRef: AtomicReference<Any?> = AtomicReference(Uninitialized)
+        override suspend fun get(module: M, arg: Unit): T {
+            // Built at most once and reused across CAS retries: a lost race must not re-run the
+            // caller's builder.
+            var newValue: T? = null
+            while (true) {
+                val ref = refRef.load()
+                ref.ifInitialized<WeakRef<T>> { r -> r.value?.let { return it } }
+                if (newValue == null) newValue = builder(module)
+                if (refRef.compareAndSet(ref, WeakRef(newValue))) {
+                    return newValue
                 }
             }
-            return binding.get(module, Unit)
+        }
+        override fun toString(): String = "weakSingle(Published) { ${cls.simpleName ?: "?"} }"
+    }
+
+    /** The `suspend` counterpart of [BindingImpls.Multiplex] - same lock-free copy-on-write cache,
+     * same tradeoff (see [get]). */
+    @OptIn(ExperimentalAtomicApi::class)
+    @PublishedApi
+    internal class Multiplex<in M, in A, out T>(private val aCls: KClass<A & Any>?, private val tCls: KClass<T & Any>?, private val delegate: (A) -> SuspendBinding<M, Unit, T>) : SuspendBinding<M, A, T> {
+        private val bindingsRef: AtomicReference<Map<A, SuspendBinding<M, Unit, T>>> = AtomicReference(HashMap())
+
+        /**
+         * The cache is an immutable [Map] swapped in by CAS. Adding the k-th distinct argument does
+         * `map + (arg to …)`, which copies the whole map, so filling n arguments is O(n²) overall.
+         * This is deliberate, not an oversight: an argument that is already cached - the
+         * overwhelmingly common case once warm - is then a single lock-free read with no allocation
+         * and no contention, and `multiplex` is only supported for a small, bounded key space (see
+         * [SuspendBinding.Bindings.multiplex]). Taking a lock on every `get` would tax that common
+         * path to speed up a one-time cost on a map that is not meant to grow large.
+         */
+        override suspend fun get(module: M, arg: A): T {
+            // Built at most once and reused across CAS retries: a lost race must not re-run the
+            // caller's delegate.
+            var newBinding: SuspendBinding<M, Unit, T>? = null
+            while (true) {
+                val map = bindingsRef.load()
+                val binding = map[arg]
+                if (binding != null) {
+                    return binding.get(module, Unit)
+                }
+                if (newBinding == null) newBinding = delegate(arg)
+                val newMap = map + (arg to newBinding)
+                if (bindingsRef.compareAndSet(map, newMap)) {
+                    return newBinding.get(module, Unit)
+                }
+            }
         }
         override fun toString(): String = "multiplex { ${aCls?.simpleName ?: "?"} -> ${tCls?.simpleName ?: "?"} }"
     }

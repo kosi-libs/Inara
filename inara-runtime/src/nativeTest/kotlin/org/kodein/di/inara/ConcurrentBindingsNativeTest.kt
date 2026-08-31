@@ -6,7 +6,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
-import org.kodein.di.inara.Binding.Bindings.SingleThreadSafety
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
@@ -112,6 +111,42 @@ class ConcurrentBindingsNativeTest {
         }
     }
 
+    @Test
+    fun suspendSingleton_publication_alwaysConvergesOnOneInstance() {
+        val builds = AtomicInt(0)
+        val binding = SuspendBinding.single<NativeTestModule, Any>(SingleThreadSafety.Published) {
+            builds.incrementAndFetch()
+            Any()
+        }
+
+        val results = runConcurrentlySuspending { binding.get(NativeTestModule(), Unit) }
+
+        val first = results.first()
+        results.forEach { assertSame(first, it) }
+        assertTrue(builds.load() >= 1)
+    }
+
+    @Test
+    fun suspendMultiplex_isolatesConcurrentArgs() {
+        val argCount = 4
+        val binding = SuspendBinding.multiplex<NativeTestModule, Int, Any> { arg ->
+            SuspendBinding.single { arg }
+        }
+        val module = NativeTestModule()
+
+        val resultsByArg = (0 until argCount).associateWith { arg ->
+            runConcurrentlySuspending { binding.get(module, arg) }
+        }
+
+        resultsByArg.forEach { (arg, results) ->
+            val first = results.first()
+            results.forEach {
+                assertSame(first, it)
+                assertEquals(arg, it)
+            }
+        }
+    }
+
     /**
      * Runs [action] from [COROUTINE_COUNT] coroutines on the multi-threaded default dispatcher,
      * [ITERATIONS] times each, and returns every result.
@@ -119,6 +154,14 @@ class ConcurrentBindingsNativeTest {
     private fun <T> runConcurrently(action: () -> T): List<T> = runBlocking {
         (0 until COROUTINE_COUNT)
             .map { async(Dispatchers.Default) { List(ITERATIONS) { action() } } }
+            .awaitAll()
+            .flatten()
+    }
+
+    /** The `suspend` counterpart of [runConcurrently], for the suspend CAS impls. */
+    private fun <T> runConcurrentlySuspending(action: suspend () -> T): List<T> = runBlocking {
+        (0 until COROUTINE_COUNT)
+            .map { async(Dispatchers.Default) { (0 until ITERATIONS).map { action() } } }
             .awaitAll()
             .flatten()
     }

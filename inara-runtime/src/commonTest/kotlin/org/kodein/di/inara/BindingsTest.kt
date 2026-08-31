@@ -1,6 +1,5 @@
 package org.kodein.di.inara
 
-import org.kodein.di.inara.Binding.Bindings.SingleThreadSafety
 import org.kodein.di.inara.Binding.Bindings.factory
 import org.kodein.di.inara.Binding.Bindings.multiplex
 import org.kodein.di.inara.Binding.Bindings.provider

@@ -54,18 +54,6 @@ public interface Binding<in M, in A, out T> {
         public inline fun <M, reified A, reified T> factory(noinline factory: M.(A) -> T) : Binding<M, A, T> =
             BindingImpls.Factory(cls<A>(), cls<T>(), factory)
 
-        /** How [single] and [weakSingle] guard their one-time build against concurrent callers. */
-        public enum class SingleThreadSafety {
-            /** [get] blocks under a lock until the first caller's build finishes - the builder
-             * runs exactly once, guaranteed. */
-            Synchronized,
-
-            /** [get] never blocks: concurrent callers may each run the builder, but all of them
-             * converge on the same winning instance - the builder may run more than once under
-             * contention, though only one result is ever kept. */
-            Published,
-        }
-
         /**
          * A [Binding] that runs [builder] once and memoizes the result forever - every subsequent
          * [get] returns the same instance without re-running [builder].
@@ -218,13 +206,15 @@ public class BindingImpls {
     internal class PublishedWeakSingle<in M, out T : Any>(private val cls: KClass<T>, private val builder: M.() -> T) : Binding<M, Unit, T> {
         private val refRef: AtomicReference<Any?> = AtomicReference(Uninitialized)
         override fun get(module: M, arg: Unit): T {
+            // Built at most once and reused across CAS retries: a lost race must not re-run the
+            // caller's builder.
+            var newValue: T? = null
             while (true) {
                 val ref = refRef.load()
                 ref.ifInitialized<WeakRef<T>> { r -> r.value?.let { return it } }
-                builder(module).also {
-                    if (refRef.compareAndSet(ref, WeakRef(it))) {
-                        return it
-                    }
+                if (newValue == null) newValue = builder(module)
+                if (refRef.compareAndSet(ref, WeakRef(newValue))) {
+                    return newValue
                 }
             }
         }
@@ -235,18 +225,30 @@ public class BindingImpls {
     @PublishedApi
     internal class Multiplex<in M, in A, out T>(private val aCls: KClass<A & Any>?, private val tCls: KClass<T & Any>?, private val delegate: (A) -> Binding<M, Unit, T>) : Binding<M, A, T> {
         private val bindingsRef: AtomicReference<Map<A, Binding<M, Unit, T>>> = AtomicReference(HashMap())
+
+        /**
+         * The cache is an immutable [Map] swapped in by CAS. Adding the k-th distinct argument does
+         * `map + (arg to …)`, which copies the whole map, so filling n arguments is O(n²) overall.
+         * This is deliberate, not an oversight: an argument that is already cached - the
+         * overwhelmingly common case once warm - is then a single lock-free read with no allocation
+         * and no contention, and `multiplex` is only supported for a small, bounded key space (see
+         * [Binding.Bindings.multiplex]). Taking a lock on every `get` would tax that common path to
+         * speed up a one-time cost on a map that is not meant to grow large.
+         */
         override fun get(module: M, arg: A): T {
+            // Built at most once and reused across CAS retries: a lost race must not re-run the
+            // caller's delegate.
+            var newBinding: Binding<M, Unit, T>? = null
             while (true) {
                 val map = bindingsRef.load()
                 val binding = map[arg]
                 if (binding != null) {
                     return binding.get(module, Unit)
                 }
-                delegate(arg).also {
-                    val newMap = map + (arg to it)
-                    if (bindingsRef.compareAndSet(map, newMap)) {
-                        return it.get(module, Unit)
-                    }
+                if (newBinding == null) newBinding = delegate(arg)
+                val newMap = map + (arg to newBinding)
+                if (bindingsRef.compareAndSet(map, newMap)) {
+                    return newBinding.get(module, Unit)
                 }
             }
         }

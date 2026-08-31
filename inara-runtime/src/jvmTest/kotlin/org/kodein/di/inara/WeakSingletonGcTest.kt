@@ -1,6 +1,5 @@
 package org.kodein.di.inara
 
-import org.kodein.di.inara.Binding.Bindings.SingleThreadSafety
 import java.lang.ref.WeakReference
 import kotlin.test.Test
 import kotlin.test.assertNotEquals

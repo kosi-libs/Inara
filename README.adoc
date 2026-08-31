@@ -333,8 +333,9 @@ AsyncModule(
 )
 ----
 
-`SuspendBinding` mirrors every factory above. Two differences: its `single` and `weakSingle` take no
-`safety` parameter (they always use a coroutine `Mutex`), and its bodies are `suspend`.
+`SuspendBinding` mirrors every factory above, with `suspend` bodies. Its `single` and `weakSingle`
+take the same `SingleThreadSafety` mode as on `Binding`; the only difference is that `Synchronized`
+guards the one-time build with a coroutine `Mutex` rather than a system lock.
 
 == Member shapes
 
@@ -817,7 +818,8 @@ primary, is ignored entirely, `arg<Argument>` name-matching included.
 
 == Thread safety
 
-`Binding.single` and `Binding.weakSingle` take a `SingleThreadSafety` mode:
+`Binding.single` / `Binding.weakSingle` (and their `SuspendBinding` counterparts) take a
+`SingleThreadSafety` mode:
 
 [cols="1,2",options="header"]
 |===
@@ -835,12 +837,17 @@ primary, is ignored entirely, `arg<Argument>` name-matching included.
 Binding.single(SingleThreadSafety.Published) { ExpensiveButPureValue() }
 ----
 
-`multiplex` isolates arguments: concurrent access with distinct arguments never contends.
+`multiplex` keeps its per-argument cache as a lock-free copy-on-write map: an already-cached
+argument is a plain atomic read with no contention, and two *first-time* arguments briefly race to
+extend the cache (the loser retries, the caller's builder still runs at most once). Filling the
+cache with n distinct arguments is O(n²) — acceptable, and intended, only for the *small, bounded*
+key space `multiplex` is meant for.
 
 `weakSingle` holds its value behind a platform weak reference and rebuilds on the next access
 after collection.
 
-`SuspendBinding.single` / `weakSingle` always use a coroutine `Mutex` and take no mode parameter (coroutines mutex are very lightweight).
+`SuspendBinding.single` / `weakSingle` take the same `SingleThreadSafety` mode as `Binding`;
+`Synchronized` guards the one-time build with a coroutine `Mutex` instead of a system lock.
 
 == Supported platforms
 

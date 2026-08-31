@@ -39,13 +39,27 @@ class SuspendBindingsTest {
     }
 
     @Test
-    fun single_toString_namesTheReturnedType() {
-        assertEquals("single { String }", single<SuspendTestModule, String> { name }.toString())
+    fun single_toString_namesSafetyAndReturnedType() {
+        assertEquals(
+            "single(Synchronized) { String }",
+            single<SuspendTestModule, String>(SingleThreadSafety.Synchronized) { name }.toString(),
+        )
+        assertEquals(
+            "single(Published) { String }",
+            single<SuspendTestModule, String>(SingleThreadSafety.Published) { name }.toString(),
+        )
     }
 
     @Test
-    fun weakSingle_toString_namesTheReturnedType() {
-        assertEquals("weakSingle { Any }", weakSingle<SuspendTestModule, Any> { Any() }.toString())
+    fun weakSingle_toString_namesSafetyAndReturnedType() {
+        assertEquals(
+            "weakSingle(Synchronized) { Any }",
+            weakSingle<SuspendTestModule, Any>(SingleThreadSafety.Synchronized) { Any() }.toString(),
+        )
+        assertEquals(
+            "weakSingle(Published) { Any }",
+            weakSingle<SuspendTestModule, Any>(SingleThreadSafety.Published) { Any() }.toString(),
+        )
     }
 
     @Test
