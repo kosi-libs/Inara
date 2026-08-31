@@ -125,6 +125,16 @@ The Markdown habits that silently produce wrong output here:
 
 ## 3. Resolving an issue
 
+**The normal way to resolve an issue is through plan mode** — research it, draft a
+plan, and get the plan approved before touching any code. If you're asked to fix an
+issue and plan mode is *not* active (no plan was drafted or approved for this fix),
+don't start implementing. First use the **`AskUserQuestion` tool** to confirm the
+user really wants to proceed without a plan — offer "Draft a plan first" (the likely
+intent; they probably forgot to enable plan mode) and "Fix it directly, no plan".
+Only skip this confirmation when the user's message makes it explicit that no plan is
+wanted (e.g. "just fix B4 directly, no plan needed"). This applies whether they asked
+for one issue or a batch.
+
 When fixing an issue tracked in `ISSUES.adoc`, the commit step depends on how many
 issues the user asked to fix:
 
