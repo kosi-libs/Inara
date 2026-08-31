@@ -48,7 +48,9 @@ private fun buildFactoryFunction(model: FactoryModel): FunSpec {
 
     // When there's a `with` parameter it's passed to every arg-function and to any one-parameter
     // module member; `with` as an argument name would otherwise shadow the `kotlin.with` scoping
-    // function below, so that call is fully qualified whenever the parameter exists.
+    // function below, so that call is fully qualified whenever the parameter exists. (KotlinPoet's
+    // `%M` can't help here - it only disambiguates against members/types it tracks, not a local
+    // parameter, so it would still emit a bare `with` that resolves to the parameter.)
     val withArg = if (model.withTypeName != null) CodeBlock.of("with") else null
 
     val constructorCall = CodeBlock.builder()
@@ -74,10 +76,12 @@ private fun buildFactoryFunction(model: FactoryModel): FunSpec {
         .add(")")
         .build()
 
+    // Passed as a `%L` argument rather than interpolated into the format string, so a stray `%` in
+    // it could never be read as a placeholder.
     val scopeFunction = if (withArg != null) "kotlin.with" else "with"
     funBuilder.addCode(
         CodeBlock.builder()
-            .add("return $scopeFunction(%T) {\n", model.factoryClassName)
+            .add("return %L(%T) {\n", scopeFunction, model.factoryClassName)
             .indent()
             .add(constructorCall)
             .add("\n")
