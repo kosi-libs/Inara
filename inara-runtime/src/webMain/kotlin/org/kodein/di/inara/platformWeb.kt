@@ -3,19 +3,6 @@
 
 package org.kodein.di.inara
 
-import kotlin.contracts.ExperimentalContracts
-import kotlin.contracts.InvocationKind
-import kotlin.contracts.contract
-
-internal actual class Lock actual constructor()
-@OptIn(ExperimentalContracts::class)
-internal actual inline fun <T> locked(lock: Lock, block: () -> T): T {
-    contract {
-        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
-    }
-    return block()
-}
-
 /**
  * [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WeakRef)
  */
