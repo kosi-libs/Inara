@@ -428,7 +428,7 @@ m.greeting   // "Hello, World"
 m.shout()    // "Hello, World!!!"
 
 // Any default can still be overridden.
-val n = DefaultsModule(name = Binding.value("World"), greeting = Binding.value("Hi $name"))
+val n = DefaultsModule(name = Binding.value("World"), greeting = Binding.provider { "Hi $name" })
 n.shout()    // "Hi World!!!"  - shout()'s default body re-reads the overridden greeting
 ----
 
