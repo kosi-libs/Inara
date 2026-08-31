@@ -285,7 +285,7 @@ All factories live on the `Binding` companion (and mirror onto `SuspendBinding`)
 
 | `multiplex { }`
 | `(A) -> Binding<M, Unit, T>`
-| Builds and caches one sub-binding *per argument value*.
+| Builds and caches one sub-binding *per argument value*; never evicted, so bounded key spaces only.
 |===
 
 [source,kotlin]
@@ -308,6 +308,11 @@ every call. Wrapping a `single` in a `multiplex` gives you _one instance per dis
 // One Connection per host, each built once, cached forever.
 Binding.multiplex { host -> Binding.single { Connection(host) } }
 ----
+
+The per-argument cache is never evicted, so `multiplex` is for a *small, bounded* key space — hosts,
+tenants, an enum. Keyed on an unbounded value like a user id, a request id or a timestamp it becomes
+an unbounded leak; use `factory` there. An array argument (or a generated arguments class with an
+array field) never equals a fresh one, so every call misses and the cache grows per call.
 
 === `suspend` members
 

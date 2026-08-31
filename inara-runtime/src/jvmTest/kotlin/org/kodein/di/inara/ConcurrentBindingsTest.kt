@@ -19,9 +19,9 @@ private const val ITERATIONS = 200
 
 /**
  * Exercises the bindings under real concurrent contention. This is the whole reason
- * [Binding.Bindings.single], [Binding.Bindings.weakSingle] and
- * [Binding.Bindings.multiplex] have thread-safety knobs in the first place, so these
- * assertions run from multiple threads instead of sequentially.
+ * [Binding.Bindings.single] and [Binding.Bindings.weakSingle] have thread-safety knobs, and the
+ * reason [Binding.Bindings.multiplex] is careful to isolate arguments, so these assertions run from
+ * multiple threads instead of sequentially.
  */
 class ConcurrentBindingsTest {
 

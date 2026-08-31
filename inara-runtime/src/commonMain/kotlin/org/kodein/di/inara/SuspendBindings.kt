@@ -52,7 +52,10 @@ public interface SuspendBinding<in M, in A, out T> {
 
         /** A [SuspendBinding] that builds and caches one sub-[SuspendBinding] per distinct
          * argument value, via [builder] - the way to give an argument-taking member its own
-         * lifecycle instead of the argument-blind [factory]. */
+         * lifecycle instead of the argument-blind [factory].
+         *
+         * The cache is never evicted - see [Binding.Bindings.multiplex]. Use it only for a small,
+         * bounded key space; keyed on something unbounded it is a memory leak. */
         public inline fun <M, reified A, reified T> multiplex(
             noinline builder: (A) -> SuspendBinding<M, Unit, T>
         ) : SuspendBinding<M, A, T> = SuspendBindingImpls.Multiplex(Binding.cls<A>(), Binding.cls<T>(), builder)

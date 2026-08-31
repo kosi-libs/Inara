@@ -97,6 +97,13 @@ public interface Binding<in M, in A, out T> {
          * A [Binding] that builds and caches one sub-[Binding] per distinct argument value, via
          * [builder] - the way to give an argument-taking member its own lifecycle (typically
          * wrapping [single] or [provider]) instead of the argument-blind [factory].
+         *
+         * The cache is never evicted: every distinct argument keeps its sub-[Binding], and whatever
+         * that holds, alive for as long as the module is. Use it only for a small, bounded key space
+         * - hosts, tenants, an enum. Keyed on something unbounded - a user id, a request id, a
+         * timestamp - it is a memory leak; use [factory] there instead. An argument that is an array,
+         * or a generated arguments class with an array field, never compares equal to a fresh one, so
+         * every call misses and the cache grows by one entry per call.
          */
         public inline fun <M, reified A, reified T> multiplex(
             noinline builder: (A) -> Binding<M, Unit, T>
