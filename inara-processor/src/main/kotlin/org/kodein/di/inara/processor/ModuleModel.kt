@@ -164,30 +164,37 @@ private fun KSClassDeclaration.superInterfaces(): List<KSClassDeclaration> =
         (resolved as? KSClassDeclaration)?.takeUnless { it.qualifiedName?.asString() == "kotlin.Any" }
     }.toList()
 
+/** Per-`parseModule`-call memo for [interfaceClosure], keyed by qualified name. A closure is
+ * invariant within a round, and `resolveClosure`'s owner comparison plus diamond detection would
+ * otherwise rebuild the same ones many times over on a wide or deep hierarchy. */
+private typealias ClosureCache = MutableMap<String, Map<String, KSClassDeclaration>>
+
 /**
  * [classDecl] plus every interface transitively reachable through its supertypes - `@DIModule` or
  * not, annotation doesn't matter here - keyed by qualified name. Used both to find the most
  * derived owner of a member reached through more than one path (see [resolveClosure]) and to
  * detect a shared ancestor pulled in by two different `@DIModule(composed = true)` parents.
  */
-private fun interfaceClosure(classDecl: KSClassDeclaration): Map<String, KSClassDeclaration> {
-    val result = LinkedHashMap<String, KSClassDeclaration>()
+private fun interfaceClosure(classDecl: KSClassDeclaration, cache: ClosureCache): Map<String, KSClassDeclaration> {
     // An unresolved supertype resolves to a KSErrorTypeClassDeclaration with a null qualifiedName; it
     // carries no members and no supertypes, so drop it - the unresolved reference is already a
     // compiler error in its own right.
-    val name = classDecl.qualifiedName?.asString() ?: return result
+    val name = classDecl.qualifiedName?.asString() ?: return emptyMap()
+    cache[name]?.let { return it }
+    val result = LinkedHashMap<String, KSClassDeclaration>()
     result[name] = classDecl
     for (supertype in classDecl.superInterfaces()) {
-        for ((qualifiedName, decl) in interfaceClosure(supertype)) {
+        for ((qualifiedName, decl) in interfaceClosure(supertype, cache)) {
             result.putIfAbsent(qualifiedName, decl)
         }
     }
-    return result
+    // Only cache once fully built - never a partial result mid-recursion. Consumers only read it.
+    return result.also { cache[name] = it }
 }
 
 /** True when [sub] is [sup], or transitively extends it. */
-private fun isSubtypeOf(sub: KSClassDeclaration, sup: KSClassDeclaration): Boolean =
-    sup.qualifiedName?.asString() in interfaceClosure(sub).keys
+private fun isSubtypeOf(sub: KSClassDeclaration, sup: KSClassDeclaration, cache: ClosureCache): Boolean =
+    sup.qualifiedName?.asString() in interfaceClosure(sub, cache).keys
 
 /** A property or function declaration paired with the interface that actually declares it. */
 private data class ClosureDecl(val decl: KSDeclaration, val owner: KSClassDeclaration)
@@ -247,13 +254,14 @@ private fun resolveClosure(
     candidates: List<Candidate>,
     classDecl: KSClassDeclaration,
     reportError: (String, KSNode) -> Unit,
+    closureCache: ClosureCache,
 ): List<Candidate> {
     val result = mutableListOf<Candidate>()
     for ((name, entries) in candidates.groupBy { it.closureDecl.decl.simpleName.asString() }) {
         val mostDerivedOwners = entries
             .map { it.closureDecl.owner }
             .distinctBy { it.qualifiedName?.asString() }
-            .filter { candidate -> entries.all { other -> isSubtypeOf(candidate, other.closureDecl.owner) } }
+            .filter { candidate -> entries.all { other -> isSubtypeOf(candidate, other.closureDecl.owner, closureCache) } }
 
         if (mostDerivedOwners.size != 1) {
             val ownerNames = entries.map { it.closureDecl.owner.simpleName.asString() }.distinct().sorted()
@@ -358,6 +366,7 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         logger.error(message, node)
         hasError = true
     }
+    val closureCache: ClosureCache = mutableMapOf()
 
     if (classDecl.classKind != ClassKind.INTERFACE) {
         reportError("Only interfaces may be annotated with @DIModule.", classDecl)
@@ -416,7 +425,7 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
     // @DIModule interface has no from-parents builder to trip over this, so a shared ancestor's
     // members are simply folded in once (see [resolveClosure]).
     if (isComposed && parentDecls.size > 1) {
-        val closures = parentDecls.map { it to interfaceClosure(it) }
+        val closures = parentDecls.map { it to interfaceClosure(it, closureCache) }
         for (i in closures.indices) {
             for (j in i + 1 until closures.size) {
                 val (parentA, closureA) = closures[i]
@@ -551,7 +560,7 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         superDeclarationClosure(plain).map { Candidate(it, node, ownFromPlain = true, directParent = null) }
     }
 
-    for (candidate in resolveClosure(candidates, classDecl, ::reportError)) {
+    for (candidate in resolveClosure(candidates, classDecl, ::reportError, closureCache)) {
         val (closureDecl, node, ownFromPlain, directParent) = candidate
         val member = parseMember(closureDecl.decl, closureDecl.owner, node, isOwn = false) ?: continue
         nameOwners[closureDecl.decl.simpleName.asString()] = closureDecl.owner
@@ -621,7 +630,7 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
 
     val ancestorDeclarations = LinkedHashMap<String, KSClassDeclaration>().apply {
         for (supertype in parentDecls + plainEntries.map { it.second }) {
-            for ((qualifiedName, decl) in interfaceClosure(supertype)) {
+            for ((qualifiedName, decl) in interfaceClosure(supertype, closureCache)) {
                 putIfAbsent(qualifiedName, decl)
             }
         }
