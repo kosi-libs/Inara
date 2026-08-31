@@ -74,6 +74,24 @@ class ConcurrentBindingsTest {
     }
 
     @Test
+    fun weakSingleton_publication_alwaysConvergesOnOneInstance() {
+        val builds = AtomicInteger(0)
+        val binding = Binding.weakSingle<ConcurrentTestModule, Any>(SingleThreadSafety.Published) {
+            builds.incrementAndGet()
+            Any()
+        }
+
+        val results = runConcurrently { binding.get(ConcurrentTestModule(), Unit) }
+
+        val first = results.first()
+        results.forEach { assertSame(first, it) }
+        // `results` retains a strong reference to every returned instance, so no WeakRef can go
+        // dead mid-run: once the first CAS succeeds, the live-ref fast path always hits. Publication
+        // still lets losers of the initial race run the builder, so only assert >= 1.
+        assertTrue(builds.get() >= 1)
+    }
+
+    @Test
     fun multiplex_isolatesConcurrentArgs() {
         val argCount = 4
         val binding = Binding.multiplex<ConcurrentTestModule, Int, Any> { arg ->
