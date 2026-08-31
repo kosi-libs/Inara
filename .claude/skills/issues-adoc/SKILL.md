@@ -105,6 +105,14 @@ The Markdown habits that silently produce wrong output here:
 - **Bold is `*single asterisks*`; `_underscores_` are italic.** Markdown's `**bold**`
   renders as a literal asterisk wrapping bold text, and Markdown's `*italic*` renders
   as bold.
+- **Double the backticks when inline code is followed by an apostrophe or a letter.**
+  Single-backtick code is a *constrained* mark: it applies only when the closing
+  backtick is followed by a non-word character, and `` `' `` is separately read as a
+  curved apostrophe. So `` `SuspendBinding`'s `` and `` `Binding`s `` both render with
+  **no code formatting at all** (the apostrophe case also swallows the closing
+  backtick and leaves the opening one as literal text). Write ``` ``SuspendBinding``'s ```
+  and ``` ``Binding``s ```. Nothing flags this — the file still renders without error,
+  so §4's `asciidoctor` check won't catch it; only reading the rendered output will.
 - **Lists are `*` / `.` bullets**, and nest by repeating the marker (`**`, `***`).
 - Escape a leading `.` on a paragraph line (AsciiDoc reads it as a block title) and a
   leading `+` (a list continuation). The `.Issue` / `.Fix` lines in §3 are the one place
@@ -126,9 +134,10 @@ issues the user asked to fix:
   entries into one commit, even if they're related — that keeps history bisectable
   and each commit reviewable on its own.
 - **A single issue fixed on its own** (the user asked to fix just one, e.g. "fix
-  B4"): perform the fix, but **do not commit it automatically**. After the fix, ask
-  the user whether to "close this issue" — i.e. commit the fix and, as part of that
-  same step, strike it through in `ISSUES.adoc` per below. If they decline or don't
+  B4"): perform the fix, but **do not commit it automatically**. Once it's verified,
+  use the **`AskUserQuestion` tool** to offer closing the issue — i.e. commit the fix
+  and, as part of that same step, strike it through in `ISSUES.adoc` per below. Make
+  it a real choice the user can click, not a prose question. If they decline or don't
   respond yet, leave the fix uncommitted and the `ISSUES.adoc` entry untouched (full
   description still in place) so the issue is still tracked as open.
 
@@ -225,4 +234,6 @@ When asked to do a review that should produce `ISSUES.adoc`:
 5. Run §1's git-hygiene steps if the file doesn't already exist / isn't already ignored.
 6. If `asciidoctor` is available, render the file once (`asciidoctor -o /dev/null ISSUES.adoc`)
    to catch syntax mistakes — an accidental literal block or an unclosed inline role is
-   invisible in the source but obvious in the output.
+   invisible in the source but obvious in the output. A clean render is not proof the inline
+   markup is right, though: the constrained-mark pitfalls above (code before an apostrophe or
+   letter) render without error and are only visible in the output itself.
