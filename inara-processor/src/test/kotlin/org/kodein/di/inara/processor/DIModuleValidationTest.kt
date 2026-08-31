@@ -165,6 +165,44 @@ class DIModuleValidationTest {
     }
 
     @Test
+    fun privateModuleInterface_isRejected() {
+        // The generated builder and copy functions are top-level and would expose a type nothing
+        // outside the file can name.
+        assertRejected(
+            "must be public or internal",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            private interface PrivateModule {
+                val value: String
+            }
+            """
+        )
+    }
+
+    @Test
+    fun protectedModuleInterface_isRejected() {
+        assertRejected(
+            "must be public or internal",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            abstract class Host {
+                @DIModule
+                protected interface ProtectedModule {
+                    val value: String
+                }
+            }
+            """
+        )
+    }
+
+    @Test
     fun interfaceExtendingNonDIModuleInterface_isAllowed() {
         // A @DIModule interface may extend any interface, not just another @DIModule one - the
         // plain supertype's members are bound just like the module's own (see

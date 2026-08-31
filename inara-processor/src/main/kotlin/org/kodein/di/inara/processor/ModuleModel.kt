@@ -343,6 +343,14 @@ internal fun parseModule(classDecl: KSClassDeclaration, logger: KSPLogger): Modu
         return null
     }
 
+    if (classDecl.getVisibility() !in setOf(Visibility.PUBLIC, Visibility.INTERNAL)) {
+        reportError(
+            "A @DIModule interface must be public or internal: '${classDecl.simpleName.asString()}' is not.",
+            classDecl,
+        )
+        return null
+    }
+
     val isComposed = classDecl.isComposedDIModule()
     val moduleType = classDecl.asStarProjectedType()
 

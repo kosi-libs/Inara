@@ -632,6 +632,9 @@ functions, and arguments container:
 internal interface InternalModule { val secret: String }
 ----
 
+A module interface must be `public` or `internal`. A `private` or `protected` one is a compile
+error — the generated top-level builder and `copy` functions could not name it.
+
 A nested module interface is supported. The generated implementation class flattens the enclosing
 scopes to avoid collisions, while the builder keeps the interface's simple name:
 
