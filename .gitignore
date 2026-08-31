@@ -44,4 +44,4 @@ bin/
 ### Mac OS ###
 .DS_Store
 ### Local review scratch file
-ISSUES.md
+ISSUES.adoc
