@@ -91,6 +91,40 @@ class DIFactoryTest {
     }
 
     @Test
+    fun internalArgFunction_isAccepted() {
+        // An `internal` arg function on the (always-internal) object is reachable from the generated
+        // file, which is in the same module - so it's allowed, and the generated function stays public.
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule {
+                val greeting: String
+            }
+
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            internal object GreeterDIFactory {
+                internal fun GreetingModule.argGreeting(): String = greeting.uppercase()
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("public fun Greeter(module: GreetingModule): Greeter" in generated, generated)
+        assertTrue("greeting = module.argGreeting()," in generated, generated)
+    }
+
+    @Test
     fun assignableTypeMatch_resolvesToASupertypeParameter() {
         val source = SourceFile.kotlin(
             "Factory.kt",

@@ -362,6 +362,30 @@ class DIFactoryValidationTest {
     }
 
     @Test
+    fun privateArgFunction_isRejected() {
+        // The generated builder is a top-level function; its with(<object>) { } block can't see a
+        // private member.
+        assertRejected(
+            "must be public or internal",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule { val greeting: String }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            internal object GreeterDIFactory {
+                private fun GreetingModule.argGreeting(): String = greeting
+            }
+            """
+        )
+    }
+
+    @Test
     fun argFunctionWrongReceiver_isRejected() {
         assertRejected(
             "must be an extension function on",

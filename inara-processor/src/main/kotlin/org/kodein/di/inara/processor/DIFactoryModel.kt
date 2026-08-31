@@ -307,6 +307,10 @@ internal fun parseFactory(objDecl: KSClassDeclaration, logger: KSPLogger): Facto
             )
             continue
         }
+        if (fn.getVisibility() !in setOf(Visibility.PUBLIC, Visibility.INTERNAL)) {
+            reportError("'$name' must be public or internal.", fn)
+            continue
+        }
         if (suspendMode == SuspendMode.FORBID && Modifier.SUSPEND in fn.modifiers) {
             reportError("'$name' may not be 'suspend': 'suspend' is 'Suspend.Forbid' on '${objDecl.simpleName.asString()}'.", fn)
             continue

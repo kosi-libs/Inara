@@ -698,7 +698,9 @@ Each constructor argument is resolved independently, in priority order:
 
 . An `arg<Argument>` extension function declared on the annotated object — `fun
   NetworkModule.argEndpoint(): String` resolves an argument named `endpoint`. This is the _only_
-  thing a `@DIFactory` object may declare; anything else is a compile error.
+  thing a `@DIFactory` object may declare; anything else is a compile error. It must be `public` or
+  `internal` — the generated top-level function calls it from outside the object, so a `private` one
+  is a compile error too.
 . Otherwise, a uniquely-typed member of `from` — `httpClient` above resolves automatically because
   `NetworkModule.httpClient()` is the only member returning `HttpClient`, exactly. A member that
   takes one argument is a candidate only under `with` (see below); every other member must take none.
