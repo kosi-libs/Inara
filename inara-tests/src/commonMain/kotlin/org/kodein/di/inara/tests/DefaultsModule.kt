@@ -10,7 +10,9 @@ import org.kodein.di.inara.DIModule
  * [tag] (a fully-defaulted `var`), [String.shoutedLength] (a defaulted extension property), and
  * [identity] (a defaulted generic function) can't be expressed as a `Binding` at all - none of them
  * get a `Binding` parameter or an override anywhere; the generated class relies on ordinary Kotlin
- * inheritance to resolve them straight to this interface's own body.
+ * inheritance to resolve them straight to this interface's own body. The `private` `emphasize`
+ * helper is likewise never touched by the generated class - it just carries its own body into it,
+ * reachable from [emphasized].
  */
 @DIModule
 public interface DefaultsModule {
@@ -18,6 +20,9 @@ public interface DefaultsModule {
     public val name: String
     public fun shout(): String = "$greeting!!!"
     public fun prefixed(prefix: String): String = "$prefix$greeting"
+
+    private fun emphasize(text: String): String = "*$text*"
+    public fun emphasized(): String = emphasize(greeting)
 
     public var tag: String
         get() = "default-tag"

@@ -11,10 +11,11 @@ import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 
 /**
  * Verifies the generated shape for a member `Binding` can never express - a `var` with both
- * accessors defaulted, an extension member with a default body, or a generic function with a
- * default body: none of these get a `Binding` parameter or an override anywhere. The generated
- * class simply never touches them, relying on ordinary Kotlin inheritance to resolve them to
- * whichever interface's default body applies - own, a `@DIModule` parent, or a plain supertype.
+ * accessors defaulted, an extension member with a default body, a generic function with a default
+ * body, or a private member (always has its own body): none of these get a `Binding` parameter or an
+ * override anywhere. The generated class simply never touches them, relying on ordinary Kotlin
+ * inheritance to resolve them to whichever interface's default body applies - own, a `@DIModule`
+ * parent, or a plain supertype.
  */
 class DIModuleIgnoredMemberTest {
 
@@ -121,6 +122,32 @@ class DIModuleIgnoredMemberTest {
         val generated = compilation.generatedSource("sample/ignored", "InaraGenericModule.kt")
         assertTrue("identityBinding" !in generated, generated)
         assertTrue("identity" !in generated, generated)
+    }
+
+    @Test
+    fun privateMember_isAbsentFromBuilder() {
+        val source = SourceFile.kotlin(
+            "IgnoredPrivate.kt",
+            """
+            package sample.ignored
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface PrivateModule {
+                private fun helper(): String = extra.toString()
+                val extra: Int
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/ignored", "InaraPrivateModule.kt")
+        assertTrue("helperBinding" !in generated, generated)
+        assertTrue("helper" !in generated, generated)
+        assertTrue("public val extraBinding: Binding<PrivateModule, Unit, Int>," in generated, generated)
     }
 
     @Test

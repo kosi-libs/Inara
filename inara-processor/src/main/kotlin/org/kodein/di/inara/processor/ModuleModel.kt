@@ -195,10 +195,11 @@ private data class ClosureDecl(val decl: KSDeclaration, val owner: KSClassDeclar
 /**
  * Every property/function transitively reachable from [classDecl]'s supertypes, `@DIModule` or
  * plain alike (annotation doesn't matter once inside the walk - only [parseModule]'s direct-parent
- * partitioning cares), each paired with its declaring interface. A private member is dropped here:
- * an interface's private member always carries its own body, so the generated class never has
- * anything to implement for it. Raw: the same declaration can appear more than once (diamond
- * inheritance, or an override alongside the member it overrides) - see [resolveClosure].
+ * partitioning cares), each paired with its declaring interface. A private member is dropped here
+ * (and, symmetrically, [parseModule]'s own-member loop drops one declared directly on the annotated
+ * interface): an interface's private member always carries its own body, so the generated class
+ * never has anything to implement for it. Raw: the same declaration can appear more than once
+ * (diamond inheritance, or an override alongside the member it overrides) - see [resolveClosure].
  */
 private fun superDeclarationClosure(classDecl: KSClassDeclaration): List<ClosureDecl> {
     val result = mutableListOf<ClosureDecl>()
@@ -509,6 +510,8 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
                 if (!skip && decl.extensionReceiver != null) {
                     if (hasDefault) skip = true else fail("Extension members are not supported: '$name'.")
                 }
+                // `private` is already filtered upstream (own: parseModule's own-member loop,
+                // inherited: superDeclarationClosure), so this only ever catches `internal`.
                 if (!skip && decl.getVisibility() != Visibility.PUBLIC) {
                     fail("Non-public members are not supported: '$name'.")
                 }
@@ -576,6 +579,9 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
 
     for (decl in classDecl.declarations) {
         if (decl !is KSPropertyDeclaration && decl !is KSFunctionDeclaration) continue
+        // A private member always carries its own body - nothing for the generated class to
+        // implement, exactly as superDeclarationClosure treats an inherited one.
+        if (decl.getVisibility() == Visibility.PRIVATE) continue
         val claimOk = claimName(decl.simpleName.asString(), decl)
         val member = parseMember(decl, classDecl, decl, isOwn = true)
         if (claimOk && member != null) {

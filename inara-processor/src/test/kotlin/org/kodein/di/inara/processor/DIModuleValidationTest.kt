@@ -582,7 +582,8 @@ class DIModuleValidationTest {
     }
 
     // Every rule above also applies to a member with a default implementation EXCEPT var/extension/
-    // generic (see defaultBodyMember_{varProperty,extension,generic}_isIgnored below) and parameter
+    // generic (see defaultBodyMember_{varProperty,extension,generic}_isIgnored below), private (a
+    // private interface member always has its own body - see privateMember_isIgnored), and parameter
     // count/vararg (unrestricted regardless of default status, see twoParameterMember_isAllowed /
     // varargParameter_isAllowed above): `Binding` can express none of the first three regardless of
     // default status, so a defaulted one is silently excluded from the bindable surface entirely
@@ -590,7 +591,37 @@ class DIModuleValidationTest {
     // still applies just as if the member were abstract.
 
     @Test
-    fun defaultBodyMember_nonPublic_isRejected() {
+    fun privateMember_isIgnored() {
+        // A private member always carries its own body - there is nothing for the generated class to
+        // implement, exactly as for a private member inherited from a supertype.
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
+
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface PrivateMemberModule {
+                    val name: String
+                    private fun greeting(): String = "Hello, ${'$'}name"
+                }
+                """
+            )
+        )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/validation", "InaraPrivateMemberModule.kt")
+        assertTrue("greetingBinding" !in generated, generated)
+        assertTrue("override fun greeting" !in generated, generated)
+        assertTrue("public val nameBinding: Binding<PrivateMemberModule, Unit, String>," in generated, generated)
+    }
+
+    @Test
+    fun internalMember_isRejected() {
+        // Unlike private, an internal member can be abstract and participates in overriding, so it
+        // stays rejected - Inara only binds the public surface.
         assertRejected(
             "Non-public members are not supported",
             """
@@ -599,9 +630,8 @@ class DIModuleValidationTest {
             import org.kodein.di.inara.DIModule
 
             @DIModule
-            interface NonPublicDefaultModule {
-                val name: String
-                private fun greeting(): String = "Hello, ${'$'}name"
+            interface InternalMemberModule {
+                internal val secret: String
             }
             """
         )

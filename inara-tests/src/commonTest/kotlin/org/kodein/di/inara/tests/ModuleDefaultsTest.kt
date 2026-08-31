@@ -44,6 +44,15 @@ class ModuleDefaultsTest {
     }
 
     @Test
+    fun privateHelper_isReachableFromAPublicDefaultBody() {
+        // `emphasize` is private - the generated class has no binding for it and never overrides it,
+        // it just inherits the interface's body, which `emphasized()` calls.
+        val module = DefaultsModule(name = Binding.value("World"))
+
+        assertEquals("*Hello, World*", module.emphasized())
+    }
+
+    @Test
     fun ignoredMembers_stillPresentAfterCopy() {
         val module = DefaultsModule(name = Binding.value("World"))
         val copy = module.copy(greeting = Binding.value("Hi"))
