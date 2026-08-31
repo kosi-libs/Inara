@@ -32,6 +32,11 @@ Never `git add` or commit `ISSUES.adoc` itself, at any point in the workflow bel
 
 <One or two sentences on what this review covers.>
 
+IMPORTANT: When one or more issues from this file are referenced — to fix, close, cross-check, or
+discuss by ID — load the `issues-adoc` skill first. It defines how an issue here is researched,
+fixed (one commit per issue), and struck through once the fix is committed. This file is local
+scratch and is never committed.
+
 TIP: Each section is identified by a letter and each issue by a number, so any issue can be
 referenced compactly (e.g. `B3`) and cross-referenced with `\<<B3>>`.
 
@@ -239,8 +244,8 @@ When asked to do a review that should produce `ISSUES.adoc`:
    categories.
 3. Write each issue as an anchored `===` heading (ID + summary) followed by its
    description, sorted by severity within its section.
-4. Add the document header, a short intro (what the review covers), the "referenced
-   compactly" line and `toc::[]`, as in the template above.
+4. Add the document header, a short intro (what the review covers), the skill-load `IMPORTANT`
+   note, the "referenced compactly" line and `toc::[]`, as in the template above.
 5. Run §1's git-hygiene steps if the file doesn't already exist / isn't already ignored.
 6. If `asciidoctor` is available, render the file once (`asciidoctor -o /dev/null ISSUES.adoc`)
    to catch syntax mistakes — an accidental literal block or an unclosed inline role is
