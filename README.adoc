@@ -635,8 +635,12 @@ internal interface InternalModule { val secret: String }
 A module interface must be `public` or `internal`. A `private` or `protected` one is a compile
 error — the generated top-level builder and `copy` functions could not name it.
 
-A nested module interface is supported. The generated implementation class flattens the enclosing
-scopes to avoid collisions, while the builder keeps the interface's simple name:
+A nested module interface is supported. The generated implementation class, file and `copy`
+functions flatten the enclosing scopes (`InaraOuterInner`), but the builder function keeps the
+interface's own simple name (`Inner`), so you call it the way you'd write the interface. Two
+same-simple-named nested modules in one package therefore share a builder name — harmless once
+either has a member (their `Binding` parameter types differ, so the functions are valid overloads),
+and a compile error flagged on the generated files in the rare case that both are member-less:
 
 .Outer.kt
 [source,kotlin]

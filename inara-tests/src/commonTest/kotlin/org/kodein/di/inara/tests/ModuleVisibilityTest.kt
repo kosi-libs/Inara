@@ -15,7 +15,8 @@ class ModuleVisibilityTest {
     }
 
     @Test
-    fun nestedModule_generatesFlattenedBuilder() {
+    fun nestedModule_builderKeepsSimpleName() {
+        // The generated class/file flatten to InaraOuterInner, but the builder stays `Inner`.
         val module: Outer.Inner = Inner(
             label = Binding.value("inner"),
         )

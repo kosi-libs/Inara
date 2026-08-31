@@ -12,7 +12,7 @@ import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 /**
  * Golden test: verifies the exact shape of the code generated for the `@DIModule` interface
  * shown in the processor's documentation - a `val` property, a zero-arg function, and a one-arg
- * function.
+ * function - plus a few whole-file naming properties (nesting, collisions).
  */
 class DIModuleGenerationTest {
 
@@ -68,5 +68,48 @@ class DIModuleGenerationTest {
         assertTrue("baseUrlBinding = baseUrl" in generated, generated)
         assertTrue("httpClientBinding = httpClient" in generated, generated)
         assertTrue("contextBinding = context" in generated, generated)
+    }
+
+    @Test
+    fun twoSameNamedNestedModulesInOnePackage_generateValidOverloads() {
+        // The generated class and file flatten the enclosing scopes (InaraOuterAInner), but the
+        // builder keeps the interface's simple name, so both are `fun Inner(...)`. That's fine
+        // whenever either module has a member: the Binding parameter is typed on the leaf module, so
+        // the two functions have distinct signatures and are valid overloads. Compiling the
+        // generated code is the assertion. (Two member-less nested modules would genuinely clash;
+        // the Kotlin compiler reports that as "Conflicting overloads" on the generated files.)
+        val source = SourceFile.kotlin(
+            "Nested.kt",
+            """
+            package sample.nested
+
+            import org.kodein.di.inara.DIModule
+
+            interface OuterA {
+                @DIModule
+                interface Inner {
+                    val label: String
+                }
+            }
+
+            interface OuterB {
+                @DIModule
+                interface Inner {
+                    val amount: Int
+                }
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val a = compilation.generatedSource("sample/nested", "InaraOuterAInner.kt")
+        val b = compilation.generatedSource("sample/nested", "InaraOuterBInner.kt")
+
+        assertTrue("public fun Inner(" in a, a)
+        assertTrue("label: Binding<OuterA.Inner, Unit, String>" in a, a)
+        assertTrue("public fun Inner(" in b, b)
+        assertTrue("amount: Binding<OuterB.Inner, Unit, Int>" in b, b)
     }
 }
