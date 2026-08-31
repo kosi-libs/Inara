@@ -1,5 +1,7 @@
 package org.kodein.di.inara
 
+import kotlinx.atomicfu.locks.ReentrantLock
+import kotlinx.atomicfu.locks.withLock
 import org.kodein.di.inara.BindingImpls.Uninitialized.ifInitialized
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicReference
@@ -160,10 +162,10 @@ public class BindingImpls {
     internal class SynchronizedSingle<in M, out T>(private val cls: KClass<T & Any>?, builder: M.() -> T) : Binding<M, Unit, T> {
         private var builder: (M.() -> T)? = builder
         @Volatile private var value: Any? = Uninitialized
-        private val lock = Lock()
+        private val lock = ReentrantLock()
         override fun get(module: M, arg: Unit): T {
             value.ifInitialized<T> { return it }
-            return locked(lock) {
+            return lock.withLock {
                 value.ifInitialized<T> { return it }
                 builder!!(module).also {
                     builder = null
@@ -198,10 +200,10 @@ public class BindingImpls {
     @PublishedApi
     internal class SynchronizedWeakSingle<in M, out T : Any>(private val cls: KClass<T>, private val builder: M.() -> T) : Binding<M, Unit, T> {
         @Volatile private var ref: Any? = Uninitialized
-        private val lock = Lock()
+        private val lock = ReentrantLock()
         override fun get(module: M, arg: Unit): T {
             ref.ifInitialized<WeakRef<T>> { r -> r.value?.let { return it } }
-            return locked(lock) {
+            return lock.withLock {
                 ref.ifInitialized<WeakRef<T>> { r -> r.value?.let { return it } }
                 builder(module).also {
                     ref = WeakRef(it)
