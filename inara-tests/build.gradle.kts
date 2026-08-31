@@ -30,6 +30,8 @@ kotlin {
     linuxX64()
     linuxArm64()
     macosArm64()
+    // No macosX64: Kotlin deprecated it in 2.3.20 and will remove it. iosX64 above is the Intel
+    // iOS simulator (still supported), not Intel macOS - the two are unrelated.
     mingwX64()
 
     js {

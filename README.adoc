@@ -864,6 +864,10 @@ after collection.
 * *JS* — browser, Node.js
 * *Wasm/JS* — browser, Node.js
 
+`macosX64` (Intel macOS) is deliberately not a target: Kotlin deprecated it in 2.3.20 and will
+remove it. `iosX64` — the Intel iOS _simulator_, not Intel hardware — is kept because it is still a
+supported target.
+
 == Project layout
 
 [cols="1,3",options="header"]
