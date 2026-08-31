@@ -20,12 +20,5 @@ mavenPublishing {
     pom {
         name = "inara-processor"
         description = "Inara KSP processor"
-        licenses {
-            license {
-                name = "MIT License"
-                url = "https://opensource.org/licenses/MIT"
-                distribution = "repo"
-            }
-        }
     }
 }
