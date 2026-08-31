@@ -276,4 +276,31 @@ class DIModuleMultiParamTest {
         assertTrue("public data class Mult(" in generated, generated)
         assertTrue("public val multBinding: Binding<Module1, Module1BindingArguments.Mult, Long>," in generated, generated)
     }
+
+    @Test
+    fun internalModule_multiParamMember_argsContainerIsInternal() {
+        // The container wraps the module's own member parameter types, which can be internal too, so
+        // a public container inside an internal module wouldn't compile.
+        val source = SourceFile.kotlin(
+            "InternalMultiParam.kt",
+            """
+            package sample.multiparam
+
+            import org.kodein.di.inara.DIModule
+
+            internal class Secret
+
+            @DIModule
+            internal interface M {
+                fun mult(s: Secret, n: Int): String
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/multiparam", "InaraM.kt")
+        assertTrue("internal class MBindingArguments private constructor()" in generated, generated)
+    }
 }

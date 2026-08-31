@@ -341,7 +341,7 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
     val fileBuilder = FileSpec.builder(moduleClassName.packageName, generatedClassName)
         .addAnnotation(FILE_OPT_IN_INTERNAL_INARA_GENERATION)
 
-    buildArgsContainerType(argsClassName, model.allMembers, originatingFiles)?.let { fileBuilder.addType(it) }
+    buildArgsContainerType(argsClassName, model.visibility, model.allMembers, originatingFiles)?.let { fileBuilder.addType(it) }
 
     val (typeSpec, builderFun) = buildModuleType(
         generatedClassName = generatedClassName,
@@ -374,12 +374,17 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
  * parameter's default-value expression to reproduce here. `@Suppress("ArrayInDataClass")` is added
  * only when at least one field is array-typed. Returns `null` when no member qualifies, so the
  * caller adds nothing to the file.
+ *
+ * The container mirrors the module's [visibility], like the implementation class and every builder /
+ * `copy` - an `internal` module's data classes wrap the module's own member parameter types, which
+ * may themselves be `internal`, so a `public` container would fail to compile.
  */
-private fun buildArgsContainerType(argsClassName: ClassName, members: List<MemberModel>, originatingFiles: List<KSFile>): TypeSpec? {
+private fun buildArgsContainerType(argsClassName: ClassName, visibility: Visibility, members: List<MemberModel>, originatingFiles: List<KSFile>): TypeSpec? {
     val multiParamMembers = members.filter { it.parameters.size > 1 }
     if (multiParamMembers.isEmpty()) return null
 
     val containerBuilder = TypeSpec.classBuilder(argsClassName)
+        .apply { if (visibility == Visibility.INTERNAL) addModifiers(KModifier.INTERNAL) }
         .primaryConstructor(FunSpec.constructorBuilder().addModifiers(KModifier.PRIVATE).build())
     for (file in originatingFiles) {
         containerBuilder.addOriginatingKSFile(file)

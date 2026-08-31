@@ -622,8 +622,8 @@ something unsatisfiable.
 
 == Visibility and nesting
 
-An `internal` module interface gets an `internal` implementation class, builder, and `copy`
-functions:
+An `internal` module interface gets an `internal` implementation class, builder, `copy`
+functions, and arguments container:
 
 .InternalModule.kt
 [source,kotlin]
