@@ -430,10 +430,19 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
             for (j in i + 1 until closures.size) {
                 val (parentA, closureA) = closures[i]
                 val (parentB, closureB) = closures[j]
-                for (qualifiedName in closureA.keys intersect closureB.keys) {
-                    val shared = closureA.getValue(qualifiedName)
+                val shared = (closureA.keys intersect closureB.keys).map { closureA.getValue(it) }
+                // Report only the most-derived shared ancestor(s): if the pair shares `Base : Root`,
+                // naming `Root` too just describes one mistake twice. Two _incomparable_ shared
+                // ancestors are two genuine ambiguities, so both are still reported.
+                val mostDerived = shared.filter { c ->
+                    shared.none { o ->
+                        o.qualifiedName?.asString() != c.qualifiedName?.asString() &&
+                            isSubtypeOf(o, c, closureCache)
+                    }
+                }
+                for (ancestor in mostDerived) {
                     reportError(
-                        "Interface '${shared.simpleName.asString()}' is inherited more than once, " +
+                        "Interface '${ancestor.simpleName.asString()}' is inherited more than once, " +
                             "via '${parentA.simpleName.asString()}' and '${parentB.simpleName.asString()}'.",
                         classDecl,
                     )

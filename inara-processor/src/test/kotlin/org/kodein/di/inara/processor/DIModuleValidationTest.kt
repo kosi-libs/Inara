@@ -285,6 +285,43 @@ class DIModuleValidationTest {
     }
 
     @Test
+    fun diamondInheritance_reportsOnlyTheMostDerivedSharedAncestor() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
+
+                import org.kodein.di.inara.DIModule
+
+                interface Root
+                interface Base : Root
+
+                @DIModule
+                interface Module1 : Base
+
+                @DIModule
+                interface Module2 : Base
+
+                @DIModule(composed = true)
+                interface DiamondModule : Module1, Module2 {
+                    val value: String
+                }
+                """
+            )
+        )
+
+        assertEquals(ExitCode.COMPILATION_ERROR, compilation.exitCode, compilation.messages)
+        assertTrue("'Base' is inherited more than once" in compilation.messages, compilation.messages)
+        assertTrue("'Root' is inherited more than once" !in compilation.messages, compilation.messages)
+        assertEquals(
+            1,
+            Regex("is inherited more than once").findAll(compilation.messages).count(),
+            compilation.messages,
+        )
+    }
+
+    @Test
     fun diamondInheritance_isAllowedForPlainModule() {
         val compilation = compile(
             SourceFile.kotlin(
