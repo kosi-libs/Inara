@@ -22,6 +22,33 @@ class DIModuleValidationTest {
     }
 
     @Test
+    fun unresolvedTransitiveSupertype_failsCleanlyWithoutCrashing() {
+        // A @DIModule whose grandparent supertype doesn't resolve used to NPE the processor:
+        // KSP's validate() only checks direct supertypes, so parseModule ran and interfaceClosure
+        // hit `qualifiedName!!` on the error type. The compile() call itself throwing is the
+        // pre-fix failure - this test wouldn't reach its assertion.
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
+
+                import org.kodein.di.inara.DIModule
+
+                interface Base : DefinitelyNotAThing
+
+                @DIModule
+                interface M : Base {
+                    val value: String
+                }
+                """
+            )
+        )
+
+        assertEquals(ExitCode.COMPILATION_ERROR, compilation.exitCode, compilation.messages)
+    }
+
+    @Test
     fun overloadedMembers_areRejected() {
         assertRejected(
             "Overloading is not supported",

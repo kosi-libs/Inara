@@ -172,7 +172,11 @@ private fun KSClassDeclaration.superInterfaces(): List<KSClassDeclaration> =
  */
 private fun interfaceClosure(classDecl: KSClassDeclaration): Map<String, KSClassDeclaration> {
     val result = LinkedHashMap<String, KSClassDeclaration>()
-    result[classDecl.qualifiedName!!.asString()] = classDecl
+    // An unresolved supertype resolves to a KSErrorTypeClassDeclaration with a null qualifiedName; it
+    // carries no members and no supertypes, so drop it - the unresolved reference is already a
+    // compiler error in its own right.
+    val name = classDecl.qualifiedName?.asString() ?: return result
+    result[name] = classDecl
     for (supertype in classDecl.superInterfaces()) {
         for ((qualifiedName, decl) in interfaceClosure(supertype)) {
             result.putIfAbsent(qualifiedName, decl)
