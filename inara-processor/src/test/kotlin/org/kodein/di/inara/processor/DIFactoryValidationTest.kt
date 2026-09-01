@@ -497,7 +497,8 @@ class DIFactoryValidationTest {
     @Test
     fun unresolvableArgument_isRejected() {
         assertRejected(
-            "Cannot resolve argument",
+            "Cannot resolve argument 'greeting' of 'Greeter' from 'EmptyModule' - add a " +
+                "'fun EmptyModule.argGreeting(): String' function to 'GreeterDIFactory'.",
             """
             package sample.factory
 
@@ -721,6 +722,28 @@ class DIFactoryValidationTest {
             interface GreetingModule {
                 fun greetingFor(count: Int): String
             }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = Ctx::class)
+            internal object GreeterDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun withArgument_unresolvableArgument_suggestionCarriesTheWithParameter() {
+        assertRejected(
+            "Cannot resolve argument 'greeting' of 'Greeter' from 'GreetingModule' - add a " +
+                "'fun GreetingModule.argGreeting(with: Ctx): String' function to 'GreeterDIFactory'.",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+            @DIModule
+            interface GreetingModule { val unrelated: Int }
             class Greeter(val greeting: String)
 
             @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = Ctx::class)

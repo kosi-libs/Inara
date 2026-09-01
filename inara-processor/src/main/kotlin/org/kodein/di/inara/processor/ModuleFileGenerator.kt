@@ -81,11 +81,13 @@ private fun isArrayTypeName(typeName: TypeName): Boolean = when (typeName) {
 
 /**
  * Renders [this] using simple (unqualified) names - `List<String>` rather than
- * `kotlin.collections.List<kotlin.String>` - for the debug `toString()` header line built by
- * [memberSignature]. Mirrors the simple names a binding's own `toString()` already shows via
- * `KClass.simpleName` (see `Bindings.kt`/`SuspendBindings.kt`).
+ * `kotlin.collections.List<kotlin.String>`. The processor's human-readable type renderer: it feeds
+ * the debug `toString()` header line built by [memberSignature] and also the `@DIFactory`
+ * diagnostics in `DIFactoryModel.kt` that quote a signature back to the user. Mirrors the simple
+ * names a binding's own `toString()` already shows via `KClass.simpleName` (see
+ * `Bindings.kt`/`SuspendBindings.kt`).
  */
-private fun TypeName.simpleString(): String {
+internal fun TypeName.simpleString(): String {
     val base = when (this) {
         is ClassName -> simpleNames.joinToString(".")
         is ParameterizedTypeName -> "${rawType.simpleString()}<${typeArguments.joinToString(", ") { it.simpleString() }}>"

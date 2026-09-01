@@ -430,9 +430,14 @@ internal fun parseFactory(
             continue
         }
 
+        // The suggested signature has to be pasteable as-is: the real argument type rather than a
+        // placeholder, and - under `with` - the one parameter every arg function must take (see the
+        // `withType != null` branch above), which a parameterless suggestion would fail on next compile.
+        val argParams = withType?.let { "with: ${it.toTypeName().simpleString()}" } ?: ""
         reportError(
             "Cannot resolve argument '$paramName' of '$buildsName' from '$fromName' - add a " +
-                "'fun $fromName.${argFunctionName(paramName)}(): T' function to '${objDecl.simpleName.asString()}'.",
+                "'fun $fromName.${argFunctionName(paramName)}($argParams): " +
+                "${paramType.toTypeName().simpleString()}' function to '${objDecl.simpleName.asString()}'.",
             objDecl,
         )
     }
