@@ -15,20 +15,20 @@ import org.kodein.di.inara.DIModule
  * reachable from [emphasized].
  */
 @DIModule
-public interface DefaultsModule {
-    public val greeting: String get() = "Hello, $name"
-    public val name: String
-    public fun shout(): String = "$greeting!!!"
-    public fun prefixed(prefix: String): String = "$prefix$greeting"
+interface DefaultsModule {
+    val greeting: String get() = "Hello, $name"
+    val name: String
+    fun shout(): String = "$greeting!!!"
+    fun prefixed(prefix: String): String = "$prefix$greeting"
 
     private fun emphasize(text: String): String = "*$text*"
-    public fun emphasized(): String = emphasize(greeting)
+    fun emphasized(): String = emphasize(greeting)
 
-    public var tag: String
+    var tag: String
         get() = "default-tag"
         set(_) {}
 
-    public val String.shoutedLength: Int get() = uppercase().length
+    val String.shoutedLength: Int get() = uppercase().length
 
-    public fun <T> identity(value: T): T = value
+    fun <T> identity(value: T): T = value
 }

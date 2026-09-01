@@ -8,9 +8,9 @@ import org.kodein.di.inara.DIModule
  * member alongside them to prove the two binding kinds coexist in one generated class.
  */
 @DIModule
-public interface AsyncModule {
-    public val name: String
-    public suspend fun load(): Service
-    public suspend fun loadKeyed(key: String): Service
-    public suspend fun described(): String = "$name: ${load().id}"
+interface AsyncModule {
+    val name: String
+    suspend fun load(): Service
+    suspend fun loadKeyed(key: String): Service
+    suspend fun described(): String = "$name: ${load().id}"
 }

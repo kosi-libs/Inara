@@ -8,8 +8,8 @@ import org.kodein.di.inara.DIFactory
  * redirects argument resolution to its public secondary constructor instead. `baseUrl` resolves
  * automatically, an exact-type match on [NetworkModule.baseUrl].
  */
-public class Greeter private constructor(public val greeting: String, private val marker: Int) {
-    public constructor(baseUrl: String) : this("Hello from $baseUrl", 0)
+class Greeter private constructor(val greeting: String, private val marker: Int) {
+    constructor(baseUrl: String) : this("Hello from $baseUrl", 0)
 }
 
 @DIFactory(builds = Greeter::class, from = NetworkModule::class, constructorIndex = 1)

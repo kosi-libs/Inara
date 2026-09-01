@@ -2,15 +2,15 @@ package org.kodein.di.inara.tests
 
 import org.kodein.di.inara.DIModule
 
-public class Service(public val id: Int)
+class Service(val id: Int)
 
 /**
  * Used to assert lifecycle differences between `Binding.provider`, `Binding.single`, and
  * `Binding.multiplex` through real Gradle/KSP-generated code.
  */
 @DIModule
-public interface CounterModule {
-    public fun next(): Int
-    public val instance: Service
-    public fun keyed(key: String): Service
+interface CounterModule {
+    fun next(): Int
+    val instance: Service
+    fun keyed(key: String): Service
 }

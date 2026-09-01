@@ -8,12 +8,12 @@ import org.kodein.di.inara.DIFactory
  * automatically (an exact-type match on [NetworkModule.httpClient]); `endpoint` needs the
  * `argEndpoint` extension function since no module member alone determines the path.
  */
-public class UsersController(
-    public val httpClient: HttpClient,
-    public val endpoint: String,
+class UsersController(
+    val httpClient: HttpClient,
+    val endpoint: String,
 )
 
 @DIFactory(builds = UsersController::class, from = NetworkModule::class)
 internal object UserControllerDIFactory {
-    public fun NetworkModule.argEndpoint(): String = endpoint("users")
+    fun NetworkModule.argEndpoint(): String = endpoint("users")
 }

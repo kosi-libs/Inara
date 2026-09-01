@@ -2,7 +2,7 @@ package org.kodein.di.inara.tests
 
 import org.kodein.di.inara.DIModule
 
-public data class Greeting(public val text: String)
+data class Greeting(val text: String)
 
 /**
  * Two leaf `@DIModule` interfaces and a `ComposedModule` extending both, exercising module
@@ -13,19 +13,19 @@ public data class Greeting(public val text: String)
  * a plain `@DIModule` child, which doesn't.
  */
 @DIModule
-public interface GreeterModule {
-    public val greeting: Greeting
-    public fun greet(name: String): String = "${greeting.text}, $name!"
+interface GreeterModule {
+    val greeting: Greeting
+    fun greet(name: String): String = "${greeting.text}, $name!"
 }
 
 @DIModule
-public interface AsyncCounterModule {
-    public suspend fun nextAsync(): Int
+interface AsyncCounterModule {
+    suspend fun nextAsync(): Int
 }
 
 @DIModule(composed = true)
-public interface ComposedModule : GreeterModule, AsyncCounterModule {
-    public val label: String
+interface ComposedModule : GreeterModule, AsyncCounterModule {
+    val label: String
 }
 
 /**
@@ -34,8 +34,8 @@ public interface ComposedModule : GreeterModule, AsyncCounterModule {
  * from-parents builder and no parent-swapping `copy` overload, since it isn't `composed = true`.
  */
 @DIModule
-public interface InheritedModule : GreeterModule {
-    public val suffix: String
+interface InheritedModule : GreeterModule {
+    val suffix: String
 }
 
 /**
@@ -45,17 +45,17 @@ public interface InheritedModule : GreeterModule {
  * exactly once, reached through either path.
  */
 @DIModule
-public interface DiamondBase {
-    public val base: String
+interface DiamondBase {
+    val base: String
 }
 
 @DIModule
-public interface DiamondLeft : DiamondBase
+interface DiamondLeft : DiamondBase
 
 @DIModule
-public interface DiamondRight : DiamondBase
+interface DiamondRight : DiamondBase
 
 @DIModule
-public interface DiamondModule : DiamondLeft, DiamondRight {
-    public val extra: Int
+interface DiamondModule : DiamondLeft, DiamondRight {
+    val extra: Int
 }

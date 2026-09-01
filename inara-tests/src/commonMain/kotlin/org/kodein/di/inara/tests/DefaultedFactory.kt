@@ -11,14 +11,14 @@ import org.kodein.di.inara.DIModule
  * exact-type match on [ReportModule.title].
  */
 @DIModule
-public interface ReportModule {
-    public val title: String
-    public val verbose: Boolean
+interface ReportModule {
+    val title: String
+    val verbose: Boolean
 }
 
-public class Report(
-    public val title: String,
-    public val verbose: Boolean = false,
+class Report(
+    val title: String,
+    val verbose: Boolean = false,
 )
 
 @DIFactory(builds = Report::class, from = ReportModule::class)

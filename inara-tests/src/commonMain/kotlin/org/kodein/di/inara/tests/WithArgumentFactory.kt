@@ -9,16 +9,16 @@ import org.kodein.di.inara.DIModule
  * that value flows into the `argGreeting` extension function. `httpClient` still resolves
  * automatically off [NetworkModule.httpClient] with no `with` involved.
  */
-public data class RequestContext(val userId: String)
+data class RequestContext(val userId: String)
 
-public class UserSession(
-    public val httpClient: HttpClient,
-    public val greeting: String,
+class UserSession(
+    val httpClient: HttpClient,
+    val greeting: String,
 )
 
 @DIFactory(builds = UserSession::class, from = NetworkModule::class, with = RequestContext::class)
 internal object UserSessionDIFactory {
-    public fun NetworkModule.argGreeting(context: RequestContext): String = "Hello, ${context.userId}"
+    fun NetworkModule.argGreeting(context: RequestContext): String = "Hello, ${context.userId}"
 }
 
 /**
@@ -27,11 +27,11 @@ internal object UserSessionDIFactory {
  * `module.route(with)`.
  */
 @DIModule
-public interface RoutingModule {
-    public fun route(segment: String): String
+interface RoutingModule {
+    fun route(segment: String): String
 }
 
-public class Page(public val route: String)
+class Page(val route: String)
 
 @DIFactory(builds = Page::class, from = RoutingModule::class, with = String::class)
 internal object PageDIFactory

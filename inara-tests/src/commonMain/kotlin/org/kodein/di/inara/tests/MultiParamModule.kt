@@ -10,10 +10,10 @@ import org.kodein.di.inara.DIModule
  * a defaulted named parameter, also wrapped into a data class.
  */
 @DIModule
-public interface MultiParamModule {
-    public fun va(vararg str: String): String
-    public fun mult(s: List<String>, i: Int): Long
-    public fun both(vararg ids: Int, flag: Boolean = false): String
+interface MultiParamModule {
+    fun va(vararg str: String): String
+    fun mult(s: List<String>, i: Int): Long
+    fun both(vararg ids: Int, flag: Boolean = false): String
 }
 
 /**
@@ -24,6 +24,6 @@ public interface MultiParamModule {
  * is carried across like any single-parameter member.
  */
 @DIModule(composed = true)
-public interface ComposedMultiParamModule : MultiParamModule {
-    public val tag: String
+interface ComposedMultiParamModule : MultiParamModule {
+    val tag: String
 }

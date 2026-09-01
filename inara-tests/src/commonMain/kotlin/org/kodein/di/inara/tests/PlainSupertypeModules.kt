@@ -7,25 +7,25 @@ import org.kodein.di.inara.DIModule
  * verify a `@DIModule` interface may extend *any* interface, not just other `@DIModule` ones -
  * [Taggable]'s members are bound exactly like a `@DIModule` module's own.
  */
-public interface Taggable {
-    public val id: String
-    public fun tag(): String = "tag:$id"
+interface Taggable {
+    val id: String
+    fun tag(): String = "tag:$id"
 }
 
 /** A generic plain interface, used with a concrete type argument to prove type substitution. */
-public interface Converter<T> {
-    public val default: T
-    public fun convert(input: T): T
+interface Converter<T> {
+    val default: T
+    fun convert(input: T): T
 }
 
 @DIModule
-public interface TaggableModule : Taggable {
-    public val extra: Int
+interface TaggableModule : Taggable {
+    val extra: Int
 }
 
 @DIModule
-public interface StringConverterModule : Converter<String> {
-    public val prefix: String
+interface StringConverterModule : Converter<String> {
+    val prefix: String
 }
 
 /**
@@ -34,6 +34,6 @@ public interface StringConverterModule : Converter<String> {
  * not - [Taggable]'s members are bound directly, alongside [label].
  */
 @DIModule(composed = true)
-public interface TaggedCounterModule : CounterModule, Taggable {
-    public val label: String
+interface TaggedCounterModule : CounterModule, Taggable {
+    val label: String
 }

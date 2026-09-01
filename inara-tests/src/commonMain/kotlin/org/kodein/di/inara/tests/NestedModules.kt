@@ -6,9 +6,9 @@ import org.kodein.di.inara.DIModule
  * Proves that a `@DIModule` interface nested inside another declaration gets its generated file
  * and class named after every enclosing scope flattened together (`InaraOuterInner`).
  */
-public interface Outer {
+interface Outer {
     @DIModule
-    public interface Inner {
-        public val label: String
+    interface Inner {
+        val label: String
     }
 }
