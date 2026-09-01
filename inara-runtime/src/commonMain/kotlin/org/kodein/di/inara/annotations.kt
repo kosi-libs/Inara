@@ -35,11 +35,12 @@ public annotation class DIModule(val composed: Boolean = false)
  * member, and a defaulted parameter needs no `arg` function. The object may declare nothing but such
  * `arg` functions - anything else is a compile error.
  *
- * With [with] set to a type other than `Unit`, the generated function takes a second parameter `fun
- * <Builds>(module: <From>, with: <With>): <Builds>`, that value is passed to every `arg<Argument>`
- * function (each of which must then take exactly one parameter of type [with]) and to any member of
- * [from] taking a single [with]-castable parameter, and such one-parameter members join the
- * zero-parameter ones in the automatic-resolution candidate pool. See [with].
+ * With [with] (or [withNullable]) set to a type other than `Unit`, the generated function takes a
+ * second parameter `fun <Builds>(module: <From>, with: <With>): <Builds>` - nullable under
+ * [withNullable] - that value is passed to every `arg<Argument>` function (each of which must then
+ * take exactly one parameter of that type) and to any member of [from] taking a single castable
+ * parameter, and such one-parameter members join the zero-parameter ones in the automatic-resolution
+ * candidate pool. Setting both [with] and [withNullable] is a compile error. See [with].
  *
  * @param builds The class to construct. Must be a concrete (non-abstract, non-`sealed`) class with
  *   the constructor selected by [constructorIndex] public or internal, itself public or internal.
@@ -52,7 +53,13 @@ public annotation class DIModule(val composed: Boolean = false)
  *   must then declare exactly one parameter of that type (no parameter, or another type, is a
  *   compile error), and a member of [from] taking a single parameter the `with` value casts into -
  *   or a `vararg` whose array type it is - becomes eligible for automatic resolution on equal
- *   footing with a zero-parameter member.
+ *   footing with a zero-parameter member. Use [withNullable] instead for a nullable parameter.
+ * @param withNullable Exactly [with], except the generated parameter's type is nullable (`with:
+ *   <With>?`): every `arg<Argument>` function must then declare its parameter as `<With>?`, and only
+ *   a [from] member whose single parameter accepts `null` is an automatic-resolution candidate (a
+ *   `vararg` never is - its array type is never nullable). `Unit` (the default) means unset, exactly
+ *   as for [with] - it is not a `Unit?` parameter. Setting both [with] and [withNullable] is a
+ *   compile error.
  * @param suspend Whether a `suspend` provider - a `suspend` `arg` function, or a `suspend` member
  *   of [from] - may be used to resolve an argument, and whether the generated function itself is
  *   `suspend`. See [Suspend].
@@ -68,6 +75,7 @@ public annotation class DIFactory(
     val builds: KClass<*>,
     val from: KClass<*>,
     val with: KClass<*> = Unit::class,
+    val withNullable: KClass<*> = Unit::class,
     val suspend: Suspend = Suspend.Allow,
     val constructorIndex: Int = 0,
 ) {

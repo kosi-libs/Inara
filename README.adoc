@@ -700,9 +700,9 @@ public fun UsersController(module: NetworkModule): UsersController = with(UserCo
 val controller = UsersController(network)   // `network` is a built NetworkModule
 ----
 
-The generated function is `internal` if any of `builds`, the selected constructor, `from`, or `with`
-is `internal` — otherwise it is `public`. A `public` function can't expose an `internal` type in its
-signature, so the narrowest of the four wins.
+The generated function is `internal` if any of `builds`, the selected constructor, `from`, or the
+`with` / `withNullable` type is `internal` — otherwise it is `public`. A `public` function can't
+expose an `internal` type in its signature, so the narrowest of the four wins.
 
 === Resolving constructor arguments
 
@@ -720,7 +720,8 @@ Each constructor argument is resolved independently, in priority order:
   `arg<Argument>` function to restate it.
 . Otherwise, a uniquely-typed member of `from` — `httpClient` above resolves automatically because
   `NetworkModule.httpClient()` is the only member returning `HttpClient`, exactly. A member that
-  takes one argument is a candidate only under `with` (see below); every other member must take none.
+  takes one argument is a candidate only under `with` / `withNullable` (see below); every other member
+  must take none.
 . Failing an exact match, a uniquely-typed _assignable_ (supertype) member.
 . Otherwise, a compile error recommending the `arg` function to add.
 
@@ -765,6 +766,12 @@ When `with` is set (it defaults to `Unit` — no parameter, everything above unc
   type it is — joins the automatic-resolution candidate pool, on equal footing with a zero-parameter
   member. A zero- and a one-parameter member matching the same argument is an ambiguity error, just
   as two zero-parameter members are.
+
+Use `withNullable` instead of `with` for a nullable parameter — `fun UserSession(module:
+NetworkModule, with: RequestContext?)`. It is `with` in every other respect, except that every
+`arg<Argument>` function must then declare its parameter as `RequestContext?`, only a `from` member
+whose single parameter accepts `null` is an automatic-resolution candidate (a `vararg` never is), and
+setting both `with` and `withNullable` is a compile error.
 
 === `suspend` arguments
 

@@ -50,8 +50,8 @@ private fun readConstructorIndex(annotation: KSAnnotation): Int {
 }
 
 /**
- * How a `@DIFactory`'s `with` value is passed to a candidate provider that takes one parameter -
- * `null` everywhere when `with` is `Unit` (no `with` parameter is generated at all).
+ * How a `@DIFactory`'s `with` / `withNullable` value is passed to a candidate provider that takes
+ * one parameter - `null` everywhere when neither is set (no `with` parameter is generated at all).
  */
 internal sealed class WithArgument {
     /** `provider(with)` - the parameter is non-vararg and the `with` value casts straight into it. */
@@ -69,8 +69,8 @@ internal sealed class WithArgument {
  */
 internal sealed class ArgumentSource {
     /** `module.<functionName>()` - an `arg<Argument>` function on the `@DIFactory` object. Takes the
-     * `with` value (`module.<functionName>(with)`) when `with` is not `Unit` - uniformly, so the
-     * generator reads that off [FactoryModel.withTypeName] rather than from here. */
+     * `with` value (`module.<functionName>(with)`) when `with` / `withNullable` is set - uniformly,
+     * so the generator reads that off [FactoryModel.withTypeName] rather than from here. */
     internal data class FactoryFunction(val functionName: String) : ArgumentSource()
 
     /** `module.<memberName>` - a `val` (or no-arg `fun`, see [ModuleFunction]) on `from`. */
@@ -95,9 +95,10 @@ internal data class FactoryArgumentModel(
 /**
  * A `@DIFactory` object, parsed and every one of `builds`'s selected constructor's arguments resolved.
  *
- * [visibility] is `internal` when any of `builds`, the selected constructor, `from`, or `with` is
- * `internal`, else `public` - it is never the `@DIFactory` object's own visibility (which is always
- * `internal`, see [parseFactory]). It drives whether the generated builder function is `internal`.
+ * [visibility] is `internal` when any of `builds`, the selected constructor, `from`, or the `with` /
+ * `withNullable` type is `internal`, else `public` - it is never the `@DIFactory` object's own
+ * visibility (which is always `internal`, see [parseFactory]). It drives whether the generated
+ * builder function is `internal`.
  *
  * [isSuspend] drives whether the generated builder function itself is `suspend` - see
  * [SuspendMode]: always `false` under `Suspend.Forbid` (structurally, since no `suspend` provider
@@ -111,6 +112,8 @@ internal data class FactoryModel(
     val generatedBaseName: String,
     val buildsClassName: ClassName,
     val fromClassName: ClassName,
+    /** The generated function's `with` parameter type - `null` when neither `with` nor `withNullable`
+     * is set, and itself nullable (`Ctx?`) under `withNullable`. */
     val withTypeName: TypeName?,
     val visibility: Visibility,
     val arguments: List<FactoryArgumentModel>,
@@ -127,14 +130,15 @@ private fun argFunctionName(paramName: String): String = "arg${paramName.replace
 private fun sameType(a: KSType, b: KSType): Boolean = a.isAssignableFrom(b) && b.isAssignableFrom(a)
 
 /**
- * Reads `@DIFactory`'s `with` argument - the type of the second parameter the generated builder
- * function takes. `Unit` (the default) means no such parameter: this returns `null`, and every
- * `with`-dependent branch downstream treats `null` as "no `with`". Same `arguments` ->
+ * Reads one of `@DIFactory`'s `with` / `withNullable` arguments ([argumentName]) - the type of the
+ * second parameter the generated builder function takes. `Unit` is the "unset" sentinel for each
+ * (an explicit `with = Unit::class` reads the same as an omitted one): this returns `null`, and
+ * every `with`-dependent branch downstream treats `null` as "no such parameter". Same `arguments` ->
  * `defaultArguments` fallback as [readSuspendMode]; a `KClass`-typed argument surfaces as a [KSType].
  */
-private fun readWithType(annotation: KSAnnotation): KSType? {
-    val arg = annotation.arguments.find { it.name?.asString() == "with" }
-        ?: annotation.defaultArguments.find { it.name?.asString() == "with" }
+private fun readWithType(annotation: KSAnnotation, argumentName: String): KSType? {
+    val arg = annotation.arguments.find { it.name?.asString() == argumentName }
+        ?: annotation.defaultArguments.find { it.name?.asString() == argumentName }
     val type = arg?.value as? KSType ?: return null
     return type.takeUnless { it.declaration.qualifiedName?.asString() == "kotlin.Unit" }
 }
@@ -148,12 +152,14 @@ private fun readWithType(annotation: KSAnnotation): KSType? {
  * argument (which assigns straight into a vararg, no spread operator) when [withType] is exactly
  * that vararg's array type as seen inside the function body - a dedicated primitive array for a
  * non-nullable primitive element (see [PRIMITIVE_ARRAYS]), else `kotlin.Array` with a type argument
- * assignable to the element type.
+ * assignable to the element type. A `withNullable` value (a nullable [withType]) never matches a
+ * vararg - a vararg's array type is never itself nullable - so it only ever resolves positionally.
  */
 private fun withArgumentFor(param: ParameterModel, withType: KSType): WithArgument? {
     if (!param.isVararg) {
         return if (param.type.isAssignableFrom(withType)) WithArgument.Positional else null
     }
+    if (withType.isMarkedNullable) return null
     val elementType = param.type
     val elementName = elementType.declaration.qualifiedName?.asString()
     val withName = withType.declaration.qualifiedName?.asString()
@@ -209,9 +215,23 @@ internal fun parseFactory(
     val fromArg = annotation.arguments.find { it.name?.asString() == "from" }
     val buildsDecl = (buildsArg?.value as? KSType)?.declaration as? KSClassDeclaration
     val fromDecl = (fromArg?.value as? KSType)?.declaration as? KSClassDeclaration
-    // `null` when `with` is `Unit` (the default) - no `with` parameter on the generated function,
-    // and `arg<Argument>` functions take nothing, exactly as before this argument existed.
-    val withType = readWithType(annotation)
+    // `null` when neither `with` nor `withNullable` is set (both default to `Unit`) - no `with`
+    // parameter on the generated function, and `arg<Argument>` functions take nothing, exactly as
+    // before this argument existed. The two collapse into one `withType` here, `withNullable`
+    // differing only by carrying nullability, so every branch below stays single-valued;
+    // `withArgName` names the one actually written, for diagnostics.
+    val plainWithType = readWithType(annotation, "with")
+    val nullableWithType = readWithType(annotation, "withNullable")
+    if (plainWithType != null && nullableWithType != null) {
+        reportError(
+            "Only one of 'with' and 'withNullable' may be set on @DIFactory - " +
+                "'${objDecl.simpleName.asString()}' sets both.",
+            objDecl,
+        )
+        return null
+    }
+    val withArgName = if (nullableWithType != null) "withNullable" else "with"
+    val withType = plainWithType ?: nullableWithType?.makeNullable()
     val withDecl = withType?.declaration as? KSClassDeclaration
 
     if (buildsDecl == null) {
@@ -337,8 +357,7 @@ internal fun parseFactory(
             if (!paramMatchesWith) {
                 reportError(
                     "'$name' must take exactly one parameter of type " +
-                        "'${withDecl?.simpleName?.asString() ?: withType.declaration.simpleName.asString()}' " +
-                        "(the @DIFactory 'with' type).",
+                        "'${withType.toTypeName().simpleString()}' (the @DIFactory '$withArgName' type).",
                     fn,
                 )
                 continue
@@ -370,8 +389,8 @@ internal fun parseFactory(
     // then rejected) - the same exclusion already applied to arg-functions above, so a resolved
     // FactoryArgumentModel can never end up suspend when the mode is Forbid.
     //
-    // A member takes no parameter (called plainly), or - only when `with` is not `Unit` - takes one
-    // parameter the `with` value can be passed to (see [withArgumentFor]). The two live in one pool:
+    // A member takes no parameter (called plainly), or - only when `with` / `withNullable` is set -
+    // takes one parameter the `with` value can be passed to (see [withArgumentFor]). The two live in one pool:
     // a zero-parameter and a one-parameter member matching the same argument type is an ambiguity,
     // exactly as two zero-parameter members are.
     val candidates: List<Pair<MemberModel, WithArgument?>> = fromModel.allMembers.mapNotNull { member ->

@@ -751,4 +751,99 @@ class DIFactoryValidationTest {
             """
         )
     }
+
+    @Test
+    fun bothWithAndWithNullable_isRejected() {
+        assertRejected(
+            "Only one of 'with' and 'withNullable' may be set on @DIFactory - 'GreeterDIFactory' sets both.",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+            @DIModule
+            interface GreetingModule { val greeting: String }
+            class Greeter(val greeting: String)
+
+            @DIFactory(
+                builds = Greeter::class,
+                from = GreetingModule::class,
+                with = Ctx::class,
+                withNullable = Ctx::class,
+            )
+            internal object GreeterDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun withNullable_argFunctionWithANonNullableParameter_isRejected() {
+        assertRejected(
+            "must take exactly one parameter of type 'Ctx?' (the @DIFactory 'withNullable' type)",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+            @DIModule
+            interface GreetingModule { val greeting: String }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, withNullable = Ctx::class)
+            internal object GreeterDIFactory {
+                fun GreetingModule.argGreeting(ctx: Ctx): String = greeting
+            }
+            """
+        )
+    }
+
+    @Test
+    fun withNullable_nonNullableOneParameterMember_isNotACandidate() {
+        assertRejected(
+            "Cannot resolve argument 'greeting' of 'Greeter' from 'GreetingModule' - add a " +
+                "'fun GreetingModule.argGreeting(with: Ctx?): String' function to 'GreeterDIFactory'.",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+            @DIModule
+            interface GreetingModule {
+                fun greetingFor(ctx: Ctx): String
+            }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, withNullable = Ctx::class)
+            internal object GreeterDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun withNullable_varargMember_isNotACandidate() {
+        assertRejected(
+            "Cannot resolve argument 'text'",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface PathModule {
+                fun join(vararg parts: String): String
+            }
+            class Thing(val text: String)
+
+            @DIFactory(builds = Thing::class, from = PathModule::class, withNullable = Array<String>::class)
+            internal object ThingDIFactory
+            """
+        )
+    }
 }

@@ -27,4 +27,16 @@ class ModuleFactoryWithTest {
 
         assertEquals("/app/dashboard", page.route)
     }
+
+    @Test
+    fun generatedFactory_withNullable_acceptsAValueAndNull() {
+        val network = NetworkModule(
+            baseUrl = Binding.value("https://api.example.com"),
+            httpClient = Binding.single { HttpClient(baseUrl) },
+            endpoint = Binding.factory { path -> "$baseUrl/$path" },
+        )
+
+        assertEquals("Hello, alice", Banner(network, RequestContext("alice")).greeting)
+        assertEquals("Hello, anonymous", Banner(network, null).greeting)
+    }
 }

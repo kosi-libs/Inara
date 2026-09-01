@@ -517,6 +517,42 @@ class DIFactoryTest {
     }
 
     @Test
+    fun withNullableArgument_generatesANullableParameterPassedToArgFunctionsAndOneParameterMembers() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+
+            @DIModule
+            interface GreetingModule {
+                fun localeFor(ctx: Ctx?): String
+            }
+
+            class Greeter(val locale: String, val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, withNullable = Ctx::class)
+            internal object GreeterDIFactory {
+                fun GreetingModule.argGreeting(ctx: Ctx?): String = ctx?.toString() ?: "anon"
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("public fun Greeter(module: GreetingModule, with: Ctx?): Greeter" in generated, generated)
+        assertTrue("kotlin.with(GreeterDIFactory)" in generated, generated)
+        assertTrue("locale = module.localeFor(with)," in generated, generated)
+        assertTrue("greeting = module.argGreeting(with)," in generated, generated)
+    }
+
+    @Test
     fun defaultWithUnit_leavesTheGeneratedShapeUnchanged() {
         val source = SourceFile.kotlin(
             "Factory.kt",
