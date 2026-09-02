@@ -21,11 +21,25 @@ class ModuleFactoryWithTest {
 
     @Test
     fun generatedFactory_resolvesAOneParameterModuleMemberWithTheCallTimeArgument() {
-        val routing = RoutingModule(route = Binding.factory { segment -> "/app/$segment" })
+        val routing = RoutingModule(route = Binding.factory { segment -> "/app/${segment.value}" })
 
-        val page = Page(routing, "dashboard")
+        val page = Page(routing, Segment("dashboard"))
 
         assertEquals("/app/dashboard", page.route)
+    }
+
+    @Test
+    fun generatedFactory_resolvesAConstructorArgumentDirectlyFromTheCallTimeValue() {
+        val network = NetworkModule(
+            baseUrl = Binding.value("https://api.example.com"),
+            httpClient = Binding.single { HttpClient(baseUrl) },
+            endpoint = Binding.factory { path -> "$baseUrl/$path" },
+        )
+
+        val notice = Notice(network, RequestContext("alice"))
+
+        assertEquals("alice", notice.context.userId)
+        assertEquals("https://api.example.com", notice.httpClient.baseUrl)
     }
 
     @Test

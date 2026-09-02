@@ -429,11 +429,11 @@ class DIFactoryTest {
 
             @DIModule
             interface NetworkModule {
-                val baseUrl: String
+                val port: Int
                 fun clientFor(scope: String): HttpClient
             }
 
-            class Controller(val client: HttpClient, val base: String, val tag: String)
+            class Controller(val client: HttpClient, val port: Int, val tag: String)
 
             @DIFactory(builds = Controller::class, from = NetworkModule::class, with = String::class)
             internal object ControllerDIFactory {
@@ -449,7 +449,7 @@ class DIFactoryTest {
         assertTrue("public fun Controller(module: NetworkModule, with: String): Controller" in generated, generated)
         assertTrue("kotlin.with(ControllerDIFactory)" in generated, generated)
         assertTrue("client = module.clientFor(with)," in generated, generated)
-        assertTrue("base = module.baseUrl," in generated, generated)
+        assertTrue("port = module.port," in generated, generated)
         assertTrue("tag = module.argTag(with)," in generated, generated)
     }
 
@@ -481,6 +481,149 @@ class DIFactoryTest {
         val generated = compilation.generatedSource("sample/factory", "InaraThingDIFactory.kt")
         assertTrue("with: Array<String>" in generated, generated)
         assertTrue("text = module.join(parts = with)," in generated, generated)
+    }
+
+    @Test
+    fun withArgument_resolvesAnAssignableConstructorArgumentFromTheCallTimeValue() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface EmptyModule { val unrelated: Int }
+
+            class Greeter(val name: String)
+
+            @DIFactory(builds = Greeter::class, from = EmptyModule::class, with = String::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("public fun Greeter(module: EmptyModule, with: String): Greeter" in generated, generated)
+        assertTrue("name = with," in generated, generated)
+    }
+
+    @Test
+    fun withArgument_callTimeValueOutranksADefaultAndASameTypedMember() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule { val greeting: String }
+
+            class Greeter(val greeting: String = "hi")
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = String::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("greeting = with," in generated, generated)
+    }
+
+    @Test
+    fun withArgument_argFunctionOutranksTheCallTimeValue() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule { val unrelated: Int }
+
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = String::class)
+            internal object GreeterDIFactory {
+                fun GreetingModule.argGreeting(with: String): String = with.uppercase()
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("greeting = module.argGreeting(with)," in generated, generated)
+    }
+
+    @Test
+    fun withArgument_varargArgumentIsNotResolvedFromTheCallTimeValue() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface EmptyModule { val unrelated: Int }
+
+            class Thing(vararg val tags: String)
+
+            @DIFactory(builds = Thing::class, from = EmptyModule::class, with = String::class)
+            internal object ThingDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraThingDIFactory.kt")
+        assertTrue("kotlin.with(ThingDIFactory) {" in generated, generated)
+        assertTrue("Thing()" in generated, generated)
+        assertTrue("tags =" !in generated, generated)
+    }
+
+    @Test
+    fun withNullableArgument_resolvesANullableConstructorArgumentFromTheCallTimeValue() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+
+            @DIModule
+            interface EmptyModule { val unrelated: Int }
+
+            class Screen(val ctx: Ctx?)
+
+            @DIFactory(builds = Screen::class, from = EmptyModule::class, withNullable = Ctx::class)
+            internal object ScreenDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraScreenDIFactory.kt")
+        assertTrue("public fun Screen(module: EmptyModule, with: Ctx?): Screen" in generated, generated)
+        assertTrue("ctx = with," in generated, generated)
     }
 
     @Test

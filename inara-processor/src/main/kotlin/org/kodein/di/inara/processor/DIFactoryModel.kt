@@ -64,14 +64,19 @@ internal sealed class WithArgument {
 
 /**
  * Where a `@DIFactory`-generated constructor argument's value comes from: an `arg<Argument>`
- * extension function declared on the `@DIFactory` object itself, or a member of the `from` module
- * resolved automatically (see [parseFactory]).
+ * extension function declared on the `@DIFactory` object itself, the generated function's own
+ * call-time `with` value, or a member of the `from` module resolved automatically (see
+ * [parseFactory]).
  */
 internal sealed class ArgumentSource {
     /** `module.<functionName>()` - an `arg<Argument>` function on the `@DIFactory` object. Takes the
      * `with` value (`module.<functionName>(with)`) when `with` / `withNullable` is set - uniformly,
      * so the generator reads that off [FactoryModel.withTypeName] rather than from here. */
     internal data class FactoryFunction(val functionName: String) : ArgumentSource()
+
+    /** `with` - the generated function's own call-time parameter, passed straight through. Only ever
+     * produced when `with` / `withNullable` is set, so the generator's `with` parameter exists. */
+    internal data object WithValue : ArgumentSource()
 
     /** `module.<memberName>` - a `val` (or no-arg `fun`, see [ModuleFunction]) on `from`. */
     internal data class ModuleProperty(val memberName: String) : ArgumentSource()
@@ -299,6 +304,10 @@ internal fun parseFactory(
     val omissibleParams = ctor.parameters
         .filter { it.hasDefault || it.isVararg }
         .mapTo(mutableSetOf()) { it.name!!.asString() }
+    // `ctorParams` maps a vararg to its *element* type, so a same-typed `with` value would appear
+    // assignable to it - but a named vararg argument takes the array, not one element. A vararg is
+    // therefore never resolved from the `with` value; it keeps falling through to its own default.
+    val varargParams = ctor.parameters.filter { it.isVararg }.mapTo(mutableSetOf()) { it.name!!.asString() }
 
     // Every declaration in the object must be a well-shaped `fun M.arg<Argument>(): T` - collect
     // the valid ones (paramName -> the function itself, so its `suspend`-ness can be read later)
@@ -380,11 +389,14 @@ internal fun parseFactory(
     }
 
     // Every constructor argument must be uniquely resolvable, in priority order: an arg function
-    // declared above, else the parameter's own default (see `omissibleParams` - the generated call
-    // just omits it), else a unique exactly-typed module member, else a unique assignable-typed
-    // module member, else an error. The default outranks any module member on purpose: it is a
-    // deliberate, local statement of what the argument should be absent an override, whereas a
-    // module match is by type alone and can be coincidental.
+    // declared above, else the call-time `with` value when its type fits the argument, else the
+    // parameter's own default (see `omissibleParams` - the generated call just omits it), else a
+    // unique exactly-typed module member, else a unique assignable-typed module member, else an
+    // error. The `with` value outranks the default and the module pool: the caller supplied it for
+    // this very call, which is more specific than a compile-time default and more deliberate than a
+    // type match. The default in turn outranks any module member: it is a deliberate, local
+    // statement of what the argument should be absent an override, whereas a module match is by type
+    // alone and can be coincidental.
     // Under Suspend.Forbid, a suspend candidate is excluded here entirely (rather than resolved and
     // then rejected) - the same exclusion already applied to arg-functions above, so a resolved
     // FactoryArgumentModel can never end up suspend when the mode is Forbid.
@@ -411,6 +423,16 @@ internal fun parseFactory(
                 ArgumentSource.FactoryFunction(resolvedArgFunction.simpleName.asString()),
                 isSuspend = Modifier.SUSPEND in resolvedArgFunction.modifiers,
             )
+            continue
+        }
+
+        // The call-time value itself, when it fits the argument - above the parameter's own default
+        // and above any module member (see the priority comment above). It is a single named source
+        // rather than a pool, so it wins outright and is never part of an ambiguity. A vararg is
+        // excluded (see `varargParams`). `isSuspend = false`: a plain parameter is never a
+        // suspending provider, so this holds under `Suspend.Forbid` too.
+        if (withType != null && paramName !in varargParams && paramType.isAssignableFrom(withType)) {
+            arguments += FactoryArgumentModel(paramName, ArgumentSource.WithValue, isSuspend = false)
             continue
         }
 

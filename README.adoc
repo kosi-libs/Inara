@@ -713,6 +713,10 @@ Each constructor argument is resolved independently, in priority order:
   thing a `@DIFactory` object may declare; anything else is a compile error. It must be `public` or
   `internal` — the generated top-level function calls it from outside the object, so a `private` one
   is a compile error too.
+. Otherwise, under `with` / `withNullable` (see below), the call-time value itself, when its type is
+  assignable to the argument. The caller supplied it for this very call, so it outranks both the
+  argument's own default and any `from` member — it shadows a same-typed member rather than tying
+  with it. A `vararg` is never resolved this way.
 . Otherwise, if the parameter can be omitted from the call — it declares a default value, or is a
   `vararg` — it is left out, and Kotlin applies the default (an empty array for a `vararg`). A
   default written on the `builds` class thus outranks any `from` member: it is a deliberate local
@@ -760,6 +764,11 @@ public fun UserSession(module: NetworkModule, with: RequestContext): UserSession
 
 When `with` is set (it defaults to `Unit` — no parameter, everything above unchanged):
 
+* A constructor argument whose type the `with` value is assignable to resolves straight to it, ahead
+  of that argument's default and any `from` member (see step 2 of
+  <<resolving-constructor-arguments,Resolving constructor arguments>>) — shadowing a same-typed
+  member rather than needing a pass-through `arg` function. A `vararg` argument is never resolved
+  this way.
 * Every `arg<Argument>` function must take exactly one parameter of the `with` type — no parameter,
   or another type, is a compile error.
 * A member of `from` taking a single parameter the `with` value fits into — or a `vararg` whose array

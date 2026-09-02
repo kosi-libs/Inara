@@ -28,19 +28,23 @@ public annotation class DIModule(val composed: Boolean = false)
  * The processor generates a top-level `fun <Builds>(module: <From>): <Builds>` resolving each
  * argument of [builds]'s selected constructor (see [constructorIndex]) off [from], in priority
  * order: an `arg<Argument>` extension function declared on the annotated object (`fun
- * <From>.argFoo(): T`, for a constructor argument named `foo`) if present, else - if the parameter
- * can be left out of the call, i.e. it declares a default value or is a `vararg` - that default,
- * else a uniquely-typed member of [from] (an exact type match, else a subtype match), else a compile
- * error recommending the `arg` function to add. A parameter's own default thus outranks any [from]
- * member, and a defaulted parameter needs no `arg` function. The object may declare nothing but such
- * `arg` functions - anything else is a compile error.
+ * <From>.argFoo(): T`, for a constructor argument named `foo`) if present, else - when [with] /
+ * [withNullable] is set - the call-time value itself if its type fits the argument, else - if the
+ * parameter can be left out of the call, i.e. it declares a default value or is a `vararg` - that
+ * default, else a uniquely-typed member of [from] (an exact type match, else a subtype match), else
+ * a compile error recommending the `arg` function to add. The call-time value thus outranks a
+ * parameter's default and any [from] member; the default in turn outranks any [from] member, and a
+ * defaulted parameter needs no `arg` function. The object may declare nothing but such `arg`
+ * functions - anything else is a compile error.
  *
  * With [with] (or [withNullable]) set to a type other than `Unit`, the generated function takes a
  * second parameter `fun <Builds>(module: <From>, with: <With>): <Builds>` - nullable under
- * [withNullable] - that value is passed to every `arg<Argument>` function (each of which must then
- * take exactly one parameter of that type) and to any member of [from] taking a single castable
- * parameter, and such one-parameter members join the zero-parameter ones in the automatic-resolution
- * candidate pool. Setting both [with] and [withNullable] is a compile error. See [with].
+ * [withNullable] - that value resolves any constructor argument its type fits (ahead of the
+ * argument's default and the module), is passed to every `arg<Argument>` function (each of which
+ * must then take exactly one parameter of that type), and is passed to any member of [from] taking a
+ * single castable parameter, such one-parameter members joining the zero-parameter ones in the
+ * automatic-resolution candidate pool. Setting both [with] and [withNullable] is a compile error.
+ * See [with].
  *
  * @param builds The class to construct. Must be a concrete (non-abstract, non-`sealed`) class with
  *   the constructor selected by [constructorIndex] public or internal, itself public or internal.
@@ -49,17 +53,20 @@ public annotation class DIModule(val composed: Boolean = false)
  *   a value that isn't knowable at module level (a request context, a screen route, ...). `Unit`
  *   (the default) generates no such parameter - the function stays `fun <Builds>(module: <From>)`
  *   and `arg<Argument>` functions take nothing, exactly as if this argument didn't exist. Any other
- *   type adds a `with: <With>` parameter: every `arg<Argument>` function on the annotated object
- *   must then declare exactly one parameter of that type (no parameter, or another type, is a
- *   compile error), and a member of [from] taking a single parameter the `with` value casts into -
- *   or a `vararg` whose array type it is - becomes eligible for automatic resolution on equal
- *   footing with a zero-parameter member. Use [withNullable] instead for a nullable parameter.
+ *   type adds a `with: <With>` parameter: a constructor argument whose type it is assignable to
+ *   resolves to it directly (ahead of that argument's own default and any [from] member, so it
+ *   shadows a same-typed member - a `vararg` is never resolved this way), every `arg<Argument>`
+ *   function on the annotated object must then declare exactly one parameter of that type (no
+ *   parameter, or another type, is a compile error), and a member of [from] taking a single
+ *   parameter the `with` value casts into - or a `vararg` whose array type it is - becomes eligible
+ *   for automatic resolution on equal footing with a zero-parameter member. Use [withNullable]
+ *   instead for a nullable parameter.
  * @param withNullable Exactly [with], except the generated parameter's type is nullable (`with:
- *   <With>?`): every `arg<Argument>` function must then declare its parameter as `<With>?`, and only
- *   a [from] member whose single parameter accepts `null` is an automatic-resolution candidate (a
- *   `vararg` never is - its array type is never nullable). `Unit` (the default) means unset, exactly
- *   as for [with] - it is not a `Unit?` parameter. Setting both [with] and [withNullable] is a
- *   compile error.
+ *   <With>?`): it resolves only a constructor argument that is itself nullable, every `arg<Argument>`
+ *   function must then declare its parameter as `<With>?`, and only a [from] member whose single
+ *   parameter accepts `null` is an automatic-resolution candidate (a `vararg` never is - its array
+ *   type is never nullable). `Unit` (the default) means unset, exactly as for [with] - it is not a
+ *   `Unit?` parameter. Setting both [with] and [withNullable] is a compile error.
  * @param suspend Whether a `suspend` provider - a `suspend` `arg` function, or a `suspend` member
  *   of [from] - may be used to resolve an argument, and whether the generated function itself is
  *   `suspend`. See [Suspend].

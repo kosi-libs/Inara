@@ -9,6 +9,7 @@ import com.squareup.kotlinpoet.ksp.addOriginatingKSFile
 import org.kodein.di.inara.processor.ArgumentSource.FactoryFunction
 import org.kodein.di.inara.processor.ArgumentSource.ModuleFunction
 import org.kodein.di.inara.processor.ArgumentSource.ModuleProperty
+import org.kodein.di.inara.processor.ArgumentSource.WithValue
 import org.kodein.di.inara.processor.WithArgument.Named
 import org.kodein.di.inara.processor.WithArgument.Positional
 
@@ -69,6 +70,7 @@ private fun buildFactoryFunction(model: FactoryModel): FunSpec {
                         is FactoryFunction ->
                             if (withArg != null) CodeBlock.of("module.%N(%L)", source.functionName, withArg)
                             else CodeBlock.of("module.%N()", source.functionName)
+                        is WithValue -> checkNotNull(withArg) { "WithValue without a `with` parameter" }
                         is ModuleProperty -> CodeBlock.of("module.%N", source.memberName)
                         is ModuleFunction -> when (val w = source.withArgument) {
                             null -> CodeBlock.of("module.%N()", source.memberName)

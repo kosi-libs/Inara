@@ -22,18 +22,21 @@ internal object UserSessionDIFactory {
 }
 
 /**
- * The automatic-resolution side of `with`: [RoutingModule.route] takes a single `String` the `with`
+ * The automatic-resolution side of `with`: [RoutingModule.route] takes a single [Segment] the `with`
  * value casts into, so it resolves [Page.route] with no `arg` function - `Page(module, with)` calls
- * `module.route(with)`.
+ * `module.route(with)`. [Segment] is a wrapper rather than a bare `String` so the `with` value is
+ * not itself assignable to `Page.route` (which would then resolve straight from the call).
  */
+data class Segment(val value: String)
+
 @DIModule
 interface RoutingModule {
-    fun route(segment: String): String
+    fun route(segment: Segment): String
 }
 
 class Page(val route: String)
 
-@DIFactory(builds = Page::class, from = RoutingModule::class, with = String::class)
+@DIFactory(builds = Page::class, from = RoutingModule::class, with = Segment::class)
 internal object PageDIFactory
 
 /**
@@ -51,3 +54,16 @@ internal object BannerDIFactory {
     fun NetworkModule.argGreeting(context: RequestContext?): String =
         context?.let { "Hello, ${it.userId}" } ?: "Hello, anonymous"
 }
+
+/**
+ * The `with` value resolving a constructor argument directly: `Notice.context` has the same type as
+ * the call-time value and no `arg` function, so `Notice(module, with)` passes `with` straight into
+ * it. `httpClient` still resolves automatically off the module.
+ */
+class Notice(
+    val context: RequestContext,
+    val httpClient: HttpClient,
+)
+
+@DIFactory(builds = Notice::class, from = NetworkModule::class, with = RequestContext::class)
+internal object NoticeDIFactory

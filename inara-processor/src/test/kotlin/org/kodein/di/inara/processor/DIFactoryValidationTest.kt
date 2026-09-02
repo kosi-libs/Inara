@@ -696,10 +696,10 @@ class DIFactoryValidationTest {
 
             @DIModule
             interface GreetingModule {
-                val greeting: String
-                fun greetingFor(scope: String): String
+                val count: Int
+                fun countFor(scope: String): Int
             }
-            class Greeter(val greeting: String)
+            class Greeter(val count: Int)
 
             @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = String::class)
             internal object GreeterDIFactory
@@ -843,6 +843,27 @@ class DIFactoryValidationTest {
 
             @DIFactory(builds = Thing::class, from = PathModule::class, withNullable = Array<String>::class)
             internal object ThingDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun withNullable_nonNullableConstructorArgument_isNotResolvedFromTheCallTimeValue() {
+        assertRejected(
+            "Cannot resolve argument 'ctx' of 'Screen' from 'EmptyModule'",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+            @DIModule
+            interface EmptyModule { val unrelated: Int }
+            class Screen(val ctx: Ctx)
+
+            @DIFactory(builds = Screen::class, from = EmptyModule::class, withNullable = Ctx::class)
+            internal object ScreenDIFactory
             """
         )
     }
