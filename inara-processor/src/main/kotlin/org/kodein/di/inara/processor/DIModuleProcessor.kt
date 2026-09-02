@@ -18,11 +18,12 @@ import com.squareup.kotlinpoet.ksp.writeTo
  * are bound exactly like the module's own. See [parseModule] for the validation rules and
  * [generateModuleFile] for the generated shape(s).
  *
- * For every `public` or `internal` object annotated with `@DIFactory`, generates a builder function
- * for the class it `builds` - an extension on that object - resolving each argument of that class's
- * selected constructor (see `constructorIndex`) off an instance of the `@DIModule` interface it's
- * declared to build `from` - so the built class itself never needs to know Inara exists. See
- * [parseFactory] for the resolution rules and [generateFactoryFile] for the generated shape.
+ * For every `public` or `internal` object annotated with `@DIFactory`, generates - per `@DIFactory`
+ * annotation (it is `@Repeatable`) - a builder function for the class it `builds`, an extension on
+ * that object, resolving each argument of that class's selected constructor (see `constructorIndex`)
+ * off an instance of the `@DIModule` interface it's declared to build `from` - so the built class
+ * itself never needs to know Inara exists. All of one object's builder functions land in one file.
+ * See [parseFactories] for the resolution rules and [generateFactoryFile] for the generated shape.
  */
 public class DIModuleProcessor(
     private val codeGenerator: CodeGenerator,
@@ -51,7 +52,13 @@ public class DIModuleProcessor(
             generateModuleFile(model).writeTo(codeGenerator, aggregating = false)
         }
 
-        for (symbol in resolver.getSymbolsWithAnnotation(DI_FACTORY_ANNOTATION)) {
+        // `@DIFactory` is `@Repeatable`. KSP 2 surfaces the object once here and lists the individual
+        // annotations on it; the `.Container` query and the `seen` guard are belt-and-braces for
+        // KSP versions/platforms that instead report the synthetic container symbol.
+        val seenFactoryObjects = mutableSetOf<String>()
+        val factorySymbols = resolver.getSymbolsWithAnnotation(DI_FACTORY_ANNOTATION) +
+            resolver.getSymbolsWithAnnotation(DI_FACTORY_CONTAINER_ANNOTATION)
+        for (symbol in factorySymbols) {
             if (!symbol.validate()) {
                 deferred += symbol
                 continue
@@ -62,9 +69,10 @@ public class DIModuleProcessor(
                 logger.error("@DIFactory can only be applied to objects.", symbol)
                 continue
             }
+            if (!seenFactoryObjects.add(objDecl.qualifiedName?.asString() ?: continue)) continue
 
-            val model = parseFactory(objDecl, logger, moduleCache) ?: continue
-            generateFactoryFile(model).writeTo(codeGenerator, aggregating = false)
+            val models = parseFactories(objDecl, logger, moduleCache)
+            if (models.isNotEmpty()) generateFactoryFile(models).writeTo(codeGenerator, aggregating = false)
         }
 
         return deferred

@@ -14,11 +14,12 @@ import org.kodein.di.inara.processor.WithArgument.Named
 import org.kodein.di.inara.processor.WithArgument.Positional
 
 /**
- * Emits the generated builder function for [model]: an **extension function on the `@DIFactory`
- * object**, named after `builds`, taking a single `from`-typed `module` parameter, that resolves
- * every constructor argument off `module` (see [FactoryModel.arguments]). The object being the
- * extension receiver is what puts its own `arg<Argument>` extension functions in scope - no
- * `with(<object>) { ... }` wrapper - and makes the function discoverable from the object.
+ * Emits one file for a `@DIFactory` object holding one builder function per [models] entry (one per
+ * `@DIFactory` annotation - it is `@Repeatable`). Each is an **extension function on the object**,
+ * named after its `builds`, taking a single `from`-typed `module` parameter, that resolves every
+ * constructor argument off `module` (see [FactoryModel.arguments]). The object being the extension
+ * receiver is what puts its own `arg<Argument>` extension functions in scope - no `with(<object>) {
+ * ... }` wrapper - and makes the functions discoverable from the object.
  *
  * The file is named after the `@DIFactory` object rather than `builds`, and lives in the object's
  * own package - two different `@DIFactory` objects could otherwise target `builds` classes that
@@ -27,9 +28,10 @@ import org.kodein.di.inara.processor.WithArgument.Positional
  * name-uniqueness guarantee only covers _top-level_ objects - two `Fac` objects nested in different
  * enclosing classes of one package would otherwise both claim `InaraFac.kt`.
  */
-internal fun generateFactoryFile(model: FactoryModel): FileSpec {
-    val fileBuilder = FileSpec.builder(model.factoryClassName.packageName, inaraName(model.generatedBaseName))
-    fileBuilder.addFunction(buildFactoryFunction(model))
+internal fun generateFactoryFile(models: List<FactoryModel>): FileSpec {
+    require(models.isNotEmpty()) { "generateFactoryFile called with no models" }
+    val fileBuilder = FileSpec.builder(models[0].factoryClassName.packageName, inaraName(models[0].generatedBaseName))
+    models.forEach { fileBuilder.addFunction(buildFactoryFunction(it)) }
     return fileBuilder.build()
 }
 

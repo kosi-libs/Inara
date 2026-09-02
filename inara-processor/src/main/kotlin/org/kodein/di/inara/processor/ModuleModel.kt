@@ -18,6 +18,9 @@ import com.squareup.kotlinpoet.ksp.toClassName
 
 internal const val DI_MODULE_ANNOTATION = "org.kodein.di.inara.DIModule"
 internal const val DI_FACTORY_ANNOTATION = "org.kodein.di.inara.DIFactory"
+/** JVM synthetic container the compiler wraps repeated `@DIFactory` annotations in - KSP may surface
+ * this instead of the individual entries, so [parseFactories] unwraps it. */
+internal const val DI_FACTORY_CONTAINER_ANNOTATION = "org.kodein.di.inara.DIFactory.Container"
 
 /**
  * One parameter of a function member. [type] is the *element* type for a vararg parameter (as

@@ -66,7 +66,7 @@ internal sealed class WithArgument {
  * Where a `@DIFactory`-generated constructor argument's value comes from: an `arg<Argument>`
  * extension function declared on the `@DIFactory` object itself, the generated function's own
  * call-time `with` value, or a member of the `from` module resolved automatically (see
- * [parseFactory]).
+ * [resolveFactory]).
  */
 internal sealed class ArgumentSource {
     /** `module.<functionName>()` - an `arg<Argument>` function on the `@DIFactory` object. Takes the
@@ -101,7 +101,7 @@ internal data class FactoryArgumentModel(
  * A `@DIFactory` object, parsed and every one of `builds`'s selected constructor's arguments resolved.
  *
  * [visibility] equals the `@DIFactory` object's own visibility (`public` or `internal`) - the
- * generated function is an extension on that object, so it can be no more visible. [parseFactory]
+ * generated function is an extension on that object, so it can be no more visible. [parseFactories]
  * rejects a `public` object whose `builds`, selected constructor, `from`, or `with` / `withNullable`
  * type is `internal` (that function's signature couldn't compile) rather than silently narrowing.
  *
@@ -178,24 +178,46 @@ private fun withArgumentFor(param: ParameterModel, withType: KSType): WithArgume
     return if (matches) WithArgument.Named(param.name) else null
 }
 
+/** One `@DIFactory` annotation on an object, validated up to (not including) constructor-argument
+ * resolution - the input [resolveFactory] turns into a [FactoryModel]. */
+internal class FactoryContext(
+    val buildsDecl: KSClassDeclaration,
+    val fromDecl: KSClassDeclaration,
+    val fromModel: ModuleModel,
+    val buildsName: String,
+    val fromName: String,
+    val fromType: KSType,
+    val ctorParams: Map<String, KSType>,
+    val omissibleParams: Set<String>,
+    val varargParams: Set<String>,
+    val withType: KSType?,
+    val withDecl: KSClassDeclaration?,
+    val withArgName: String,
+    val suspendMode: SuspendMode,
+    val originatingFiles: List<KSFile>,
+)
+
 /**
- * Validates [objDecl] against every `@DIFactory` rule, resolves every one of `builds`'s selected
- * constructor's arguments (see `constructorIndex`), and builds a [FactoryModel] out of it.
+ * Validates [objDecl] against every `@DIFactory` rule and builds one [FactoryModel] per `@DIFactory`
+ * annotation on it (the annotation is `@Repeatable`), resolving each `builds` constructor's
+ * arguments (see `constructorIndex`). An `arg<Argument>` function declared on the object is shared
+ * across the annotations, matched by extension receiver and parameter name; it is an error only if
+ * it fits none of them.
  *
  * Every violation found is reported through [logger] before returning - so a single compilation
- * surfaces every problem at once, rather than one error per run. Returns `null` if the declaration
- * is invalid.
+ * surfaces every problem at once. Returns an empty list if anything about the object is invalid; a
+ * valid object always yields at least one model.
  *
  * Two shapes are explicitly unsupported and neither validated against nor specially handled: a
  * `vararg` parameter on `builds`'s selected constructor, and a generic `builds` class used as more
  * than a raw type. Either surfaces as an ordinary Kotlin compile error in the generated file rather
  * than a dedicated diagnostic here.
  */
-internal fun parseFactory(
+internal fun parseFactories(
     objDecl: KSClassDeclaration,
     logger: KSPLogger,
     moduleCache: MutableMap<String, ModuleModel?>,
-): FactoryModel? {
+): List<FactoryModel> {
     var hasError = false
     fun reportError(message: String, node: KSNode) {
         logger.error(message, node)
@@ -204,17 +226,58 @@ internal fun parseFactory(
 
     if (objDecl.classKind != ClassKind.OBJECT) {
         reportError("Only objects may be annotated with @DIFactory.", objDecl)
-        return null
+        return emptyList()
     }
     val objVisibility = objDecl.getVisibility()
     if (objVisibility !in setOf(Visibility.PUBLIC, Visibility.INTERNAL)) {
         reportError("A @DIFactory object must be public or internal.", objDecl)
-        return null
+        return emptyList()
     }
 
-    val annotation = objDecl.annotations.first {
-        it.annotationType.resolve().declaration.qualifiedName?.asString() == DI_FACTORY_ANNOTATION
+    fun KSAnnotation.fqn() = annotationType.resolve().declaration.qualifiedName?.asString()
+    // KSP 2 lists the repeated annotations individually; the `.Container` unwrap is belt-and-braces
+    // for KSP versions/platforms that instead expose the synthetic JVM container.
+    val annotations = objDecl.annotations.filter { it.fqn() == DI_FACTORY_ANNOTATION }.toList() +
+        objDecl.annotations.filter { it.fqn() == DI_FACTORY_CONTAINER_ANNOTATION }.flatMap { container ->
+            (container.arguments.firstOrNull { it.name?.asString() == "value" }?.value as? List<*>)
+                .orEmpty().filterIsInstance<KSAnnotation>()
+        }
+
+    val contexts: List<FactoryContext> = annotations.mapNotNull {
+        parseFactoryContext(objDecl, it, objVisibility, moduleCache, logger, ::reportError)
     }
+    val argFunctionMaps = validateArgFunctions(objDecl, contexts, objVisibility, ::reportError)
+    val models = contexts.zip(argFunctionMaps).map { (context, argFunctions) ->
+        resolveFactory(objDecl, objVisibility, context, argFunctions, ::reportError)
+    }
+
+    // Two annotations that would emit the same `fun Obj.Builds(module: From[, with: W])` - identical
+    // `builds`, `from` and `with` type - collide as a redeclaration. A differing `from` (a distinct
+    // `module` parameter type) or a differing `with` (a real overload) is fine.
+    models.groupBy { Triple(it.buildsClassName, it.fromClassName, it.withTypeName) }
+        .values.filter { it.size > 1 }
+        .forEach { dups ->
+            val m = dups.first()
+            val withPart = m.withTypeName?.let { ", with: ${it.simpleString()}" } ?: ""
+            reportError(
+                "'${objDecl.simpleName.asString()}' has ${dups.size} @DIFactory annotations that all generate " +
+                    "'fun ${objDecl.simpleName.asString()}.${m.buildsClassName.simpleName}(module: " +
+                    "${m.fromClassName.simpleName}$withPart): ${m.buildsClassName.simpleName}'.",
+                objDecl,
+            )
+        }
+
+    return if (hasError) emptyList() else models
+}
+
+private fun parseFactoryContext(
+    objDecl: KSClassDeclaration,
+    annotation: KSAnnotation,
+    objVisibility: Visibility,
+    moduleCache: MutableMap<String, ModuleModel?>,
+    logger: KSPLogger,
+    reportError: (String, KSNode) -> Unit,
+): FactoryContext? {
     val suspendMode = readSuspendMode(annotation)
     val constructorIndex = readConstructorIndex(annotation)
     val buildsArg = annotation.arguments.find { it.name?.asString() == "builds" }
@@ -310,10 +373,77 @@ internal fun parseFactory(
     // therefore never resolved from the `with` value; it keeps falling through to its own default.
     val varargParams = ctor.parameters.filter { it.isVararg }.mapTo(mutableSetOf()) { it.name!!.asString() }
 
-    // Every declaration in the object must be a well-shaped `fun M.arg<Argument>(): T` - collect
-    // the valid ones (paramName -> the function itself, so its `suspend`-ness can be read later)
-    // and reject anything else.
-    val argFunctions = mutableMapOf<String, KSFunctionDeclaration>()
+    // The generated function is an extension on the `@DIFactory` object, so it is exactly as visible
+    // as the object. A `public` function still can't name an `internal` type in its signature, so a
+    // `public` object whose `from`, `builds`, selected constructor, or `with` / `withNullable` type
+    // is `internal` can't work - report that here rather than emitting a file `kotlinc` then rejects.
+    if (objVisibility == Visibility.PUBLIC) {
+        val internalDeps = buildList {
+            if (fromDecl.getVisibility() == Visibility.INTERNAL) add("the 'from' module '$fromName'")
+            if (buildsDecl.getVisibility() == Visibility.INTERNAL) add("the 'builds' class '$buildsName'")
+            if (ctor.getVisibility() == Visibility.INTERNAL) add("its selected constructor")
+            if (withDecl?.getVisibility() == Visibility.INTERNAL) {
+                add("the '$withArgName' type '${withDecl.simpleName.asString()}'")
+            }
+        }
+        if (internalDeps.isNotEmpty()) {
+            val isAre = if (internalDeps.size == 1) "is" else "are"
+            val itThem = if (internalDeps.size == 1) "it" else "them"
+            reportError(
+                "Cannot generate the 'public' factory function '${objDecl.simpleName.asString()}.$buildsName' " +
+                    "because ${internalDeps.joinToString(", ")} $isAre 'internal'. Make " +
+                    "'${objDecl.simpleName.asString()}' 'internal', or make $itThem 'public'.",
+                objDecl,
+            )
+            return null
+        }
+    }
+
+    val originatingFiles: List<KSFile> = listOfNotNull(
+        objDecl.containingFile,
+        buildsDecl.containingFile,
+        fromDecl.containingFile,
+        withDecl?.containingFile,
+    ) + fromModel.ancestorDeclarations.mapNotNull { it.containingFile }
+
+    return FactoryContext(
+        buildsDecl = buildsDecl,
+        fromDecl = fromDecl,
+        fromModel = fromModel,
+        buildsName = buildsName,
+        fromName = fromName,
+        fromType = fromType,
+        ctorParams = ctorParams,
+        omissibleParams = omissibleParams,
+        varargParams = varargParams,
+        withType = withType,
+        withDecl = withDecl,
+        withArgName = withArgName,
+        suspendMode = suspendMode,
+        originatingFiles = originatingFiles,
+    )
+}
+
+/**
+ * The object may declare nothing but well-shaped `fun <From>.arg<Argument>(): T` functions. Each is
+ * shared across every [FactoryContext] whose `from` is its extension receiver and whose selected
+ * constructor has a parameter of that name and type; it is rejected only if it fits none. Returns
+ * one `paramName -> function` map per entry of [contexts], in the same order.
+ */
+private fun validateArgFunctions(
+    objDecl: KSClassDeclaration,
+    contexts: List<FactoryContext>,
+    objVisibility: Visibility,
+    reportError: (String, KSNode) -> Unit,
+): List<Map<String, KSFunctionDeclaration>> {
+    val argFunctions = List(contexts.size) { mutableMapOf<String, KSFunctionDeclaration>() }
+    val objName = objDecl.simpleName.asString()
+
+    fun notAnArgFunction(name: String, node: KSNode) = reportError(
+        "A @DIFactory object may only declare 'fun <Module>.arg<Argument>(): T' functions - '$name' is not one.",
+        node,
+    )
+
     for (decl in objDecl.declarations) {
         // `declarations` includes the object's own synthetic no-arg constructor - not a real
         // member, skip it silently rather than rejecting it as an invalid one.
@@ -321,37 +451,21 @@ internal fun parseFactory(
 
         val fn = decl as? KSFunctionDeclaration
         if (fn == null) {
-            reportError(
-                "A @DIFactory object may only declare 'fun $fromName.arg<Argument>(): T' functions - " +
-                    "'${decl.simpleName.asString()}' is not one.",
-                decl,
-            )
+            notAnArgFunction(decl.simpleName.asString(), decl)
             continue
         }
         val name = fn.simpleName.asString()
         if (!(name.startsWith("arg") && name.length > 3 && name[3].isUpperCase())) {
-            reportError(
-                "A @DIFactory object may only declare 'fun $fromName.arg<Argument>(): T' functions - " +
-                    "'$name' is not one.",
-                fn,
-            )
+            notAnArgFunction(name, fn)
             continue
         }
         val paramName = name.removePrefix("arg").replaceFirstChar(Char::lowercaseChar)
-        val paramType = ctorParams[paramName]
-        if (paramType == null) {
-            reportError(
-                "'$name' does not match any constructor argument of '$buildsName' - rename it to " +
-                    "'arg<Argument>' matching one of: ${ctorParams.keys.sorted().joinToString(", ")}.",
-                fn,
-            )
-            continue
-        }
+
         if (objVisibility == Visibility.PUBLIC) {
             if (fn.getVisibility() != Visibility.INTERNAL) {
                 reportError(
-                    "'$name' must be 'internal': '${objDecl.simpleName.asString()}' is 'public', so its " +
-                        "arg functions may not widen its public API.",
+                    "'$name' must be 'internal': '$objName' is 'public', so its arg functions may not " +
+                        "widen its public API.",
                     fn,
                 )
                 continue
@@ -360,46 +474,90 @@ internal fun parseFactory(
             reportError("'$name' must be public or internal.", fn)
             continue
         }
-        if (suspendMode == SuspendMode.FORBID && Modifier.SUSPEND in fn.modifiers) {
-            reportError("'$name' may not be 'suspend': 'suspend' is 'Suspend.Forbid' on '${objDecl.simpleName.asString()}'.", fn)
-            continue
-        }
-        if (withType == null) {
-            if (fn.parameters.isNotEmpty()) {
-                reportError("'$name' may not take any parameter.", fn)
-                continue
-            }
-        } else {
-            val singleParam = fn.parameters.singleOrNull()
-            val paramMatchesWith = singleParam != null && !singleParam.isVararg &&
-                sameType(singleParam.type.resolve(), withType)
-            if (!paramMatchesWith) {
-                reportError(
-                    "'$name' must take exactly one parameter of type " +
-                        "'${withType.toTypeName().simpleString()}' (the @DIFactory '$withArgName' type).",
-                    fn,
-                )
-                continue
-            }
-        }
-        val receiverType = fn.extensionReceiver?.resolve()
-        if (receiverType == null || !receiverType.isAssignableFrom(fromType)) {
-            reportError("'$name' must be an extension function on '$fromName'.", fn)
-            continue
-        }
-        val returnType = fn.returnType?.resolve()
-        if (returnType == null || !sameType(returnType, paramType)) {
+
+        val nameMatches = contexts.withIndex().filter { paramName in it.value.ctorParams }
+        if (nameMatches.isEmpty()) {
+            val allParams = contexts.flatMap { it.ctorParams.keys }.distinct().sorted()
             reportError(
-                "'$name' must return the type of '$buildsName''s '$paramName' argument.",
+                "'$name' does not match any constructor argument of a @DIFactory on '$objName' - name it " +
+                    "'arg<Argument>' for one of: ${allParams.joinToString(", ")}.",
                 fn,
             )
             continue
         }
-        argFunctions[paramName] = fn
+
+        // With one matching factory the specific mismatch reason is the whole story (unchanged
+        // single-annotation behaviour). With several, a mismatch just means "not this one" - it is
+        // an error only when the function fits none of them.
+        val soleMatch = nameMatches.singleOrNull()
+        var servedAny = false
+        for ((index, context) in nameMatches) {
+            val mismatch = argFunctionMismatch(fn, name, paramName, objName, context)
+            if (mismatch != null) {
+                if (soleMatch != null) reportError(mismatch, fn)
+                continue
+            }
+            argFunctions[index][paramName] = fn
+            servedAny = true
+        }
+        if (soleMatch == null && !servedAny) {
+            reportError("'$name' is not a valid arg function for any @DIFactory on '$objName'.", fn)
+        }
     }
 
+    return argFunctions
+}
+
+/** `null` when [fn] is a valid `arg<Argument>` function for [context], else why it isn't. */
+private fun argFunctionMismatch(
+    fn: KSFunctionDeclaration,
+    name: String,
+    paramName: String,
+    objName: String,
+    context: FactoryContext,
+): String? {
+    val paramType = context.ctorParams.getValue(paramName)
+    if (context.suspendMode == SuspendMode.FORBID && Modifier.SUSPEND in fn.modifiers) {
+        return "'$name' may not be 'suspend': 'suspend' is 'Suspend.Forbid' on '$objName'."
+    }
+    val withType = context.withType
+    if (withType == null) {
+        if (fn.parameters.isNotEmpty()) return "'$name' may not take any parameter."
+    } else {
+        val singleParam = fn.parameters.singleOrNull()
+        val paramMatchesWith = singleParam != null && !singleParam.isVararg &&
+            sameType(singleParam.type.resolve(), withType)
+        if (!paramMatchesWith) {
+            return "'$name' must take exactly one parameter of type " +
+                "'${withType.toTypeName().simpleString()}' (the @DIFactory '${context.withArgName}' type)."
+        }
+    }
+    val receiverType = fn.extensionReceiver?.resolve()
+    if (receiverType == null || !receiverType.isAssignableFrom(context.fromType)) {
+        return "'$name' must be an extension function on '${context.fromName}'."
+    }
+    val returnType = fn.returnType?.resolve()
+    if (returnType == null || !sameType(returnType, paramType)) {
+        return "'$name' must return the type of '${context.buildsName}''s '$paramName' argument."
+    }
+    return null
+}
+
+/** Resolves every argument of [context]'s constructor and builds the [FactoryModel]. */
+private fun resolveFactory(
+    objDecl: KSClassDeclaration,
+    objVisibility: Visibility,
+    context: FactoryContext,
+    argFunctions: Map<String, KSFunctionDeclaration>,
+    reportError: (String, KSNode) -> Unit,
+): FactoryModel {
+    val buildsName = context.buildsName
+    val fromName = context.fromName
+    val withType = context.withType
+    val suspendMode = context.suspendMode
+
     // Every constructor argument must be uniquely resolvable, in priority order: an arg function
-    // declared above, else the call-time `with` value when its type fits the argument, else the
+    // (see `argFunctions`), else the call-time `with` value when its type fits the argument, else the
     // parameter's own default (see `omissibleParams` - the generated call just omits it), else a
     // unique exactly-typed module member, else a unique assignable-typed module member, else an
     // error. The `with` value outranks the default and the module pool: the caller supplied it for
@@ -408,14 +566,14 @@ internal fun parseFactory(
     // statement of what the argument should be absent an override, whereas a module match is by type
     // alone and can be coincidental.
     // Under Suspend.Forbid, a suspend candidate is excluded here entirely (rather than resolved and
-    // then rejected) - the same exclusion already applied to arg-functions above, so a resolved
+    // then rejected) - the same exclusion already applied to arg-functions, so a resolved
     // FactoryArgumentModel can never end up suspend when the mode is Forbid.
     //
     // A member takes no parameter (called plainly), or - only when `with` / `withNullable` is set -
     // takes one parameter the `with` value can be passed to (see [withArgumentFor]). The two live in one pool:
     // a zero-parameter and a one-parameter member matching the same argument type is an ambiguity,
     // exactly as two zero-parameter members are.
-    val candidates: List<Pair<MemberModel, WithArgument?>> = fromModel.allMembers.mapNotNull { member ->
+    val candidates: List<Pair<MemberModel, WithArgument?>> = context.fromModel.allMembers.mapNotNull { member ->
         if (suspendMode == SuspendMode.FORBID && member.isSuspend) return@mapNotNull null
         when {
             member.parameters.isEmpty() -> member to null
@@ -425,7 +583,7 @@ internal fun parseFactory(
         }
     }
     val arguments = mutableListOf<FactoryArgumentModel>()
-    for ((paramName, paramType) in ctorParams) {
+    for ((paramName, paramType) in context.ctorParams) {
         val resolvedArgFunction = argFunctions[paramName]
         if (resolvedArgFunction != null) {
             arguments += FactoryArgumentModel(
@@ -441,7 +599,7 @@ internal fun parseFactory(
         // rather than a pool, so it wins outright and is never part of an ambiguity. A vararg is
         // excluded (see `varargParams`). `isSuspend = false`: a plain parameter is never a
         // suspending provider, so this holds under `Suspend.Forbid` too.
-        if (withType != null && paramName !in varargParams && paramType.isAssignableFrom(withType)) {
+        if (withType != null && paramName !in context.varargParams && paramType.isAssignableFrom(withType)) {
             arguments += FactoryArgumentModel(paramName, ArgumentSource.WithValue, isSuspend = false)
             continue
         }
@@ -449,7 +607,7 @@ internal fun parseFactory(
         // Adding no FactoryArgumentModel is what applies the default - every emitted argument is
         // named, so an omitted one falls back to the constructor's declared default (or, for a
         // vararg, an empty array). An `arg<Argument>` function still wins, having been handled above.
-        if (paramName in omissibleParams) continue
+        if (paramName in context.omissibleParams) continue
 
         val exact = candidates.filter { sameType(it.first.returnType, paramType) }
         if (exact.size == 1) {
@@ -493,40 +651,6 @@ internal fun parseFactory(
         )
     }
 
-    // The generated function is an extension on the `@DIFactory` object, so it is exactly as visible
-    // as the object. A `public` function still can't name an `internal` type in its signature, so a
-    // `public` object whose `from`, `builds`, selected constructor, or `with` / `withNullable` type
-    // is `internal` can't work - report that here rather than emitting a file `kotlinc` then rejects.
-    if (objVisibility == Visibility.PUBLIC) {
-        val internalDeps = buildList {
-            if (fromDecl.getVisibility() == Visibility.INTERNAL) add("the 'from' module '$fromName'")
-            if (buildsDecl.getVisibility() == Visibility.INTERNAL) add("the 'builds' class '$buildsName'")
-            if (ctor.getVisibility() == Visibility.INTERNAL) add("its selected constructor")
-            if (withDecl?.getVisibility() == Visibility.INTERNAL) {
-                add("the '$withArgName' type '${withDecl.simpleName.asString()}'")
-            }
-        }
-        if (internalDeps.isNotEmpty()) {
-            val isAre = if (internalDeps.size == 1) "is" else "are"
-            val itThem = if (internalDeps.size == 1) "it" else "them"
-            reportError(
-                "Cannot generate the 'public' factory function '${objDecl.simpleName.asString()}.$buildsName' " +
-                    "because ${internalDeps.joinToString(", ")} $isAre 'internal'. Make " +
-                    "'${objDecl.simpleName.asString()}' 'internal', or make $itThem 'public'.",
-                objDecl,
-            )
-        }
-    }
-
-    if (hasError) return null
-
-    val originatingFiles: List<KSFile> = listOfNotNull(
-        objDecl.containingFile,
-        buildsDecl.containingFile,
-        fromDecl.containingFile,
-        withDecl?.containingFile,
-    ) + fromModel.ancestorDeclarations.mapNotNull { it.containingFile }
-
     val isSuspend = when (suspendMode) {
         SuspendMode.FORBID -> false
         SuspendMode.ALLOW -> arguments.any { it.isSuspend }
@@ -536,13 +660,13 @@ internal fun parseFactory(
     return FactoryModel(
         factoryClassName = objDecl.toClassName(),
         generatedBaseName = objDecl.generatedBaseName(),
-        buildsClassName = buildsDecl.toClassName(),
-        fromClassName = fromDecl.toClassName(),
+        buildsClassName = context.buildsDecl.toClassName(),
+        fromClassName = context.fromDecl.toClassName(),
         withTypeName = withType?.toTypeName(),
         visibility = objVisibility,
         arguments = arguments,
         isSuspend = isSuspend,
-        originatingFiles = originatingFiles,
+        originatingFiles = context.originatingFiles,
     )
 }
 

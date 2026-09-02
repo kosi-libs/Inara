@@ -666,8 +666,9 @@ val inner: Outer.Inner = Inner(label = Binding.value("inner"))
 
 Everything so far builds a `@DIModule` interface itself. `@DIFactory` builds something else with it:
 a plain constructor-shaped function for a class that never references Inara at all. Annotate a
-`public` or `internal` object with `builds`/`from`, and the processor generates an extension function
-on that object, named after `builds`, that resolves every constructor argument off a module instance:
+`public` or `internal` object with `builds`/`from`, and the processor generates - per `@DIFactory`
+annotation, it is repeatable (see <<multiple-factories-from-one-object>>) - an extension function on
+that object, named after `builds`, that resolves every constructor argument off a module instance:
 
 .UsersController.kt
 [source,kotlin]
@@ -714,7 +715,9 @@ Each constructor argument is resolved independently, in priority order:
   NetworkModule.argEndpoint(): String` resolves an argument named `endpoint`. This is the _only_
   thing a `@DIFactory` object may declare; anything else is a compile error. The generated function
   is an extension on the object, not a member, so a `private` one is unreachable and a compile error;
-  on a `public` object it must be `internal`.
+  on a `public` object it must be `internal`. When the object carries several `@DIFactory`
+  annotations the function serves each one whose `from` and selected constructor match it (see
+  <<multiple-factories-from-one-object>>).
 . Otherwise, under `with` / `withNullable` (see below), the call-time value itself, when its type is
   assignable to the argument. The caller supplied it for this very call, so it outranks both the
   argument's own default and any `from` member — it shadows a same-typed member rather than tying
@@ -835,6 +838,36 @@ public object GreeterFactory
 
 Only the selected constructor's parameters are resolved — every other constructor, including the
 primary, is ignored entirely, `arg<Argument>` name-matching included.
+
+[#multiple-factories-from-one-object]
+=== Multiple factories from one object
+
+`@DIFactory` is repeatable. Annotate one object several times to build several related classes; each
+annotation generates its own function, all in one file named after the object:
+
+.Screens.kt
+[source,kotlin]
+----
+class LoginScreen(val heading: String)
+class HomeScreen(val heading: String, val count: Int)
+
+@DIFactory(builds = LoginScreen::class, from = ScreenModule::class)
+@DIFactory(builds = HomeScreen::class, from = ScreenModule::class)
+public object ScreensFactory {
+    internal fun ScreenModule.argHeading(): String = "…"
+}
+
+// generated, in InaraScreensFactory.kt:
+//   public fun ScreensFactory.LoginScreen(module: ScreenModule): LoginScreen = …
+//   public fun ScreensFactory.HomeScreen(module: ScreenModule): HomeScreen = …
+----
+
+An `arg<Argument>` function is shared: it serves every `@DIFactory` whose `from` is its receiver and
+whose selected constructor has a matching parameter — above, `argHeading` fills `heading` for both
+screens. A declared `arg` function that fits none of the annotations is a compile error. `with`,
+`suspend` and `constructorIndex` are per-annotation, so one object can generate a `suspend` function
+next to a plain one. Two annotations that would generate the same signature (same `builds`, `from`
+and `with` type) are a compile error.
 
 == Thread safety
 

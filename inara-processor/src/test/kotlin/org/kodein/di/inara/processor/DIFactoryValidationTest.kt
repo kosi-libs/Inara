@@ -978,4 +978,73 @@ class DIFactoryValidationTest {
             """
         )
     }
+
+    @Test
+    fun repeatedAnnotation_duplicateSignature_isRejected() {
+        assertRejected(
+            "'Fac' has 2 @DIFactory annotations that all generate 'fun Fac.Widget(module: LabelModule): Widget'.",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface LabelModule { val label: String }
+            class Widget(val label: String)
+
+            @DIFactory(builds = Widget::class, from = LabelModule::class)
+            @DIFactory(builds = Widget::class, from = LabelModule::class)
+            internal object Fac
+            """
+        )
+    }
+
+    @Test
+    fun repeatedAnnotation_argFunctionMatchingNoFactory_isRejected() {
+        assertRejected(
+            "does not match any constructor argument",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface AppModule { val a: String }
+            class A(val a: String)
+            class B(val a: String)
+
+            @DIFactory(builds = A::class, from = AppModule::class)
+            @DIFactory(builds = B::class, from = AppModule::class)
+            internal object Fac {
+                fun AppModule.argNonsense(): String = a
+            }
+            """
+        )
+    }
+
+    @Test
+    fun repeatedAnnotation_argFunctionValidForNoFactory_isRejected() {
+        assertRejected(
+            "is not a valid arg function for any @DIFactory on 'Fac'",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface AppModule { val a: String }
+            class A(val title: String)
+            class B(val title: Int)
+
+            @DIFactory(builds = A::class, from = AppModule::class)
+            @DIFactory(builds = B::class, from = AppModule::class)
+            internal object Fac {
+                fun AppModule.argTitle(): Boolean = true   // wrong return type for both
+            }
+            """
+        )
+    }
 }

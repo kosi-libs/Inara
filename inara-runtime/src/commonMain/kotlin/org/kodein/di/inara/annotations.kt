@@ -42,6 +42,13 @@ public annotation class DIModule(val composed: Boolean = false)
  * (that signature couldn't compile - make the object `internal`), and every `arg<Argument>` function
  * on a `public` object must be `internal` (they are implementation detail, not public API).
  *
+ * `@DIFactory` is `@Repeatable`: annotate one object several times to generate several functions,
+ * all in one file named after the object. An `arg<Argument>` function is shared across the
+ * annotations - it serves every `@DIFactory` whose [from] is its extension receiver and whose
+ * selected constructor has a matching parameter, and is a compile error only if it fits none. Two
+ * annotations that would generate the same signature (same [builds], [from] and [with] type) are a
+ * compile error.
+ *
  * With [with] (or [withNullable]) set to a type other than `Unit`, the generated function takes a
  * second parameter `fun <Factory>.<Builds>(module: <From>, with: <With>): <Builds>` - nullable under
  * [withNullable] - that value resolves any constructor argument its type fits (ahead of the
@@ -81,6 +88,7 @@ public annotation class DIModule(val composed: Boolean = false)
  *   `arg<Argument>` functions and automatic module-member matching resolve against - every other
  *   constructor is ignored entirely.
  */
+@Repeatable
 @Retention(AnnotationRetention.BINARY)
 @Target(AnnotationTarget.CLASS)
 public annotation class DIFactory(

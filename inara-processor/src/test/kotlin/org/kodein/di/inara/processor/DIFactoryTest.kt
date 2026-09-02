@@ -749,6 +749,174 @@ class DIFactoryTest {
     }
 
     @Test
+    fun repeatedAnnotation_generatesOneFunctionPerAnnotationInOneFile() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface AppModule {
+                val title: String
+                val count: Int
+            }
+
+            class LoginScreen(val title: String)
+            class HomeScreen(val count: Int)
+
+            @DIFactory(builds = LoginScreen::class, from = AppModule::class)
+            @DIFactory(builds = HomeScreen::class, from = AppModule::class)
+            public object Screens
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraScreens.kt")
+        assertTrue("public fun Screens.LoginScreen(module: AppModule): LoginScreen" in generated, generated)
+        assertTrue("public fun Screens.HomeScreen(module: AppModule): HomeScreen" in generated, generated)
+        assertTrue("title = module.title," in generated, generated)
+        assertTrue("count = module.count," in generated, generated)
+    }
+
+    @Test
+    fun repeatedAnnotation_differentFromModules_bothGenerated() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface ModuleA { val a: String }
+            @DIModule
+            interface ModuleB { val b: String }
+
+            class FromA(val a: String)
+            class FromB(val b: String)
+
+            @DIFactory(builds = FromA::class, from = ModuleA::class)
+            @DIFactory(builds = FromB::class, from = ModuleB::class)
+            public object Fac
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraFac.kt")
+        assertTrue("public fun Fac.FromA(module: ModuleA): FromA" in generated, generated)
+        assertTrue("public fun Fac.FromB(module: ModuleB): FromB" in generated, generated)
+    }
+
+    @Test
+    fun repeatedAnnotation_argFunctionSharedByBothFactories() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface AppModule { val base: String }
+
+            class LoginScreen(val title: String)
+            class HomeScreen(val title: String)
+
+            @DIFactory(builds = LoginScreen::class, from = AppModule::class)
+            @DIFactory(builds = HomeScreen::class, from = AppModule::class)
+            public object Screens {
+                internal fun AppModule.argTitle(): String = base.uppercase()
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraScreens.kt")
+        assertTrue("public fun Screens.LoginScreen(module: AppModule): LoginScreen" in generated, generated)
+        assertTrue("public fun Screens.HomeScreen(module: AppModule): HomeScreen" in generated, generated)
+        assertEquals(2, Regex(Regex.escape("title = module.argTitle(),")).findAll(generated).count(), generated)
+    }
+
+    @Test
+    fun repeatedAnnotation_argFunctionForOnlyOneFactory_isNotAnErrorForTheOther() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface AppModule {
+                val base: String
+                val count: Int
+            }
+
+            class LoginScreen(val title: String)
+            class HomeScreen(val count: Int)
+
+            @DIFactory(builds = LoginScreen::class, from = AppModule::class)
+            @DIFactory(builds = HomeScreen::class, from = AppModule::class)
+            public object Screens {
+                internal fun AppModule.argTitle(): String = base   // only LoginScreen has `title`
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraScreens.kt")
+        assertTrue("title = module.argTitle()," in generated, generated)
+        assertTrue("count = module.count," in generated, generated)
+    }
+
+    @Test
+    fun repeatedAnnotation_sameBuildsDifferentWith_generatesOverloads() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+
+            @DIModule
+            interface AppModule { val greeting: String }
+
+            class Banner(val greeting: String)
+
+            @DIFactory(builds = Banner::class, from = AppModule::class)
+            @DIFactory(builds = Banner::class, from = AppModule::class, with = Ctx::class)
+            public object Banners {
+                internal fun AppModule.argGreeting(ctx: Ctx): String = greeting
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraBanners.kt")
+        assertTrue("public fun Banners.Banner(module: AppModule): Banner" in generated, generated)
+        assertTrue("public fun Banners.Banner(module: AppModule, with: Ctx): Banner" in generated, generated)
+    }
+
+    @Test
     fun defaultedParameter_withNoCandidate_isOmittedFromTheCall() {
         val source = SourceFile.kotlin(
             "Factory.kt",
