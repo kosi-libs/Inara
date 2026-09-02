@@ -13,7 +13,7 @@ class ModuleFactoryWithTest {
             endpoint = Binding.factory { path -> "$baseUrl/$path" },
         )
 
-        val session = UserSession(network, RequestContext("alice"))
+        val session = UserSessionDIFactory.UserSession(network, RequestContext("alice"))
 
         assertEquals("https://api.example.com", session.httpClient.baseUrl)
         assertEquals("Hello, alice", session.greeting)
@@ -23,7 +23,7 @@ class ModuleFactoryWithTest {
     fun generatedFactory_resolvesAOneParameterModuleMemberWithTheCallTimeArgument() {
         val routing = RoutingModule(route = Binding.factory { segment -> "/app/${segment.value}" })
 
-        val page = Page(routing, Segment("dashboard"))
+        val page = PageDIFactory.Page(routing, Segment("dashboard"))
 
         assertEquals("/app/dashboard", page.route)
     }
@@ -36,7 +36,7 @@ class ModuleFactoryWithTest {
             endpoint = Binding.factory { path -> "$baseUrl/$path" },
         )
 
-        val notice = Notice(network, RequestContext("alice"))
+        val notice = NoticeDIFactory.Notice(network, RequestContext("alice"))
 
         assertEquals("alice", notice.context.userId)
         assertEquals("https://api.example.com", notice.httpClient.baseUrl)
@@ -50,7 +50,7 @@ class ModuleFactoryWithTest {
             endpoint = Binding.factory { path -> "$baseUrl/$path" },
         )
 
-        assertEquals("Hello, alice", Banner(network, RequestContext("alice")).greeting)
-        assertEquals("Hello, anonymous", Banner(network, null).greeting)
+        assertEquals("Hello, alice", BannerDIFactory.Banner(network, RequestContext("alice")).greeting)
+        assertEquals("Hello, anonymous", BannerDIFactory.Banner(network, null).greeting)
     }
 }

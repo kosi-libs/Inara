@@ -22,9 +22,9 @@ class DIFactoryValidationTest {
     }
 
     @Test
-    fun publicObject_isRejected() {
+    fun privateObject_isRejected() {
         assertRejected(
-            "A @DIFactory object must be internal",
+            "A @DIFactory object must be public or internal",
             """
             package sample.factory
 
@@ -36,7 +36,118 @@ class DIFactoryValidationTest {
             class Greeter(val greeting: String)
 
             @DIFactory(builds = Greeter::class, from = GreetingModule::class)
-            object GreeterDIFactory
+            private object GreeterDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun publicObject_withInternalFromModule_isRejected() {
+        assertRejected(
+            "Cannot generate the 'public' factory function 'GreeterDIFactory.Greeter' because " +
+                "the 'from' module 'SecretModule' is 'internal'. Make 'GreeterDIFactory' 'internal', " +
+                "or make it 'public'.",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            internal interface SecretModule { val greeting: String }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = SecretModule::class)
+            public object GreeterDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun publicObject_withInternalBuildsClass_isRejected() {
+        assertRejected(
+            "because the 'builds' class 'Greeter' is 'internal'",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule { val greeting: String }
+            internal class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            public object GreeterDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun publicObject_withInternalSelectedConstructor_isRejected() {
+        assertRejected(
+            "because its selected constructor is 'internal'",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule { val greeting: String }
+            class Greeter(val count: Int) {
+                internal constructor(greeting: String) : this(greeting.length)
+            }
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, constructorIndex = 1)
+            public object GreeterDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun publicObject_withInternalWithType_isRejected() {
+        assertRejected(
+            "because the 'with' type 'Ctx' is 'internal'",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            internal class Ctx
+
+            @DIModule
+            interface GreetingModule { val greeting: String }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = Ctx::class)
+            public object GreeterDIFactory {
+                internal fun GreetingModule.argGreeting(ctx: Ctx): String = greeting
+            }
+            """
+        )
+    }
+
+    @Test
+    fun publicObject_withAPublicArgFunction_isRejected() {
+        assertRejected(
+            "'argGreeting' must be 'internal': 'GreeterDIFactory' is 'public', so its arg functions " +
+                "may not widen its public API.",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule { val greeting: String }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            public object GreeterDIFactory {
+                fun GreetingModule.argGreeting(): String = greeting
+            }
             """
         )
     }
@@ -399,8 +510,8 @@ class DIFactoryValidationTest {
 
     @Test
     fun privateArgFunction_isRejected() {
-        // The generated builder is a top-level function; its with(<object>) { } block can't see a
-        // private member.
+        // The generated builder is an extension on the object, not a member - it can't see a
+        // `private` one.
         assertRejected(
             "must be public or internal",
             """

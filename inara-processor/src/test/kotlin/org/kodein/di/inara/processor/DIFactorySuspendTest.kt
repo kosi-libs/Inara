@@ -34,7 +34,7 @@ class DIFactorySuspendTest {
             class Session(val token: String)
 
             @DIFactory(builds = Session::class, from = TokenModule::class)
-            internal object SessionDIFactory
+            public object SessionDIFactory
             """
         )
 
@@ -42,7 +42,7 @@ class DIFactorySuspendTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraSessionDIFactory.kt")
-        assertTrue("public suspend fun Session(module: TokenModule): Session" in generated, generated)
+        assertTrue("public suspend fun SessionDIFactory.Session(module: TokenModule): Session" in generated, generated)
         assertTrue("token = module.token()," in generated, generated)
     }
 
@@ -61,7 +61,7 @@ class DIFactorySuspendTest {
             class Greeter(val greeting: String)
 
             @DIFactory(builds = Greeter::class, from = GreetingModule::class)
-            internal object GreeterDIFactory
+            public object GreeterDIFactory
             """
         )
 
@@ -69,7 +69,7 @@ class DIFactorySuspendTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
-        assertTrue("public fun Greeter(module: GreetingModule): Greeter" in generated, generated)
+        assertTrue("public fun GreeterDIFactory.Greeter(module: GreetingModule): Greeter" in generated, generated)
         assertTrue("suspend" !in generated, generated)
     }
 
@@ -88,8 +88,8 @@ class DIFactorySuspendTest {
             class Greeter(val greeting: String)
 
             @DIFactory(builds = Greeter::class, from = GreetingModule::class)
-            internal object GreeterDIFactory {
-                suspend fun GreetingModule.argGreeting(): String = greeting
+            public object GreeterDIFactory {
+                internal suspend fun GreetingModule.argGreeting(): String = greeting
             }
             """
         )
@@ -98,7 +98,7 @@ class DIFactorySuspendTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
-        assertTrue("public suspend fun Greeter(module: GreetingModule): Greeter" in generated, generated)
+        assertTrue("public suspend fun GreeterDIFactory.Greeter(module: GreetingModule): Greeter" in generated, generated)
         assertTrue("greeting = module.argGreeting()," in generated, generated)
     }
 
@@ -118,7 +118,7 @@ class DIFactorySuspendTest {
             class Greeter(val greeting: String)
 
             @DIFactory(builds = Greeter::class, from = GreetingModule::class, suspend = Suspend.Force)
-            internal object GreeterDIFactory
+            public object GreeterDIFactory
             """
         )
 
@@ -126,7 +126,7 @@ class DIFactorySuspendTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
-        assertTrue("public suspend fun Greeter(module: GreetingModule): Greeter" in generated, generated)
+        assertTrue("public suspend fun GreeterDIFactory.Greeter(module: GreetingModule): Greeter" in generated, generated)
     }
 
     @Test
@@ -145,7 +145,7 @@ class DIFactorySuspendTest {
             class Greeter(val greeting: String)
 
             @DIFactory(builds = Greeter::class, from = GreetingModule::class, suspend = Suspend.Forbid)
-            internal object GreeterDIFactory
+            public object GreeterDIFactory
             """
         )
 
@@ -153,7 +153,7 @@ class DIFactorySuspendTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
-        assertTrue("public fun Greeter(module: GreetingModule): Greeter" in generated, generated)
+        assertTrue("public fun GreeterDIFactory.Greeter(module: GreetingModule): Greeter" in generated, generated)
         assertTrue("suspend" !in generated, generated)
     }
 
@@ -180,7 +180,7 @@ class DIFactorySuspendTest {
             class Greeter(val greeting: String, val verbose: Boolean = false)
 
             @DIFactory(builds = Greeter::class, from = GreetingModule::class, suspend = Suspend.Forbid)
-            internal object GreeterDIFactory
+            public object GreeterDIFactory
             """
         )
 
@@ -188,7 +188,7 @@ class DIFactorySuspendTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
-        assertTrue("public fun Greeter(module: GreetingModule): Greeter" in generated, generated)
+        assertTrue("public fun GreeterDIFactory.Greeter(module: GreetingModule): Greeter" in generated, generated)
         assertTrue("suspend" !in generated, generated)
         assertTrue("verbose" !in generated, generated)
     }

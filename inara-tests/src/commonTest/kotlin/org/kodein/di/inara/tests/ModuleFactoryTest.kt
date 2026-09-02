@@ -13,7 +13,7 @@ class ModuleFactoryTest {
             endpoint = Binding.factory { path -> "$baseUrl/$path" },
         )
 
-        val controller = UsersController(network)
+        val controller = UserControllerDIFactory.UsersController(network)
 
         assertEquals("https://api.example.com", controller.httpClient.baseUrl)
         assertEquals("https://api.example.com/users", controller.endpoint)
@@ -27,7 +27,7 @@ class ModuleFactoryTest {
             endpoint = Binding.factory { path -> "$baseUrl/$path" },
         )
 
-        val greeter = Greeter(network)
+        val greeter = GreeterDIFactory.Greeter(network)
 
         assertEquals("Hello from https://api.example.com", greeter.greeting)
     }

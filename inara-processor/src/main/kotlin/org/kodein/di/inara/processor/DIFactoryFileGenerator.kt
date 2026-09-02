@@ -14,10 +14,11 @@ import org.kodein.di.inara.processor.WithArgument.Named
 import org.kodein.di.inara.processor.WithArgument.Positional
 
 /**
- * Emits the generated builder function for [model]: a top-level function named after `builds`,
- * taking a single `from`-typed `module` parameter, that resolves every constructor argument off
- * `module` (see [FactoryModel.arguments]) inside a `with(<factory object>) { ... }` block, so the
- * object's own `arg<Argument>` extension functions are in scope.
+ * Emits the generated builder function for [model]: an **extension function on the `@DIFactory`
+ * object**, named after `builds`, taking a single `from`-typed `module` parameter, that resolves
+ * every constructor argument off `module` (see [FactoryModel.arguments]). The object being the
+ * extension receiver is what puts its own `arg<Argument>` extension functions in scope - no
+ * `with(<object>) { ... }` wrapper - and makes the function discoverable from the object.
  *
  * The file is named after the `@DIFactory` object rather than `builds`, and lives in the object's
  * own package - two different `@DIFactory` objects could otherwise target `builds` classes that
@@ -34,6 +35,7 @@ internal fun generateFactoryFile(model: FactoryModel): FileSpec {
 
 private fun buildFactoryFunction(model: FactoryModel): FunSpec {
     val funBuilder = FunSpec.builder(model.buildsClassName.simpleName)
+        .receiver(model.factoryClassName)
         .returns(model.buildsClassName)
     for (file in model.originatingFiles) {
         funBuilder.addOriginatingKSFile(file)
@@ -47,11 +49,8 @@ private fun buildFactoryFunction(model: FactoryModel): FunSpec {
     funBuilder.addParameter("module", model.fromClassName)
     model.withTypeName?.let { funBuilder.addParameter("with", it) }
 
-    // When there's a `with` parameter it's passed to every arg-function and to any one-parameter
-    // module member; `with` as an argument name would otherwise shadow the `kotlin.with` scoping
-    // function below, so that call is fully qualified whenever the parameter exists. (KotlinPoet's
-    // `%M` can't help here - it only disambiguates against members/types it tracks, not a local
-    // parameter, so it would still emit a bare `with` that resolves to the parameter.)
+    // The `with` parameter's value, passed to every arg-function and to any one-parameter module
+    // member when it exists.
     val withArg = if (model.withTypeName != null) CodeBlock.of("with") else null
 
     // Every constructor argument the model carries is emitted as a named argument; any parameter it
@@ -86,19 +85,7 @@ private fun buildFactoryFunction(model: FactoryModel): FunSpec {
             .build()
     }
 
-    // Passed as a `%L` argument rather than interpolated into the format string, so a stray `%` in
-    // it could never be read as a placeholder.
-    val scopeFunction = if (withArg != null) "kotlin.with" else "with"
-    funBuilder.addCode(
-        CodeBlock.builder()
-            .add("return %L(%T) {\n", scopeFunction, model.factoryClassName)
-            .indent()
-            .add(constructorCall)
-            .add("\n")
-            .unindent()
-            .add("}\n")
-            .build()
-    )
+    funBuilder.addCode(CodeBlock.builder().add("return %L\n", constructorCall).build())
 
     return funBuilder.build()
 }

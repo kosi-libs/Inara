@@ -5,9 +5,9 @@ import org.kodein.di.inara.DIModule
 
 /**
  * Exercises `@DIFactory(with = …)` through real Gradle/KSP-generated code: the generated
- * `UserSession(module, with)` function takes a call-time [RequestContext] alongside the module, and
- * that value flows into the `argGreeting` extension function. `httpClient` still resolves
- * automatically off [NetworkModule.httpClient] with no `with` involved.
+ * `UserSessionDIFactory.UserSession(module, with)` extension takes a call-time [RequestContext]
+ * alongside the module, and that value flows into the `argGreeting` extension function. `httpClient`
+ * still resolves automatically off [NetworkModule.httpClient] with no `with` involved.
  */
 data class RequestContext(val userId: String)
 
@@ -23,8 +23,8 @@ internal object UserSessionDIFactory {
 
 /**
  * The automatic-resolution side of `with`: [RoutingModule.route] takes a single [Segment] the `with`
- * value casts into, so it resolves [Page.route] with no `arg` function - `Page(module, with)` calls
- * `module.route(with)`. [Segment] is a wrapper rather than a bare `String` so the `with` value is
+ * value casts into, so it resolves [Page.route] with no `arg` function - `PageDIFactory.Page(module,
+ * with)` calls `module.route(with)`. [Segment] is a wrapper rather than a bare `String` so the `with` value is
  * not itself assignable to `Page.route` (which would then resolve straight from the call).
  */
 data class Segment(val value: String)
@@ -40,9 +40,9 @@ class Page(val route: String)
 internal object PageDIFactory
 
 /**
- * The `withNullable` variant: `Banner(module, with)` takes a *nullable* [RequestContext], so the
- * generated parameter is `with: RequestContext?` and `argGreeting` receives `null` when no context
- * is passed. `httpClient` still resolves automatically with no `with` involved.
+ * The `withNullable` variant: `BannerDIFactory.Banner(module, with)` takes a *nullable*
+ * [RequestContext], so the generated parameter is `with: RequestContext?` and `argGreeting` receives
+ * `null` when no context is passed. `httpClient` still resolves automatically with no `with` involved.
  */
 class Banner(
     val httpClient: HttpClient,
@@ -57,8 +57,8 @@ internal object BannerDIFactory {
 
 /**
  * The `with` value resolving a constructor argument directly: `Notice.context` has the same type as
- * the call-time value and no `arg` function, so `Notice(module, with)` passes `with` straight into
- * it. `httpClient` still resolves automatically off the module.
+ * the call-time value and no `arg` function, so `NoticeDIFactory.Notice(module, with)` passes `with`
+ * straight into it. `httpClient` still resolves automatically off the module.
  */
 class Notice(
     val context: RequestContext,

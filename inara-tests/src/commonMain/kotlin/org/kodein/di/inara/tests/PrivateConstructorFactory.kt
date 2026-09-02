@@ -4,7 +4,7 @@ import org.kodein.di.inara.DIFactory
 
 /**
  * Exercises `@DIFactory(constructorIndex = 1)` through real Gradle/KSP-generated code: [Greeter]'s
- * primary constructor is `private` - unreachable from the generated function - so `constructorIndex`
+ * primary constructor is `private` - unreachable from the generated extension function - so `constructorIndex`
  * redirects argument resolution to its public secondary constructor instead. `baseUrl` resolves
  * automatically, an exact-type match on [NetworkModule.baseUrl].
  */

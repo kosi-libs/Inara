@@ -22,23 +22,28 @@ import kotlin.reflect.KClass
 public annotation class DIModule(val composed: Boolean = false)
 
 /**
- * Marks an `internal object` for generating a plain constructor-shaped factory function - the way
- * to build a class that never references Inara at all from a `@DIModule` instance.
+ * Marks a `public` or `internal` object for generating a plain constructor-shaped factory function -
+ * the way to build a class that never references Inara at all from a `@DIModule` instance.
  *
- * The processor generates a top-level `fun <Builds>(module: <From>): <Builds>` resolving each
- * argument of [builds]'s selected constructor (see [constructorIndex]) off [from], in priority
- * order: an `arg<Argument>` extension function declared on the annotated object (`fun
- * <From>.argFoo(): T`, for a constructor argument named `foo`) if present, else - when [with] /
- * [withNullable] is set - the call-time value itself if its type fits the argument, else - if the
- * parameter can be left out of the call, i.e. it declares a default value or is a `vararg` - that
- * default, else a uniquely-typed member of [from] (an exact type match, else a subtype match), else
- * a compile error recommending the `arg` function to add. The call-time value thus outranks a
- * parameter's default and any [from] member; the default in turn outranks any [from] member, and a
- * defaulted parameter needs no `arg` function. The object may declare nothing but such `arg`
- * functions - anything else is a compile error.
+ * The processor generates an extension `fun <Factory>.<Builds>(module: <From>): <Builds>` on the
+ * annotated object, resolving each argument of [builds]'s selected constructor (see
+ * [constructorIndex]) off [from], in priority order: an `arg<Argument>` extension function declared
+ * on the annotated object (`fun <From>.argFoo(): T`, for a constructor argument named `foo`) if
+ * present, else - when [with] / [withNullable] is set - the call-time value itself if its type fits
+ * the argument, else - if the parameter can be left out of the call, i.e. it declares a default
+ * value or is a `vararg` - that default, else a uniquely-typed member of [from] (an exact type
+ * match, else a subtype match), else a compile error recommending the `arg` function to add. The
+ * call-time value thus outranks a parameter's default and any [from] member; the default in turn
+ * outranks any [from] member, and a defaulted parameter needs no `arg` function. The object may
+ * declare nothing but such `arg` functions - anything else is a compile error.
+ *
+ * The generated function has the same visibility as the object. A `public` object whose [from],
+ * [builds], selected constructor, or [with] / [withNullable] type is `internal` is a compile error
+ * (that signature couldn't compile - make the object `internal`), and every `arg<Argument>` function
+ * on a `public` object must be `internal` (they are implementation detail, not public API).
  *
  * With [with] (or [withNullable]) set to a type other than `Unit`, the generated function takes a
- * second parameter `fun <Builds>(module: <From>, with: <With>): <Builds>` - nullable under
+ * second parameter `fun <Factory>.<Builds>(module: <From>, with: <With>): <Builds>` - nullable under
  * [withNullable] - that value resolves any constructor argument its type fits (ahead of the
  * argument's default and the module), is passed to every `arg<Argument>` function (each of which
  * must then take exactly one parameter of that type), and is passed to any member of [from] taking a

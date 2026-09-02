@@ -18,11 +18,11 @@ import com.squareup.kotlinpoet.ksp.writeTo
  * are bound exactly like the module's own. See [parseModule] for the validation rules and
  * [generateModuleFile] for the generated shape(s).
  *
- * For every `internal object` annotated with `@DIFactory`, generates a top-level builder function
- * for the class it `builds`, resolving each argument of that class's selected constructor (see
- * `constructorIndex`) off an instance of the `@DIModule` interface it's declared to build `from` -
- * so the built class itself never needs to know Inara exists. See [parseFactory] for the
- * resolution rules and [generateFactoryFile] for the generated shape.
+ * For every `public` or `internal` object annotated with `@DIFactory`, generates a builder function
+ * for the class it `builds` - an extension on that object - resolving each argument of that class's
+ * selected constructor (see `constructorIndex`) off an instance of the `@DIModule` interface it's
+ * declared to build `from` - so the built class itself never needs to know Inara exists. See
+ * [parseFactory] for the resolution rules and [generateFactoryFile] for the generated shape.
  */
 public class DIModuleProcessor(
     private val codeGenerator: CodeGenerator,

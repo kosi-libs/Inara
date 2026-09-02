@@ -15,7 +15,7 @@ class ModuleFactorySuspendTest {
             loadKeyed = SuspendBinding.factory { key -> Service(key.length) },
         )
 
-        val greeter = AsyncGreeter(async)
+        val greeter = AsyncGreeterDIFactory.AsyncGreeter(async)
 
         assertEquals(42, greeter.service.id)
     }

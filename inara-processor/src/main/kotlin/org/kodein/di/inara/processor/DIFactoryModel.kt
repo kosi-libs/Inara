@@ -100,10 +100,10 @@ internal data class FactoryArgumentModel(
 /**
  * A `@DIFactory` object, parsed and every one of `builds`'s selected constructor's arguments resolved.
  *
- * [visibility] is `internal` when any of `builds`, the selected constructor, `from`, or the `with` /
- * `withNullable` type is `internal`, else `public` - it is never the `@DIFactory` object's own
- * visibility (which is always `internal`, see [parseFactory]). It drives whether the generated
- * builder function is `internal`.
+ * [visibility] equals the `@DIFactory` object's own visibility (`public` or `internal`) - the
+ * generated function is an extension on that object, so it can be no more visible. [parseFactory]
+ * rejects a `public` object whose `builds`, selected constructor, `from`, or `with` / `withNullable`
+ * type is `internal` (that function's signature couldn't compile) rather than silently narrowing.
  *
  * [isSuspend] drives whether the generated builder function itself is `suspend` - see
  * [SuspendMode]: always `false` under `Suspend.Forbid` (structurally, since no `suspend` provider
@@ -206,8 +206,9 @@ internal fun parseFactory(
         reportError("Only objects may be annotated with @DIFactory.", objDecl)
         return null
     }
-    if (objDecl.getVisibility() != Visibility.INTERNAL) {
-        reportError("A @DIFactory object must be internal.", objDecl)
+    val objVisibility = objDecl.getVisibility()
+    if (objVisibility !in setOf(Visibility.PUBLIC, Visibility.INTERNAL)) {
+        reportError("A @DIFactory object must be public or internal.", objDecl)
         return null
     }
 
@@ -346,7 +347,16 @@ internal fun parseFactory(
             )
             continue
         }
-        if (fn.getVisibility() !in setOf(Visibility.PUBLIC, Visibility.INTERNAL)) {
+        if (objVisibility == Visibility.PUBLIC) {
+            if (fn.getVisibility() != Visibility.INTERNAL) {
+                reportError(
+                    "'$name' must be 'internal': '${objDecl.simpleName.asString()}' is 'public', so its " +
+                        "arg functions may not widen its public API.",
+                    fn,
+                )
+                continue
+            }
+        } else if (fn.getVisibility() !in setOf(Visibility.PUBLIC, Visibility.INTERNAL)) {
             reportError("'$name' must be public or internal.", fn)
             continue
         }
@@ -483,6 +493,31 @@ internal fun parseFactory(
         )
     }
 
+    // The generated function is an extension on the `@DIFactory` object, so it is exactly as visible
+    // as the object. A `public` function still can't name an `internal` type in its signature, so a
+    // `public` object whose `from`, `builds`, selected constructor, or `with` / `withNullable` type
+    // is `internal` can't work - report that here rather than emitting a file `kotlinc` then rejects.
+    if (objVisibility == Visibility.PUBLIC) {
+        val internalDeps = buildList {
+            if (fromDecl.getVisibility() == Visibility.INTERNAL) add("the 'from' module '$fromName'")
+            if (buildsDecl.getVisibility() == Visibility.INTERNAL) add("the 'builds' class '$buildsName'")
+            if (ctor.getVisibility() == Visibility.INTERNAL) add("its selected constructor")
+            if (withDecl?.getVisibility() == Visibility.INTERNAL) {
+                add("the '$withArgName' type '${withDecl.simpleName.asString()}'")
+            }
+        }
+        if (internalDeps.isNotEmpty()) {
+            val isAre = if (internalDeps.size == 1) "is" else "are"
+            val itThem = if (internalDeps.size == 1) "it" else "them"
+            reportError(
+                "Cannot generate the 'public' factory function '${objDecl.simpleName.asString()}.$buildsName' " +
+                    "because ${internalDeps.joinToString(", ")} $isAre 'internal'. Make " +
+                    "'${objDecl.simpleName.asString()}' 'internal', or make $itThem 'public'.",
+                objDecl,
+            )
+        }
+    }
+
     if (hasError) return null
 
     val originatingFiles: List<KSFile> = listOfNotNull(
@@ -498,23 +533,13 @@ internal fun parseFactory(
         SuspendMode.FORCE -> true
     }
 
-    // The generated function calls `ctor` directly and takes `from` (as `module`) and `with` as
-    // parameters, so it can only be as visible as the most restrictive of `builds`, the selected
-    // constructor, `from`, and `with` - a public class with an internal constructor (only reachable
-    // once a non-primary constructor can be selected), an internal `from` module, or an internal
-    // `with` type, still needs an internal generated function, or the signature wouldn't compile.
-    val visibility =
-        if (Visibility.INTERNAL in setOfNotNull(buildsDecl.getVisibility(), ctor.getVisibility(), fromDecl.getVisibility(), withDecl?.getVisibility()))
-            Visibility.INTERNAL
-        else Visibility.PUBLIC
-
     return FactoryModel(
         factoryClassName = objDecl.toClassName(),
         generatedBaseName = objDecl.generatedBaseName(),
         buildsClassName = buildsDecl.toClassName(),
         fromClassName = fromDecl.toClassName(),
         withTypeName = withType?.toTypeName(),
-        visibility = visibility,
+        visibility = objVisibility,
         arguments = arguments,
         isSuspend = isSuspend,
         originatingFiles = originatingFiles,

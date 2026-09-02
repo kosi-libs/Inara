@@ -34,7 +34,7 @@ val endpoint = network.endpoint("users")   // "https://api.example.com/users"
 internal object LoginControllerFactory
 
 // Thanks to @DIFactory
-val loginController = LoginController(network)
+val loginController = LoginControllerFactory.LoginController(network)
 ----
 
 No reflection. No service locator. No runtime graph. Just an interface, a generated implementation,
@@ -665,9 +665,9 @@ val inner: Outer.Inner = Inner(label = Binding.value("inner"))
 == Building plain classes
 
 Everything so far builds a `@DIModule` interface itself. `@DIFactory` builds something else with it:
-a plain constructor-shaped function for a class that never references Inara at all. Annotate an
-`internal object` with `builds`/`from`, and the processor generates a top-level function that
-resolves every constructor argument off a module instance:
+a plain constructor-shaped function for a class that never references Inara at all. Annotate a
+`public` or `internal` object with `builds`/`from`, and the processor generates an extension function
+on that object, named after `builds`, that resolves every constructor argument off a module instance:
 
 .UsersController.kt
 [source,kotlin]
@@ -675,34 +675,36 @@ resolves every constructor argument off a module instance:
 class UsersController(val httpClient: HttpClient, val endpoint: String)
 
 @DIFactory(builds = UsersController::class, from = NetworkModule::class)
-internal object UserControllerDIFactory {
-    fun NetworkModule.argEndpoint(): String = endpoint("users")
+public object UserControllerFactory {
+    internal fun NetworkModule.argEndpoint(): String = endpoint("users")
 }
 ----
 
 generates
 
-.InaraUserControllerDIFactory.kt
+.InaraUserControllerFactory.kt
 [source,kotlin]
 ----
-public fun UsersController(module: NetworkModule): UsersController = with(UserControllerDIFactory) {
+public fun UserControllerFactory.UsersController(module: NetworkModule): UsersController =
     UsersController(
         httpClient = module.httpClient(),
         endpoint = module.argEndpoint(),
     )
-}
 ----
 
-`UsersController` itself has no idea Inara exists — call the generated function like any other:
+`UsersController` itself has no idea Inara exists — call the generated function off the object:
 
 [source,kotlin]
 ----
-val controller = UsersController(network)   // `network` is a built NetworkModule
+val controller = UserControllerFactory.UsersController(network)   // `network` is a built NetworkModule
 ----
 
-The generated function is `internal` if any of `builds`, the selected constructor, `from`, or the
-`with` / `withNullable` type is `internal` — otherwise it is `public`. A `public` function can't
-expose an `internal` type in its signature, so the narrowest of the four wins.
+The generated function has the same visibility as the annotated object, and its own `arg<Argument>`
+functions are visible because the object is the extension receiver. Marking the object `public` when
+its `from` module, `builds` class, selected constructor, or `with` / `withNullable` type is
+`internal` is a compile error — that signature couldn't compile — so make the object `internal` in
+that case. On a `public` object every `arg<Argument>` function must be `internal`: they are
+implementation detail, not public API.
 
 === Resolving constructor arguments
 
@@ -710,9 +712,9 @@ Each constructor argument is resolved independently, in priority order:
 
 . An `arg<Argument>` extension function declared on the annotated object — `fun
   NetworkModule.argEndpoint(): String` resolves an argument named `endpoint`. This is the _only_
-  thing a `@DIFactory` object may declare; anything else is a compile error. It must be `public` or
-  `internal` — the generated top-level function calls it from outside the object, so a `private` one
-  is a compile error too.
+  thing a `@DIFactory` object may declare; anything else is a compile error. The generated function
+  is an extension on the object, not a member, so a `private` one is unreachable and a compile error;
+  on a `public` object it must be `internal`.
 . Otherwise, under `with` / `withNullable` (see below), the call-time value itself, when its type is
   assignable to the argument. The caller supplied it for this very call, so it outranks both the
   argument's own default and any `from` member — it shadows a same-typed member rather than tying
@@ -745,21 +747,19 @@ class UserSession(val httpClient: HttpClient, val greeting: String)
 data class RequestContext(val userId: String)
 
 @DIFactory(builds = UserSession::class, from = NetworkModule::class, with = RequestContext::class)
-internal object UserSessionDIFactory {
-    fun NetworkModule.argGreeting(context: RequestContext): String = "Hello, ${context.userId}"
+public object UserSessionFactory {
+    internal fun NetworkModule.argGreeting(context: RequestContext): String = "Hello, ${context.userId}"
 }
 ----
 
-.InaraUserSessionDIFactory.kt
+.InaraUserSessionFactory.kt
 [source,kotlin]
 ----
-public fun UserSession(module: NetworkModule, with: RequestContext): UserSession =
-    kotlin.with(UserSessionDIFactory) {
-        UserSession(
-            httpClient = module.httpClient(),      // resolved as usual, no `with`
-            greeting = module.argGreeting(with),   // the call-time value flows in
-        )
-    }
+public fun UserSessionFactory.UserSession(module: NetworkModule, with: RequestContext): UserSession =
+    UserSession(
+        httpClient = module.httpClient(),      // resolved as usual, no `with`
+        greeting = module.argGreeting(with),   // the call-time value flows in
+    )
 ----
 
 When `with` is set (it defaults to `Unit` — no parameter, everything above unchanged):
@@ -776,8 +776,9 @@ When `with` is set (it defaults to `Unit` — no parameter, everything above unc
   member. A zero- and a one-parameter member matching the same argument is an ambiguity error, just
   as two zero-parameter members are.
 
-Use `withNullable` instead of `with` for a nullable parameter — `fun UserSession(module:
-NetworkModule, with: RequestContext?)`. It is `with` in every other respect, except that every
+Use `withNullable` instead of `with` for a nullable parameter — `fun
+UserSessionFactory.UserSession(module: NetworkModule, with: RequestContext?)`. It is `with` in
+every other respect, except that every
 `arg<Argument>` function must then declare its parameter as `RequestContext?`, only a `from` member
 whose single parameter accepts `null` is an automatic-resolution candidate (a `vararg` never is), and
 setting both `with` and `withNullable` is a compile error.
@@ -794,18 +795,17 @@ and only if an argument actually resolved to one:
 class AsyncGreeter(val service: Service)
 
 @DIFactory(builds = AsyncGreeter::class, from = AsyncModule::class)
-internal object AsyncGreeterDIFactory
+public object AsyncGreeterFactory
 ----
 
-.InaraAsyncGreeterDIFactory.kt
+.InaraAsyncGreeterFactory.kt
 [source,kotlin]
 ----
 // generated:
-public suspend fun AsyncGreeter(module: AsyncModule): AsyncGreeter = with(AsyncGreeterDIFactory) {
+public suspend fun AsyncGreeterFactory.AsyncGreeter(module: AsyncModule): AsyncGreeter =
     AsyncGreeter(
         service = module.load(),   // AsyncModule.load() is a suspend member
     )
-}
 ----
 
 `suspend = Suspend.Forbid` excludes every `suspend` candidate from resolution entirely — a
@@ -828,10 +828,9 @@ class Greeter private constructor(val greeting: String, private val marker: Int)
 }
 
 @DIFactory(builds = Greeter::class, from = NetworkModule::class, constructorIndex = 1)
-internal object GreeterDIFactory
-// generated: public fun Greeter(module: NetworkModule): Greeter = with(GreeterDIFactory) {
+public object GreeterFactory
+// generated: public fun GreeterFactory.Greeter(module: NetworkModule): Greeter =
 //                Greeter(baseUrl = module.baseUrl)
-//            }
 ----
 
 Only the selected constructor's parameters are resolved — every other constructor, including the

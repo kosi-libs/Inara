@@ -13,7 +13,7 @@ class ModuleFactoryDefaultTest {
             verbose = Binding.value(true),
         )
 
-        val report = Report(module)
+        val report = ReportDIFactory.Report(module)
 
         assertEquals("Q3 report", report.title)
         // `verbose` has a constructor default, so the factory never consults `module.verbose` (true).

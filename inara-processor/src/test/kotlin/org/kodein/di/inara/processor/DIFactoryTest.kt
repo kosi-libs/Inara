@@ -10,10 +10,10 @@ import kotlin.test.assertTrue
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 
 /**
- * Verifies the generated shape for a `@DIFactory` object: a top-level function named after `builds`
- * that resolves every one of its primary constructor's arguments off a `from` module instance,
- * inside a `with(<factory object>) { ... }` block so the object's own `arg<Argument>` extension
- * functions are in scope.
+ * Verifies the generated shape for a `@DIFactory` object: an extension function on the object, named
+ * after `builds`, that resolves every one of its primary constructor's arguments off a `from` module
+ * instance. The object is the extension receiver, so its own `arg<Argument>` extension functions are
+ * in scope with no `with(<object>) { ... }` wrapper. The function's visibility matches the object's.
  */
 class DIFactoryTest {
 
@@ -42,8 +42,8 @@ class DIFactoryTest {
             )
 
             @DIFactory(builds = UsersController::class, from = NetworkModule::class)
-            internal object UserControllerDIFactory {
-                fun NetworkModule.argEndpoint(): String = endpoint("users")
+            public object UserControllerDIFactory {
+                internal fun NetworkModule.argEndpoint(): String = endpoint("users")
             }
             """
         )
@@ -53,8 +53,8 @@ class DIFactoryTest {
 
         val generated = compilation.generatedSource("sample/factory", "InaraUserControllerDIFactory.kt")
 
-        assertTrue("public fun UsersController(module: NetworkModule): UsersController" in generated, generated)
-        assertTrue("with(UserControllerDIFactory)" in generated, generated)
+        assertTrue("public fun UserControllerDIFactory.UsersController(module: NetworkModule): UsersController" in generated, generated)
+        assertTrue("with(" !in generated, generated)
         assertTrue("UsersController(" in generated, generated)
         assertTrue("httpClient = module.httpClient()," in generated, generated)
         assertTrue("endpoint = module.argEndpoint()," in generated, generated)
@@ -78,7 +78,7 @@ class DIFactoryTest {
             class Greeter(val greeting: String)
 
             @DIFactory(builds = Greeter::class, from = GreetingModule::class)
-            internal object GreeterDIFactory
+            public object GreeterDIFactory
             """
         )
 
@@ -86,14 +86,14 @@ class DIFactoryTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
-        assertTrue("public fun Greeter(module: GreetingModule): Greeter" in generated, generated)
+        assertTrue("public fun GreeterDIFactory.Greeter(module: GreetingModule): Greeter" in generated, generated)
         assertTrue("greeting = module.greeting," in generated, generated)
     }
 
     @Test
     fun internalArgFunction_isAccepted() {
-        // An `internal` arg function on the (always-internal) object is reachable from the generated
-        // file, which is in the same module - so it's allowed, and the generated function stays public.
+        // A `public` @DIFactory object requires its arg functions to be `internal` (they are
+        // implementation detail); the generated file is in the same module, so calling one is fine.
         val source = SourceFile.kotlin(
             "Factory.kt",
             """
@@ -110,7 +110,7 @@ class DIFactoryTest {
             class Greeter(val greeting: String)
 
             @DIFactory(builds = Greeter::class, from = GreetingModule::class)
-            internal object GreeterDIFactory {
+            public object GreeterDIFactory {
                 internal fun GreetingModule.argGreeting(): String = greeting.uppercase()
             }
             """
@@ -120,7 +120,7 @@ class DIFactoryTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
-        assertTrue("public fun Greeter(module: GreetingModule): Greeter" in generated, generated)
+        assertTrue("public fun GreeterDIFactory.Greeter(module: GreetingModule): Greeter" in generated, generated)
         assertTrue("greeting = module.argGreeting()," in generated, generated)
     }
 
@@ -192,7 +192,7 @@ class DIFactoryTest {
     }
 
     @Test
-    fun internalBuilds_generatesInternalFunction() {
+    fun publicObject_generatesPublicExtensionFunction() {
         val source = SourceFile.kotlin(
             "Factory.kt",
             """
@@ -206,22 +206,24 @@ class DIFactoryTest {
                 val greeting: String
             }
 
-            internal class InternalGreeter(val greeting: String)
+            class Greeter(val greeting: String)
 
-            @DIFactory(builds = InternalGreeter::class, from = GreetingModule::class)
-            internal object InternalGreeterDIFactory
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            public object GreeterDIFactory
             """
         )
 
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/factory", "InaraInternalGreeterDIFactory.kt")
-        assertTrue("internal fun InternalGreeter(module: GreetingModule): InternalGreeter" in generated, generated)
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("public fun GreeterDIFactory.Greeter(module: GreetingModule): Greeter" in generated, generated)
     }
 
     @Test
-    fun internalFromModule_generatesInternalFunction() {
+    fun internalObject_generatesInternalExtensionFunction() {
+        // The object's visibility is the function's; an `internal` `from` module is fine here
+        // precisely because the function is `internal` too.
         val source = SourceFile.kotlin(
             "Factory.kt",
             """
@@ -246,7 +248,7 @@ class DIFactoryTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
-        assertTrue("internal fun Greeter(module: SecretModule): Greeter" in generated, generated)
+        assertTrue("internal fun GreeterDIFactory.Greeter(module: SecretModule): Greeter" in generated, generated)
     }
 
     @Test
@@ -385,37 +387,6 @@ class DIFactoryTest {
     }
 
     @Test
-    fun internalSecondaryConstructorOnPublicClass_generatesInternalFunction() {
-        val source = SourceFile.kotlin(
-            "Factory.kt",
-            """
-            package sample.factory
-
-            import org.kodein.di.inara.DIFactory
-            import org.kodein.di.inara.DIModule
-
-            @DIModule
-            interface GreetingModule {
-                val greeting: String
-            }
-
-            class Greeter(val count: Int) {
-                internal constructor(greeting: String) : this(greeting.length)
-            }
-
-            @DIFactory(builds = Greeter::class, from = GreetingModule::class, constructorIndex = 1)
-            internal object GreeterDIFactory
-            """
-        )
-
-        val compilation = compile(source)
-        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
-
-        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
-        assertTrue("internal fun Greeter(module: GreetingModule): Greeter" in generated, generated)
-    }
-
-    @Test
     fun withArgument_isPassedToArgFunctionsAndOneParameterMembers() {
         val source = SourceFile.kotlin(
             "Factory.kt",
@@ -436,8 +407,8 @@ class DIFactoryTest {
             class Controller(val client: HttpClient, val port: Int, val tag: String)
 
             @DIFactory(builds = Controller::class, from = NetworkModule::class, with = String::class)
-            internal object ControllerDIFactory {
-                fun NetworkModule.argTag(scope: String): String = scope.uppercase()
+            public object ControllerDIFactory {
+                internal fun NetworkModule.argTag(scope: String): String = scope.uppercase()
             }
             """
         )
@@ -446,8 +417,7 @@ class DIFactoryTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraControllerDIFactory.kt")
-        assertTrue("public fun Controller(module: NetworkModule, with: String): Controller" in generated, generated)
-        assertTrue("kotlin.with(ControllerDIFactory)" in generated, generated)
+        assertTrue("public fun ControllerDIFactory.Controller(module: NetworkModule, with: String): Controller" in generated, generated)
         assertTrue("client = module.clientFor(with)," in generated, generated)
         assertTrue("port = module.port," in generated, generated)
         assertTrue("tag = module.argTag(with)," in generated, generated)
@@ -499,7 +469,7 @@ class DIFactoryTest {
             class Greeter(val name: String)
 
             @DIFactory(builds = Greeter::class, from = EmptyModule::class, with = String::class)
-            internal object GreeterDIFactory
+            public object GreeterDIFactory
             """
         )
 
@@ -507,7 +477,7 @@ class DIFactoryTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
-        assertTrue("public fun Greeter(module: EmptyModule, with: String): Greeter" in generated, generated)
+        assertTrue("public fun GreeterDIFactory.Greeter(module: EmptyModule, with: String): Greeter" in generated, generated)
         assertTrue("name = with," in generated, generated)
     }
 
@@ -583,7 +553,7 @@ class DIFactoryTest {
             class Thing(vararg val tags: String)
 
             @DIFactory(builds = Thing::class, from = EmptyModule::class, with = String::class)
-            internal object ThingDIFactory
+            public object ThingDIFactory
             """
         )
 
@@ -591,7 +561,7 @@ class DIFactoryTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraThingDIFactory.kt")
-        assertTrue("kotlin.with(ThingDIFactory) {" in generated, generated)
+        assertTrue("public fun ThingDIFactory.Thing(module: EmptyModule, with: String): Thing" in generated, generated)
         assertTrue("Thing()" in generated, generated)
         assertTrue("tags =" !in generated, generated)
     }
@@ -614,7 +584,7 @@ class DIFactoryTest {
             class Screen(val ctx: Ctx?)
 
             @DIFactory(builds = Screen::class, from = EmptyModule::class, withNullable = Ctx::class)
-            internal object ScreenDIFactory
+            public object ScreenDIFactory
             """
         )
 
@@ -622,41 +592,8 @@ class DIFactoryTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraScreenDIFactory.kt")
-        assertTrue("public fun Screen(module: EmptyModule, with: Ctx?): Screen" in generated, generated)
+        assertTrue("public fun ScreenDIFactory.Screen(module: EmptyModule, with: Ctx?): Screen" in generated, generated)
         assertTrue("ctx = with," in generated, generated)
-    }
-
-    @Test
-    fun internalWithType_generatesInternalFunction() {
-        val source = SourceFile.kotlin(
-            "Factory.kt",
-            """
-            package sample.factory
-
-            import org.kodein.di.inara.DIFactory
-            import org.kodein.di.inara.DIModule
-
-            internal class Ctx
-
-            @DIModule
-            interface GreetingModule {
-                val greeting: String
-            }
-
-            class Greeter(val greeting: String)
-
-            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = Ctx::class)
-            internal object GreeterDIFactory {
-                fun GreetingModule.argGreeting(ctx: Ctx): String = greeting
-            }
-            """
-        )
-
-        val compilation = compile(source)
-        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
-
-        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
-        assertTrue("internal fun Greeter(module: GreetingModule, with: Ctx): Greeter" in generated, generated)
     }
 
     @Test
@@ -679,8 +616,8 @@ class DIFactoryTest {
             class Greeter(val locale: String, val greeting: String)
 
             @DIFactory(builds = Greeter::class, from = GreetingModule::class, withNullable = Ctx::class)
-            internal object GreeterDIFactory {
-                fun GreetingModule.argGreeting(ctx: Ctx?): String = ctx?.toString() ?: "anon"
+            public object GreeterDIFactory {
+                internal fun GreetingModule.argGreeting(ctx: Ctx?): String = ctx?.toString() ?: "anon"
             }
             """
         )
@@ -689,8 +626,7 @@ class DIFactoryTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
-        assertTrue("public fun Greeter(module: GreetingModule, with: Ctx?): Greeter" in generated, generated)
-        assertTrue("kotlin.with(GreeterDIFactory)" in generated, generated)
+        assertTrue("public fun GreeterDIFactory.Greeter(module: GreetingModule, with: Ctx?): Greeter" in generated, generated)
         assertTrue("locale = module.localeFor(with)," in generated, generated)
         assertTrue("greeting = module.argGreeting(with)," in generated, generated)
     }
@@ -713,7 +649,7 @@ class DIFactoryTest {
             class Greeter(val greeting: String)
 
             @DIFactory(builds = Greeter::class, from = GreetingModule::class)
-            internal object GreeterDIFactory
+            public object GreeterDIFactory
             """
         )
 
@@ -721,8 +657,7 @@ class DIFactoryTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
-        assertTrue("public fun Greeter(module: GreetingModule): Greeter" in generated, generated)
-        assertTrue("= with(GreeterDIFactory)" in generated, generated)
+        assertTrue("public fun GreeterDIFactory.Greeter(module: GreetingModule): Greeter" in generated, generated)
         assertTrue("with:" !in generated, generated)
     }
 
@@ -746,12 +681,12 @@ class DIFactoryTest {
 
             class OuterA {
                 @DIFactory(builds = Widget::class, from = LabelModule::class)
-                internal object Fac
+                public object Fac
             }
 
             class OuterB {
                 @DIFactory(builds = Gadget::class, from = LabelModule::class)
-                internal object Fac
+                public object Fac
             }
             """
         )
@@ -763,10 +698,8 @@ class DIFactoryTest {
         val a = compilation.generatedSource("sample/factory", "InaraOuterAFac.kt")
         val b = compilation.generatedSource("sample/factory", "InaraOuterBFac.kt")
 
-        assertTrue("public fun Widget(module: LabelModule): Widget" in a, a)
-        assertTrue("with(OuterA.Fac)" in a, a)
-        assertTrue("public fun Gadget(module: LabelModule): Gadget" in b, b)
-        assertTrue("with(OuterB.Fac)" in b, b)
+        assertTrue("public fun OuterA.Fac.Widget(module: LabelModule): Widget" in a, a)
+        assertTrue("public fun OuterB.Fac.Gadget(module: LabelModule): Gadget" in b, b)
     }
 
     @Test
@@ -793,25 +726,26 @@ class DIFactoryTest {
 
             class OuterA {
                 @DIFactory(builds = Widget::class, from = LabelModuleA::class)
-                internal object Fac
+                public object Fac
             }
 
             class OuterB {
                 @DIFactory(builds = Widget::class, from = LabelModuleB::class)
-                internal object Fac
+                public object Fac
             }
             """
         )
 
-        // Both generated functions are named `Widget`; the Kotlin compiler accepts them because
-        // their `module` parameter types differ, so compiling the generated code is the assertion.
+        // Both generated functions are named `Widget`; the compiler accepts them because their
+        // receivers (`OuterA.Fac` / `OuterB.Fac`) and `module` parameter types both differ, so
+        // compiling the generated code is the assertion.
         val compilation = compile(source)
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
         val a = compilation.generatedSource("sample/factory", "InaraOuterAFac.kt")
         val b = compilation.generatedSource("sample/factory", "InaraOuterBFac.kt")
-        assertTrue("public fun Widget(module: LabelModuleA): Widget" in a, a)
-        assertTrue("public fun Widget(module: LabelModuleB): Widget" in b, b)
+        assertTrue("public fun OuterA.Fac.Widget(module: LabelModuleA): Widget" in a, a)
+        assertTrue("public fun OuterB.Fac.Widget(module: LabelModuleB): Widget" in b, b)
     }
 
     @Test
