@@ -60,12 +60,12 @@ store, and swap.
 *Every dependency is checked by the compiler.* Forget a binding and the builder call doesn't
 compile. There is no runtime "unresolved dependency" failure mode.
 
-*Bodies see the whole module.* A `Binding`'s lambda runs with the module as its receiver, so any
+*Bodies see the whole module.* A ``Binding``'s lambda runs with the module as its receiver, so any
 member can reach any sibling member — including inherited ones — without you wiring anything up:
 
 [source,kotlin]
 ----
-Binding.single { HttpClient(baseUrl) }   // `baseUrl` is this module's own member
+Binding.single { HttpClient(this.baseUrl) }   // `baseUrl` is this module's own member
 ----
 
 *`suspend` members are native.* Mark a member `suspend` and it is bound with a `SuspendBinding`,
@@ -819,7 +819,7 @@ generates a `suspend` function, whether or not any provider actually is.
 
 === `constructorIndex` — building through a non-primary constructor
 
-By default `@DIFactory` calls `builds`'s primary constructor. `constructorIndex` selects a different
+By default `@DIFactory` calls ``builds``'s primary constructor. `constructorIndex` selects a different
 one instead, in declaration order (`0` the primary, `1` the first secondary, `2` the second, …) —
 useful when the intended entry point isn't the primary constructor, e.g. a `private` primary paired
 with a public secondary:
