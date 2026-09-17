@@ -934,7 +934,7 @@ supported target.
 | `inara-processor`
 | The KSP `SymbolProcessor`: `ModuleModel.kt` (parsing/validation) and `ModuleFileGenerator.kt` (KotlinPoet generation).
 
-| `inara-tests`
+| `tests`
 | Integration tests running the real processor through Gradle/KSP across every target.
 |===
 
@@ -944,12 +944,12 @@ supported target.
 ----
 ./gradlew build                  # everything, all targets
 ./gradlew :inara-processor:test  # processor golden-source + validation tests
-./gradlew :inara-tests:jvmTest   # real KSP round-trip
+./gradlew :tests:jvmTest         # real KSP round-trip
 ----
 
 Processor tests compile sources in-memory with
 https://github.com/ZacSweers/kotlin-compile-testing[kotlin-compile-testing] and assert on the
-generated output; `inara-tests` exercises the same processor through a real Gradle KSP run.
+generated output; `tests` exercises the same processor through a real Gradle KSP run.
 
 == License
 

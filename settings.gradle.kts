@@ -17,6 +17,9 @@ rootProject.name = "Kosi-Inara"
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
-include(":inara-runtime")
-include(":inara-processor")
-include(":inara-tests")
+include(
+    ":inara-processor",
+    ":inara-runtime",
+
+    ":tests",
+)

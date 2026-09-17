@@ -6,9 +6,9 @@ plugins {
 }
 
 kotlin {
-    jvm()
+    jvmToolchain(findProperty("jvm.toolchain")!!.toString().toInt())
 
-    jvmToolchain(17)
+    jvm()
 
     iosArm64()
     iosSimulatorArm64()
@@ -47,9 +47,9 @@ kotlin {
     sourceSets {
         commonMain {
             kotlin.srcDir(layout.buildDirectory.dir("generated/ksp/metadata/commonMain/kotlin"))
-            dependencies {
-                implementation(projects.inaraRuntime)
-            }
+        }
+        commonMain.dependencies {
+            implementation(projects.inaraRuntime)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
