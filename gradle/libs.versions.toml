@@ -1,10 +1,10 @@
 [versions]
-atomicfu = "0.32.1"                 # https://github.com/Kotlin/kotlinx-atomicfu/releases
+atomicfu = "0.33.0"                 # https://github.com/Kotlin/kotlinx-atomicfu/releases
 coroutines = "1.11.0"               # https://github.com/Kotlin/kotlinx.coroutines/releases
-kctfork = "0.13.0"                  # https://github.com/ZacSweers/kotlin-compile-testing/releases
-kotlin = "2.4.10"                   # https://kotlinlang.org/docs/releases.html#release-history
-kotlinPoet = "2.3.0"                # https://github.com/square/kotlinpoet/releases
-ksp = "2.3.11"                      # https://github.com/google/ksp/releases
+kctfork = "0.14.0"                  # https://github.com/ZacSweers/kotlin-compile-testing/releases
+kotlin = "2.4.20"                   # https://kotlinlang.org/docs/releases.html#release-history
+kotlinPoet = "2.4.0"                # https://github.com/square/kotlinpoet/releases
+ksp = "2.3.12"                      # https://github.com/google/ksp/releases
 mavenPublish = "0.37.0"             # https://github.com/vanniktech/gradle-maven-publish-plugin/releases
 
 [plugins]
