@@ -1109,4 +1109,421 @@ class DIFactoryTest {
         assertTrue("greeting = module.argGreeting()," in generated, generated)
         assertTrue("tags" !in generated, generated)
     }
+
+    // --- Pass-through parameters: a step-5 argument nothing else resolves becomes a parameter of
+    // the generated function instead of a compile error, passed straight to the constructor. Every
+    // pass-through parameter is named `arg<Argument>` - never the constructor parameter's own name -
+    // so a generated signature is legible by prefix alone: one `module`, zero or one `with`, zero or
+    // more `arg*`. ---
+
+    @Test
+    fun unresolvableArgument_becomesAnArgNamedPassThroughParameter() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface EmptyModule { val unrelated: Int }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = EmptyModule::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("fun GreeterDIFactory.Greeter(" in generated, generated)
+        assertTrue("module: EmptyModule" in generated, generated)
+        assertTrue("argGreeting: String" in generated, generated)
+        assertTrue("greeting = argGreeting," in generated, generated)
+    }
+
+    @Test
+    fun forbid_onlySuspendCandidate_becomesANonSuspendPassThroughParameter() {
+        // Suspend.Forbid excludes the suspend module member from the candidate pool entirely, so
+        // 'token' can't resolve - it becomes an ordinary, non-suspend pass-through parameter rather
+        // than an error, exactly like any other unresolvable argument.
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIFactory.Suspend
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface TokenModule {
+                suspend fun token(): String
+            }
+            class Session(val token: String)
+
+            @DIFactory(builds = Session::class, from = TokenModule::class, suspend = Suspend.Forbid)
+            internal object SessionDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraSessionDIFactory.kt")
+        assertTrue("fun SessionDIFactory.Session(" in generated, generated)
+        assertTrue("suspend" !in generated, generated)
+        assertTrue("argToken: String" in generated, generated)
+        assertTrue("token = argToken," in generated, generated)
+    }
+
+    @Test
+    fun withArgument_oneParameterMemberParameterMismatch_becomesAPassThroughParameter() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+            @DIModule
+            interface GreetingModule {
+                fun greetingFor(count: Int): String
+            }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = Ctx::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("with: Ctx" in generated, generated)
+        assertTrue("argGreeting: String" in generated, generated)
+        assertTrue("greeting = argGreeting," in generated, generated)
+    }
+
+    @Test
+    fun withArgument_unresolvableArgument_becomesAPassThroughParameterAfterWith() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+            @DIModule
+            interface GreetingModule { val unrelated: Int }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = Ctx::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("module: GreetingModule" in generated, generated)
+        assertTrue("with: Ctx" in generated, generated)
+        assertTrue("argGreeting: String" in generated, generated)
+        assertTrue("greeting = argGreeting," in generated, generated)
+    }
+
+    @Test
+    fun withNullable_nonNullableOneParameterMember_becomesAPassThroughParameter() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+            @DIModule
+            interface GreetingModule {
+                fun greetingFor(ctx: Ctx): String
+            }
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class, withNullable = Ctx::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("with: Ctx?" in generated, generated)
+        assertTrue("argGreeting: String" in generated, generated)
+        assertTrue("greeting = argGreeting," in generated, generated)
+    }
+
+    @Test
+    fun withNullable_varargMember_isNotACandidate_becomesAPassThroughParameter() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface PathModule {
+                fun join(vararg parts: String): String
+            }
+            class Thing(val text: String)
+
+            @DIFactory(builds = Thing::class, from = PathModule::class, withNullable = Array<String>::class)
+            internal object ThingDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraThingDIFactory.kt")
+        assertTrue("argText: String" in generated, generated)
+        assertTrue("text = argText," in generated, generated)
+    }
+
+    @Test
+    fun withNullable_nonNullableConstructorArgument_becomesAPassThroughParameterAlongsideWith() {
+        // 'ctx' is non-nullable and 'with' is 'Ctx?', so it can't resolve straight from the call-time
+        // value (see the `withType` step) - it becomes its own pass-through parameter, in addition to
+        // (not instead of) `with`.
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Ctx
+            @DIModule
+            interface EmptyModule { val unrelated: Int }
+            class Screen(val ctx: Ctx)
+
+            @DIFactory(builds = Screen::class, from = EmptyModule::class, withNullable = Ctx::class)
+            internal object ScreenDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraScreenDIFactory.kt")
+        assertTrue("module: EmptyModule" in generated, generated)
+        assertTrue("with: Ctx?" in generated, generated)
+        assertTrue("argCtx: Ctx" in generated, generated)
+        assertTrue("ctx = argCtx," in generated, generated)
+    }
+
+    @Test
+    fun multiplePassThroughParameters_keepConstructorDeclarationOrderInterleavedWithResolvedArguments() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface GreetingModule { val greeting: String }
+            class Widget(val first: Int, val greeting: String, val second: Boolean)
+
+            @DIFactory(builds = Widget::class, from = GreetingModule::class)
+            internal object WidgetDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraWidgetDIFactory.kt")
+        assertTrue("argFirst: Int" in generated, generated)
+        assertTrue("argSecond: Boolean" in generated, generated)
+        // Both pass-throughs come after `module`, `argFirst` before `argSecond` - constructor order.
+        val moduleIndex = generated.indexOf("module: GreetingModule")
+        val firstIndex = generated.indexOf("argFirst: Int")
+        val secondIndex = generated.indexOf("argSecond: Boolean")
+        assertTrue(moduleIndex in 0..<firstIndex && firstIndex < secondIndex, generated)
+        assertTrue("greeting = module.greeting," in generated, generated)
+        assertTrue("first = argFirst," in generated, generated)
+        assertTrue("second = argSecond," in generated, generated)
+    }
+
+    @Test
+    fun passThroughParameter_ofANullableType() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface EmptyModule { val unrelated: Int }
+            class Greeter(val nickname: String?)
+
+            @DIFactory(builds = Greeter::class, from = EmptyModule::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("argNickname: String?" in generated, generated)
+        assertTrue("nickname = argNickname," in generated, generated)
+    }
+
+    @Test
+    fun passThroughParameter_namedModule_isPrefixedWithArgLikeAnyOther() {
+        // The `arg` prefix is unconditional, not just a fallback for an actual name collision - so a
+        // constructor parameter literally named `module` becomes `argModule` exactly like any other
+        // pass-through, and never collides with the generated function's own `module` parameter.
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface EmptyModule { val unrelated: Int }
+            class Greeter(val module: String)
+
+            @DIFactory(builds = Greeter::class, from = EmptyModule::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("argModule: String" in generated, generated)
+        assertTrue("module = argModule," in generated, generated)
+    }
+
+    @Test
+    fun passThroughParameters_namedModuleAndArgModule_bothUnresolvable_areRenamedDeterministically() {
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface EmptyModule { val unrelated: Int }
+            class Greeter(val module: String, val argModule: String)
+
+            @DIFactory(builds = Greeter::class, from = EmptyModule::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        // 'module' claims 'argModule' first (constructor order); the real 'argModule' constructor
+        // parameter would also become 'argModule', so it falls back one step further, to
+        // 'argArgModule'. Both constructor arguments are still named at the call site, so which
+        // generated parameter name backs which is an implementation detail - only that the outcome is
+        // deterministic and each name is used exactly once.
+        assertTrue("argModule: String" in generated, generated)
+        assertTrue("argArgModule: String" in generated, generated)
+        assertTrue("module = argModule," in generated, generated)
+        assertTrue("argModule = argArgModule," in generated, generated)
+    }
+
+    @Test
+    fun passThroughParameter_namedWith_isStillPrefixedWithArg() {
+        // The `arg` prefix applies unconditionally, whether or not `with`/`withNullable` is set - so
+        // a constructor parameter literally named `with` becomes `argWith` here too, even though
+        // there is no `with` function parameter for it to possibly collide with.
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface EmptyModule { val unrelated: Int }
+            class Greeter(val with: String)
+
+            @DIFactory(builds = Greeter::class, from = EmptyModule::class)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("argWith: String" in generated, generated)
+        assertTrue("with = argWith," in generated, generated)
+    }
+
+    @Test
+    fun differingConstructorIndex_generatesDistinctOverloadsWhenPassThroughShapesDiffer() {
+        // Two annotations sharing `builds`/`from`/`with` used to collide unconditionally on that
+        // triple; they no longer do when the selected constructors leave different arguments
+        // unresolved - here the primary's 'greeting: String' can't resolve off 'EmptyModule' (so it
+        // becomes a pass-through parameter) while the secondary's 'nickname: Int' resolves straight
+        // off 'unrelated', so the two generated functions genuinely have different signatures.
+        val source = SourceFile.kotlin(
+            "Factory.kt",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface EmptyModule { val unrelated: Int }
+
+            class Greeter(val greeting: String) {
+                constructor(nickname: Int) : this(nickname.toString())
+            }
+
+            @DIFactory(builds = Greeter::class, from = EmptyModule::class, constructorIndex = 0)
+            @DIFactory(builds = Greeter::class, from = EmptyModule::class, constructorIndex = 1)
+            internal object GreeterDIFactory
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/factory", "InaraGreeterDIFactory.kt")
+        assertTrue("fun GreeterDIFactory.Greeter(module: EmptyModule, argGreeting: String): Greeter" in generated, generated)
+        assertTrue("fun GreeterDIFactory.Greeter(module: EmptyModule): Greeter" in generated, generated)
+        assertTrue("nickname = module.unrelated," in generated, generated)
+    }
 }

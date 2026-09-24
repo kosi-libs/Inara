@@ -6,10 +6,13 @@ import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.symbol.ClassKind
 import com.google.devtools.ksp.symbol.KSAnnotation
 import com.google.devtools.ksp.symbol.KSClassDeclaration
+import com.google.devtools.ksp.symbol.KSDeclaration
 import com.google.devtools.ksp.symbol.KSFile
 import com.google.devtools.ksp.symbol.KSFunctionDeclaration
 import com.google.devtools.ksp.symbol.KSNode
 import com.google.devtools.ksp.symbol.KSType
+import com.google.devtools.ksp.symbol.KSTypeAlias
+import com.google.devtools.ksp.symbol.KSTypeParameter
 import com.google.devtools.ksp.symbol.Modifier
 import com.google.devtools.ksp.symbol.Visibility
 import com.squareup.kotlinpoet.ClassName
@@ -84,6 +87,13 @@ internal sealed class ArgumentSource {
     /** `module.<memberName>()` - a `fun` on `from`, called with no argument ([withArgument] `null`)
      * or with the `with` value per [withArgument]. */
     internal data class ModuleFunction(val memberName: String, val withArgument: WithArgument?) : ArgumentSource()
+
+    /** `<functionParamName>` - the generated function's own pass-through parameter, passed straight
+     * through to the constructor. Produced when nothing else resolves the argument (step 5): rather
+     * than a compile error, the generated function simply asks the caller for it. Never `suspend`
+     * (see [FactoryArgumentModel.isSuspend]) and never a `vararg` (see [FactoryContext.varargParams]
+     * - a vararg is always omissible, so it never reaches step 5). */
+    internal data class PassThrough(val functionParamName: String) : ArgumentSource()
 }
 
 /** One argument of `builds`'s selected constructor (see `constructorIndex`), resolved to where its
@@ -122,9 +132,18 @@ internal data class FactoryModel(
     val withTypeName: TypeName?,
     val visibility: Visibility,
     val arguments: List<FactoryArgumentModel>,
+    /** One parameter the generated function takes purely to hand it to the constructor - a step-5
+     * argument nothing resolved, in constructor declaration order, placed after `module` and `with`
+     * (see `DIFactoryFileGenerator`). */
+    val passThroughParameters: List<PassThroughParameter>,
     val isSuspend: Boolean,
     val originatingFiles: List<KSFile>,
 )
+
+/** One [FactoryModel.passThroughParameters] entry: [name] is the generated function's parameter
+ * name - always `arg<Argument>` (see `passThroughParamName`), never the constructor parameter's own
+ * name - [typeName] the constructor parameter's own declared type, unchanged. */
+internal data class PassThroughParameter(val name: String, val typeName: TypeName)
 
 /** The simple name of the `arg<Argument>` function that would resolve a constructor parameter
  * named [paramName], e.g. `argEndpoint` for `endpoint`. */
@@ -133,6 +152,89 @@ private fun argFunctionName(paramName: String): String = "arg${paramName.replace
 /** True when [a] and [b] denote the same type - `KSType` has no reliable structural `equals`, so
  * mutual assignability is the robust way to ask this using only the documented API. */
 private fun sameType(a: KSType, b: KSType): Boolean = a.isAssignableFrom(b) && b.isAssignableFrom(a)
+
+/** Every declaration [type] structurally reaches: its own, an alias it is written through *and*
+ * that alias's expansion (a `typealias` doesn't shield what it expands to, e.g. `typealias Ids =
+ * List<InternalId>`), and recursively every type argument's. [depth] bounds the recursion for a
+ * pathological or self-referential generic rather than relying on `KSType` identity, which isn't a
+ * documented equality contract. Backs both [containsUnresolvedTypeParameter]/[containsErrorType]
+ * (checked before a pass-through parameter's type is ever handed to `toTypeName()`) and
+ * [internalDeclarationsIn] (checked before it is written into a signature). */
+private fun reachableDeclarations(type: KSType, depth: Int = 0): List<KSDeclaration> {
+    if (depth > 20) return emptyList()
+    val decl = type.declaration
+    val result = mutableListOf(decl)
+    if (decl is KSTypeAlias) result += reachableDeclarations(decl.type.resolve(), depth + 1)
+    for (arg in type.arguments) {
+        val argType = arg.type?.resolve() ?: continue
+        result += reachableDeclarations(argType, depth + 1)
+    }
+    return result
+}
+
+/** True when [type] (or a type argument of it, recursively) resolves to a type parameter of the
+ * enclosing generic declaration - the shape [parseFactories]'s KDoc already documents as
+ * unsupported for a generic `builds` class. `KSType.toTypeName()` throws on one with the default
+ * (empty) `TypeParameterResolver`, so a pass-through parameter must be checked for this *before*
+ * that call, or the processor crashes instead of leaving it as an ordinary compile error. */
+private fun containsUnresolvedTypeParameter(type: KSType, depth: Int = 0): Boolean {
+    if (depth > 20) return false
+    if (type.declaration is KSTypeParameter) return true
+    return type.arguments.any { arg ->
+        arg.type?.resolve()?.let { containsUnresolvedTypeParameter(it, depth + 1) } == true
+    }
+}
+
+/** True when [type] (or a type argument of it, recursively) is itself an unresolved error type -
+ * reachable when `builds` is pulled in from a module that has its own, unrelated compile error.
+ * `KSType.toTypeName()` throws on one, so this must be checked before that call too. */
+private fun containsErrorType(type: KSType, depth: Int = 0): Boolean {
+    if (depth > 20) return false
+    if (type.isError) return true
+    return type.arguments.any { arg ->
+        arg.type?.resolve()?.let { containsErrorType(it, depth + 1) } == true
+    }
+}
+
+/** One `internal` (or Java package-private) declaration [reachableDeclarations] finds in a
+ * pass-through parameter's type. [isCrossModule] is true when it was compiled elsewhere - a class
+ * read from a `.class` file has no [KSDeclaration.containingFile], and a Java package-private
+ * declaration is foreign to Kotlin-generated code by construction - and such a type can never be
+ * named from generated code at *any* visibility of the `@DIFactory` object, unlike a same-module
+ * `internal` type, which only public generated code can't name. */
+private data class InternalTypeUse(val declaration: KSDeclaration, val isCrossModule: Boolean)
+
+private fun internalDeclarationsIn(type: KSType): List<InternalTypeUse> = reachableDeclarations(type).mapNotNull { decl ->
+    val visibility = when (decl) {
+        is KSClassDeclaration -> decl.getVisibility()
+        is KSTypeAlias -> decl.getVisibility()
+        else -> null
+    }
+    when (visibility) {
+        Visibility.INTERNAL -> InternalTypeUse(decl, isCrossModule = decl.containingFile == null)
+        Visibility.JAVA_PACKAGE -> InternalTypeUse(decl, isCrossModule = true)
+        else -> null
+    }
+}
+
+/**
+ * Assigns the generated function's parameter name for a pass-through constructor argument named
+ * [paramName] - always [argFunctionName]'s `arg<Argument>` form, never the constructor parameter's
+ * own name, so a pass-through parameter is unmistakable by prefix alone in the generated signature:
+ * one `module` argument, zero or one `with` argument, and zero or more `arg*` arguments. This also
+ * makes a collision with the literal names `module` or `with` structurally impossible - neither is
+ * ever an `arg<Argument>` string - so the only collision left is two sibling pass-through parameters
+ * landing on the same name (e.g. constructor parameters `count` and `Count`), deduplicated by
+ * appending `_` until free - deterministic and total, since each step strictly lengthens the
+ * candidate. [usedNames] tracks every name already assigned in this generated function and is
+ * mutated with the chosen one.
+ */
+private fun passThroughParamName(paramName: String, usedNames: MutableSet<String>): String {
+    var candidate = argFunctionName(paramName)
+    while (candidate in usedNames) candidate += "_"
+    usedNames += candidate
+    return candidate
+}
 
 /**
  * Reads one of `@DIFactory`'s `with` / `withNullable` arguments ([argumentName]) - the type of the
@@ -208,10 +310,14 @@ internal class FactoryContext(
  * surfaces every problem at once. Returns an empty list if anything about the object is invalid; a
  * valid object always yields at least one model.
  *
- * Two shapes are explicitly unsupported and neither validated against nor specially handled: a
- * `vararg` parameter on `builds`'s selected constructor, and a generic `builds` class used as more
- * than a raw type. Either surfaces as an ordinary Kotlin compile error in the generated file rather
- * than a dedicated diagnostic here.
+ * One shape is explicitly unsupported and neither validated against nor specially handled: a
+ * `vararg` parameter on `builds`'s selected constructor - a `vararg` argument is always omissible
+ * (see `omissibleParams`), so it never reaches step 5 and this never comes up in practice; if it
+ * ever did, it would surface as an ordinary Kotlin compile error in the generated file rather than a
+ * dedicated diagnostic here. A generic `builds` class used as more than a raw type - a constructor
+ * argument typed with one of its own type parameters - *is* handled: [resolveFactory] reports a
+ * dedicated diagnostic for it rather than letting a step-5 pass-through crash the processor (see
+ * `containsUnresolvedTypeParameter`).
  */
 internal fun parseFactories(
     objDecl: KSClassDeclaration,
@@ -251,21 +357,31 @@ internal fun parseFactories(
         resolveFactory(objDecl, objVisibility, context, argFunctions, ::reportError)
     }
 
-    // Two annotations that would emit the same `fun Obj.Builds(module: From[, with: W])` - identical
-    // `builds`, `from` and `with` type - collide as a redeclaration. A differing `from` (a distinct
-    // `module` parameter type) or a differing `with` (a real overload) is fine.
-    models.groupBy { Triple(it.buildsClassName, it.fromClassName, it.withTypeName) }
-        .values.filter { it.size > 1 }
-        .forEach { dups ->
-            val m = dups.first()
-            val withPart = m.withTypeName?.let { ", with: ${it.simpleString()}" } ?: ""
-            reportError(
-                "'${objDecl.simpleName.asString()}' has ${dups.size} @DIFactory annotations that all generate " +
-                    "'fun ${objDecl.simpleName.asString()}.${m.buildsClassName.simpleName}(module: " +
-                    "${m.fromClassName.simpleName}$withPart): ${m.buildsClassName.simpleName}'.",
-                objDecl,
-            )
+    // Two annotations that would emit the same `fun Obj.Builds(module: From[, with: W][, pass-through
+    // params...])` - identical `builds`, `from`, `with` type and pass-through parameter *types* (in
+    // order; names don't disambiguate an overload) - collide as a redeclaration. A differing `from`,
+    // `with`, `constructorIndex` (now that it can change which parameters fall through to step 5) or
+    // pass-through shape is a real overload. Skipped when a context already errored: an ambiguous
+    // argument (see `resolveFactory`) drops out of `arguments`/`passThroughParameters` entirely
+    // rather than resolving one way or the other, which could otherwise make two genuinely different
+    // annotations hash to the same key on top of the error already reported for them.
+    if (!hasError) {
+        models.groupBy {
+            Triple(it.buildsClassName, it.fromClassName, it.withTypeName) to it.passThroughParameters.map { p -> p.typeName }
         }
+            .values.filter { it.size > 1 }
+            .forEach { dups ->
+                val m = dups.first()
+                val withPart = m.withTypeName?.let { ", with: ${it.simpleString()}" } ?: ""
+                val passThroughPart = m.passThroughParameters.joinToString("") { ", ${it.name}: ${it.typeName.simpleString()}" }
+                reportError(
+                    "'${objDecl.simpleName.asString()}' has ${dups.size} @DIFactory annotations that all generate " +
+                        "'fun ${objDecl.simpleName.asString()}.${m.buildsClassName.simpleName}(module: " +
+                        "${m.fromClassName.simpleName}$withPart$passThroughPart): ${m.buildsClassName.simpleName}'.",
+                    objDecl,
+                )
+            }
+    }
 
     return if (hasError) emptyList() else models
 }
@@ -559,15 +675,20 @@ private fun resolveFactory(
     // Every constructor argument must be uniquely resolvable, in priority order: an arg function
     // (see `argFunctions`), else the call-time `with` value when its type fits the argument, else the
     // parameter's own default (see `omissibleParams` - the generated call just omits it), else a
-    // unique exactly-typed module member, else a unique assignable-typed module member, else an
-    // error. The `with` value outranks the default and the module pool: the caller supplied it for
-    // this very call, which is more specific than a compile-time default and more deliberate than a
-    // type match. The default in turn outranks any module member: it is a deliberate, local
+    // unique exactly-typed module member, else a unique assignable-typed module member, else it
+    // becomes a parameter of the generated function itself, passed straight to the constructor - the
+    // caller supplies it directly, the same way `with` does for the one value that's shared across
+    // every argument. The `with` value outranks the default and the module pool: the caller supplied
+    // it for this very call, which is more specific than a compile-time default and more deliberate
+    // than a type match. The default in turn outranks any module member: it is a deliberate, local
     // statement of what the argument should be absent an override, whereas a module match is by type
-    // alone and can be coincidental.
+    // alone and can be coincidental. An ambiguous match (two or more module members) still stays a
+    // compile error rather than falling through - a real mistake in the module, not something to
+    // silently defer to the caller.
     // Under Suspend.Forbid, a suspend candidate is excluded here entirely (rather than resolved and
     // then rejected) - the same exclusion already applied to arg-functions, so a resolved
-    // FactoryArgumentModel can never end up suspend when the mode is Forbid.
+    // FactoryArgumentModel can never end up suspend when the mode is Forbid; its argument instead
+    // falls through to a pass-through parameter like any other unresolvable one.
     //
     // A member takes no parameter (called plainly), or - only when `with` / `withNullable` is set -
     // takes one parameter the `with` value can be passed to (see [withArgumentFor]). The two live in one pool:
@@ -583,6 +704,13 @@ private fun resolveFactory(
         }
     }
     val arguments = mutableListOf<FactoryArgumentModel>()
+    // Tracks every pass-through parameter name already assigned in this generated function, so two
+    // siblings never collide - see `passThroughParamName`. Empty to start: every pass-through is
+    // `arg<Argument>`, which can never equal the literal `module` or `with`, so those two need no
+    // seeding here.
+    val usedFunctionParamNames = mutableSetOf<String>()
+    val passThroughParameters = mutableListOf<PassThroughParameter>()
+    val passThroughDeclarations = mutableListOf<KSDeclaration>()
     for ((paramName, paramType) in context.ctorParams) {
         val resolvedArgFunction = argFunctions[paramName]
         if (resolvedArgFunction != null) {
@@ -639,16 +767,78 @@ private fun resolveFactory(
             continue
         }
 
-        // The suggested signature has to be pasteable as-is: the real argument type rather than a
-        // placeholder, and - under `with` - the one parameter every arg function must take (see the
-        // `withType != null` branch above), which a parameterless suggestion would fail on next compile.
-        val argParams = withType?.let { "with: ${it.toTypeName().simpleString()}" } ?: ""
-        reportError(
-            "Cannot resolve argument '$paramName' of '$buildsName' from '$fromName' - add a " +
-                "'fun $fromName.${argFunctionName(paramName)}($argParams): " +
-                "${paramType.toTypeName().simpleString()}' function to '${objDecl.simpleName.asString()}'.",
-            objDecl,
-        )
+        // Step 5: nothing resolved this argument - hand it to the caller as a parameter of the
+        // generated function instead of erroring, in constructor order after `module` and `with`
+        // (see DIFactoryFileGenerator). A vararg never reaches here (see `omissibleParams` above);
+        // the `check` turns a future ordering mistake into a loud failure instead of a silently wrong
+        // non-spread pass-through of an array where the constructor expects an element.
+        check(paramName !in context.varargParams) {
+            "vararg parameter '$paramName' unexpectedly reached step 5 pass-through"
+        }
+
+        // Two shapes make `paramType.toTypeName()` throw outright rather than degrade into an
+        // ordinary compile error in the generated file - checked structurally, before it is ever
+        // called, so the processor reports a diagnostic instead of crashing.
+        if (containsUnresolvedTypeParameter(paramType)) {
+            reportError(
+                "Cannot resolve argument '$paramName' of '$buildsName': its type refers to a type " +
+                    "parameter of '$buildsName', which @DIFactory does not support for a generic class.",
+                objDecl,
+            )
+            continue
+        }
+        if (containsErrorType(paramType)) {
+            reportError(
+                "Cannot resolve argument '$paramName' of '$buildsName': its type could not be " +
+                    "resolved - fix the compile error reported elsewhere first.",
+                objDecl,
+            )
+            continue
+        }
+
+        // A pass-through parameter puts the constructor argument's own type directly into the
+        // generated signature - unlike every other source above, whose type was already checked
+        // against the object's own visibility in `parseFactoryContext` (`from`, `builds`, the
+        // selected constructor, `with`/`withNullable`). This type is only known now, so it gets the
+        // same check here instead. An `internal` type from *another module* can never be named from
+        // generated code at any visibility - Kotlin's `internal` is module-scoped - so that one is
+        // unconditional; a same-module `internal` type only breaks a `public` generated function.
+        val internalUses = internalDeclarationsIn(paramType)
+        val crossModuleUses = internalUses.filter { it.isCrossModule }
+        if (crossModuleUses.isNotEmpty()) {
+            val names = crossModuleUses.mapNotNull { it.declaration.simpleName?.asString() }.distinct().sorted()
+            val argParams = withType?.let { "with: ${it.toTypeName().simpleString()}" } ?: ""
+            reportError(
+                "Cannot pass argument '$paramName' of '$buildsName' through as a parameter of the " +
+                    "generated function: ${names.joinToString(", ") { "'$it'" }} " +
+                    (if (names.size == 1) "is" else "are") + " 'internal' in another module, so it " +
+                    "could never be named there. Resolve '$paramName' instead - add a 'fun " +
+                    "$fromName.${argFunctionName(paramName)}($argParams): " +
+                    "${paramType.toTypeName().simpleString()}' function to " +
+                    "'${objDecl.simpleName.asString()}', or a matching member to '$fromName'.",
+                objDecl,
+            )
+            continue
+        }
+        if (objVisibility == Visibility.PUBLIC && internalUses.isNotEmpty()) {
+            val names = internalUses.mapNotNull { it.declaration.simpleName?.asString() }.distinct().sorted()
+            val isAre = if (names.size == 1) "is" else "are"
+            val itThem = if (names.size == 1) "it" else "them"
+            reportError(
+                "Cannot generate the 'public' factory function '${objDecl.simpleName.asString()}." +
+                    "$buildsName' because passing '$paramName' through would expose " +
+                    "${names.joinToString(", ") { "'$it'" }}, which $isAre 'internal'. Make " +
+                    "'${objDecl.simpleName.asString()}' 'internal', make $itThem 'public', or resolve " +
+                    "'$paramName' with an 'arg<Argument>' function or a matching '$fromName' member.",
+                objDecl,
+            )
+            continue
+        }
+
+        val functionParamName = passThroughParamName(paramName, usedFunctionParamNames)
+        passThroughDeclarations += reachableDeclarations(paramType)
+        passThroughParameters += PassThroughParameter(functionParamName, paramType.toTypeName())
+        arguments += FactoryArgumentModel(paramName, ArgumentSource.PassThrough(functionParamName), isSuspend = false)
     }
 
     val isSuspend = when (suspendMode) {
@@ -665,8 +855,12 @@ private fun resolveFactory(
         withTypeName = withType?.toTypeName(),
         visibility = objVisibility,
         arguments = arguments,
+        passThroughParameters = passThroughParameters,
         isSuspend = isSuspend,
-        originatingFiles = context.originatingFiles,
+        // A pass-through parameter's type now appears by name in the generated file, so its
+        // declaration's containing file is an input the generated file must be regenerated for -
+        // added here (rather than in `parseFactoryContext`) since it's only known post-resolution.
+        originatingFiles = (context.originatingFiles + passThroughDeclarations.mapNotNull { it.containingFile }).distinct(),
     )
 }
 

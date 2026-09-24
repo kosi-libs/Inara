@@ -160,8 +160,9 @@ class DIFactorySuspendTest {
     @Test
     fun forbid_defaultedParameterWhoseOnlyCandidateIsSuspend_fallsBackToTheDefault() {
         // Under Forbid the suspend member is not a candidate; for a non-defaulted parameter that
-        // would be "Cannot resolve argument", but `verbose` has a default, so it is simply omitted
-        // and the generated function stays non-suspend.
+        // would fall through to a pass-through parameter, but `verbose` has a default, which still
+        // outranks that (step 3 above step 5) - so it is simply omitted and the generated function
+        // stays non-suspend.
         val source = SourceFile.kotlin(
             "Factory.kt",
             """

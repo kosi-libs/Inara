@@ -9,6 +9,7 @@ import com.squareup.kotlinpoet.ksp.addOriginatingKSFile
 import org.kodein.di.inara.processor.ArgumentSource.FactoryFunction
 import org.kodein.di.inara.processor.ArgumentSource.ModuleFunction
 import org.kodein.di.inara.processor.ArgumentSource.ModuleProperty
+import org.kodein.di.inara.processor.ArgumentSource.PassThrough
 import org.kodein.di.inara.processor.ArgumentSource.WithValue
 import org.kodein.di.inara.processor.WithArgument.Named
 import org.kodein.di.inara.processor.WithArgument.Positional
@@ -16,10 +17,15 @@ import org.kodein.di.inara.processor.WithArgument.Positional
 /**
  * Emits one file for a `@DIFactory` object holding one builder function per [models] entry (one per
  * `@DIFactory` annotation - it is `@Repeatable`). Each is an **extension function on the object**,
- * named after its `builds`, taking a single `from`-typed `module` parameter, that resolves every
- * constructor argument off `module` (see [FactoryModel.arguments]). The object being the extension
- * receiver is what puts its own `arg<Argument>` extension functions in scope - no `with(<object>) {
- * ... }` wrapper - and makes the functions discoverable from the object.
+ * named after its `builds`, taking a `from`-typed `module` parameter - optionally followed by a
+ * call-time `with` parameter, and by one `arg<Argument>`-named parameter per
+ * [FactoryModel.passThroughParameters] for a constructor argument nothing else could resolve - that
+ * resolves every constructor argument off `module`, `with`, or its own matching parameter (see
+ * [FactoryModel.arguments]). The three prefixes are mutually exclusive by construction, so a
+ * generated signature is legible at a glance: one `module`, zero or one `with`, zero or more `arg*`.
+ * The object being the extension receiver is what puts its own `arg<Argument>` extension functions
+ * in scope - no `with(<object>) { ... }` wrapper - and makes the functions discoverable from the
+ * object.
  *
  * The file is named after the `@DIFactory` object rather than `builds`, and lives in the object's
  * own package - two different `@DIFactory` objects could otherwise target `builds` classes that
@@ -50,6 +56,7 @@ private fun buildFactoryFunction(model: FactoryModel): FunSpec {
     }
     funBuilder.addParameter("module", model.fromClassName)
     model.withTypeName?.let { funBuilder.addParameter("with", it) }
+    model.passThroughParameters.forEach { funBuilder.addParameter(it.name, it.typeName) }
 
     // The `with` parameter's value, passed to every arg-function and to any one-parameter module
     // member when it exists.
@@ -72,6 +79,7 @@ private fun buildFactoryFunction(model: FactoryModel): FunSpec {
                             if (withArg != null) CodeBlock.of("module.%N(%L)", source.functionName, withArg)
                             else CodeBlock.of("module.%N()", source.functionName)
                         is WithValue -> checkNotNull(withArg) { "WithValue without a `with` parameter" }
+                        is PassThrough -> CodeBlock.of("%N", source.functionParamName)
                         is ModuleProperty -> CodeBlock.of("module.%N", source.memberName)
                         is ModuleFunction -> when (val w = source.withArgument) {
                             null -> CodeBlock.of("module.%N()", source.memberName)

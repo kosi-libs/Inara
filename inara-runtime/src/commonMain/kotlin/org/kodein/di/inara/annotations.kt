@@ -32,22 +32,32 @@ public annotation class DIModule(val composed: Boolean = false)
  * present, else - when [with] / [withNullable] is set - the call-time value itself if its type fits
  * the argument, else - if the parameter can be left out of the call, i.e. it declares a default
  * value or is a `vararg` - that default, else a uniquely-typed member of [from] (an exact type
- * match, else a subtype match), else a compile error recommending the `arg` function to add. The
- * call-time value thus outranks a parameter's default and any [from] member; the default in turn
- * outranks any [from] member, and a defaulted parameter needs no `arg` function. The object may
+ * match, else a subtype match), else the argument becomes a parameter of the generated function
+ * itself - named `arg<Argument>` (e.g. `argFoo` for a constructor argument named `foo`, exactly like
+ * the `arg<Argument>` extension function it would otherwise need) and typed after the constructor
+ * parameter, in constructor declaration order, after `module` and `with` - passed straight through
+ * to the constructor. The `arg` prefix makes such a pass-through parameter unmistakable by name
+ * alone, and never collides with the literal `module` or `with`. The call-time value thus outranks a
+ * parameter's default and any [from] member; the default in turn outranks any [from] member, and a
+ * defaulted parameter needs no `arg` function and never becomes such a pass-through parameter (a
+ * default is a deliberate, local statement of intent - adding one to a constructor parameter that
+ * used to be unresolvable therefore removes a parameter from the generated function). The object may
  * declare nothing but such `arg` functions - anything else is a compile error.
  *
  * The generated function has the same visibility as the object. A `public` object whose [from],
- * [builds], selected constructor, or [with] / [withNullable] type is `internal` is a compile error
- * (that signature couldn't compile - make the object `internal`), and every `arg<Argument>` function
- * on a `public` object must be `internal` (they are implementation detail, not public API).
+ * [builds], selected constructor, [with] / [withNullable] type, or any pass-through parameter's type
+ * is `internal` is a compile error (that signature couldn't compile - make the object `internal`,
+ * or the type `public`), and every `arg<Argument>` function on a `public` object must be `internal`
+ * (they are implementation detail, not public API). A pass-through parameter whose type is
+ * `internal` in a *different* module is always a compile error, regardless of the object's own
+ * visibility - such a type could never be named from generated code at all.
  *
  * `@DIFactory` is `@Repeatable`: annotate one object several times to generate several functions,
  * all in one file named after the object. An `arg<Argument>` function is shared across the
  * annotations - it serves every `@DIFactory` whose [from] is its extension receiver and whose
  * selected constructor has a matching parameter, and is a compile error only if it fits none. Two
- * annotations that would generate the same signature (same [builds], [from] and [with] type) are a
- * compile error.
+ * annotations that would generate the same signature - same [builds], [from], [with] type, and
+ * pass-through parameter types - are a compile error.
  *
  * With [with] (or [withNullable]) set to a type other than `Unit`, the generated function takes a
  * second parameter `fun <Factory>.<Builds>(module: <From>, with: <With>): <Builds>` - nullable under
@@ -81,7 +91,9 @@ public annotation class DIModule(val composed: Boolean = false)
  *   `Unit?` parameter. Setting both [with] and [withNullable] is a compile error.
  * @param suspend Whether a `suspend` provider - a `suspend` `arg` function, or a `suspend` member
  *   of [from] - may be used to resolve an argument, and whether the generated function itself is
- *   `suspend`. See [Suspend].
+ *   `suspend`. See [Suspend]. Under [Suspend.Forbid], an argument whose only candidate is `suspend`
+ *   doesn't error - it simply falls through to a pass-through parameter, like any other argument
+ *   nothing else resolves.
  * @param constructorIndex Which of [builds]'s constructors the generated function calls, in
  *   declaration order: `0` (the default) is the primary constructor, `1` the first secondary
  *   constructor, `2` the second, and so on. The selected constructor's parameters are what

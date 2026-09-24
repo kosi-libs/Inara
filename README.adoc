@@ -702,10 +702,13 @@ val controller = UserControllerFactory.UsersController(network)   // `network` i
 
 The generated function has the same visibility as the annotated object, and its own `arg<Argument>`
 functions are visible because the object is the extension receiver. Marking the object `public` when
-its `from` module, `builds` class, selected constructor, or `with` / `withNullable` type is
-`internal` is a compile error — that signature couldn't compile — so make the object `internal` in
-that case. On a `public` object every `arg<Argument>` function must be `internal`: they are
-implementation detail, not public API.
+its `from` module, `builds` class, selected constructor, `with` / `withNullable` type, or any
+pass-through parameter's type (see <<pass-through-arguments,Pass-through arguments>>) is `internal`
+is a compile error — that signature couldn't compile — so make the object `internal` in that case,
+or the type `public`. On a `public` object every `arg<Argument>` function must be `internal`: they
+are implementation detail, not public API. A pass-through parameter whose type is `internal` in a
+_different_ module is always a compile error, regardless of the object's own visibility — such a
+type could never be named from generated code at all.
 
 === Resolving constructor arguments
 
@@ -733,7 +736,12 @@ Each constructor argument is resolved independently, in priority order:
    takes one argument is a candidate only under `with` / `withNullable` (see below); every other member
    must take none.
 .. Failing an exact match, a uniquely-typed _assignable_ (supertype) member.
-. Otherwise, a compile error recommending the `arg` function to add.
+. Otherwise, the argument becomes a parameter of the generated function itself — see
+  <<pass-through-arguments,Pass-through arguments>>.
+
+Two or more matching `from` members (step 4) is always a compile error, never something silently
+deferred to the caller — that's a real mistake in the module, distinct from step 5's "nothing at all
+matched".
 
 Because `arg<Argument>` is a reserved naming convention, a `@DIModule` member itself may not be named
 `arg` followed by an uppercase letter.
@@ -771,8 +779,8 @@ When `with` is set (it defaults to `Unit` — no parameter, everything above unc
 * A constructor argument whose type the `with` value is assignable to resolves straight to it, ahead
   of that argument's default and any `from` member (see step 2 of
   <<resolving-constructor-arguments,Resolving constructor arguments>>) — shadowing a same-typed
-  member rather than needing a pass-through `arg` function. A `vararg` argument is never resolved
-  this way.
+  member rather than needing a trivial `arg` function that just returns it. A `vararg` argument is
+  never resolved this way.
 * Every `arg<Argument>` function must take exactly one parameter of the `with` type — no parameter,
   or another type, is a compile error.
 * A member of `from` taking a single parameter the `with` value fits into — or a `vararg` whose array
@@ -786,6 +794,54 @@ every other respect, except that every
 `arg<Argument>` function must then declare its parameter as `RequestContext?`, only a `from` member
 whose single parameter accepts `null` is an automatic-resolution candidate (a `vararg` never is), and
 setting both `with` and `withNullable` is a compile error.
+
+[#pass-through-arguments]
+=== Pass-through arguments
+
+`with` carries exactly one call-time value, shared by every argument its type fits. Step 5 of
+<<resolving-constructor-arguments,Resolving constructor arguments>> covers the rest: a constructor
+argument nothing above resolves simply becomes a parameter of the generated function - named
+`arg<Argument>` (exactly the naming convention an `arg<Argument>` function already uses) and typed
+after the constructor parameter - and passed straight through:
+
+.Ticket.kt
+[source,kotlin]
+----
+class Ticket(val httpClient: HttpClient, val subject: String, val priority: Int)
+
+@DIFactory(builds = Ticket::class, from = NetworkModule::class)
+internal object TicketDIFactory
+----
+
+.InaraTicketDIFactory.kt
+[source,kotlin]
+----
+internal fun TicketDIFactory.Ticket(module: NetworkModule, argSubject: String, argPriority: Int): Ticket =
+    Ticket(
+        httpClient = module.httpClient(),   // resolved as usual
+        subject = argSubject,               // pass-through: nothing in NetworkModule provides a String
+        priority = argPriority,             // or an Int
+    )
+----
+
+A generated signature is legible by prefix alone: one `module` argument, zero or one `with` argument,
+and zero or more `arg*` arguments — and the `arg` prefix makes a pass-through parameter's name never
+collide with the literal `module` or `with`. Pass-through parameters come after `module` and (if set)
+`with`, in `builds`'s constructor declaration order — interleaved with resolved arguments in that same
+order determines only the constructor call, not the generated function's own parameter list. A
+`vararg` parameter is never one of them: it's always omissible (step 3), so it never reaches step 5.
+Neither is a parameter with two or more matching `from` members — that's an ambiguity error (step 4),
+not something deferred to the caller. Two sibling pass-through parameters that would otherwise land on
+the same `arg<Argument>` name (e.g. constructor parameters `count` and `Count`) are disambiguated with
+a trailing `_`.
+
+Two things follow directly from this: a constructor parameter's type has to be nameable from the
+generated function, exactly like `from`, `builds` and `with` (see above) — a `public` `@DIFactory`
+object with an unresolvable `internal`-typed argument is a compile error, and a type `internal` in a
+_different_ module can never pass through at any visibility. And because a default (step 3) still
+outranks a pass-through (step 5), adding a default to a constructor parameter that used to be a
+pass-through parameter silently removes it from the generated function's signature — a source
+change for every caller, with no diagnostic warning you about it.
 
 === `suspend` arguments
 
@@ -812,10 +868,11 @@ public suspend fun AsyncGreeterFactory.AsyncGreeter(module: AsyncModule): AsyncG
     )
 ----
 
-`suspend = Suspend.Forbid` excludes every `suspend` candidate from resolution entirely — a
-`suspend`-only argument becomes unresolvable rather than silently skipped — and the generated
-function is never `suspend`. `suspend = Suspend.Force` resolves exactly like `Allow` but always
-generates a `suspend` function, whether or not any provider actually is.
+`suspend = Suspend.Forbid` excludes every `suspend` candidate from resolution entirely — rather than
+being silently skipped, a `suspend`-only argument simply falls through to a pass-through parameter
+(see <<pass-through-arguments,Pass-through arguments>>), like any other argument nothing else
+resolves — and the generated function is never `suspend`. `suspend = Suspend.Force` resolves exactly
+like `Allow` but always generates a `suspend` function, whether or not any provider actually is.
 
 === `constructorIndex` — building through a non-primary constructor
 
@@ -867,8 +924,10 @@ An `arg<Argument>` function is shared: it serves every `@DIFactory` whose `from`
 whose selected constructor has a matching parameter — above, `argHeading` fills `heading` for both
 screens. A declared `arg` function that fits none of the annotations is a compile error. `with`,
 `suspend` and `constructorIndex` are per-annotation, so one object can generate a `suspend` function
-next to a plain one. Two annotations that would generate the same signature (same `builds`, `from`
-and `with` type) are a compile error.
+next to a plain one. Two annotations that would generate the same signature — same `builds`, `from`,
+`with` type, and pass-through parameter types (see <<pass-through-arguments,Pass-through
+arguments>>) — are a compile error; `constructorIndex` can now tell two otherwise-identical
+annotations apart, if the constructors it selects leave different arguments unresolved.
 
 == Thread safety
 

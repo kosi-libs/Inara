@@ -606,53 +606,6 @@ class DIFactoryValidationTest {
     }
 
     @Test
-    fun unresolvableArgument_isRejected() {
-        assertRejected(
-            "Cannot resolve argument 'greeting' of 'Greeter' from 'EmptyModule' - add a " +
-                "'fun EmptyModule.argGreeting(): String' function to 'GreeterDIFactory'.",
-            """
-            package sample.factory
-
-            import org.kodein.di.inara.DIFactory
-            import org.kodein.di.inara.DIModule
-
-            @DIModule
-            interface EmptyModule { val unrelated: Int }
-            class Greeter(val greeting: String)
-
-            @DIFactory(builds = Greeter::class, from = EmptyModule::class)
-            internal object GreeterDIFactory
-            """
-        )
-    }
-
-    @Test
-    fun forbid_onlySuspendCandidateAvailable_isRejectedAsUnresolvable() {
-        // Suspend.Forbid excludes a suspend module member from the candidate pool entirely, rather
-        // than resolving it and then rejecting it - so this falls into the same "cannot resolve,
-        // add an arg function" diagnostic as any other unresolvable argument.
-        assertRejected(
-            "Cannot resolve argument",
-            """
-            package sample.factory
-
-            import org.kodein.di.inara.DIFactory
-            import org.kodein.di.inara.DIFactory.Suspend
-            import org.kodein.di.inara.DIModule
-
-            @DIModule
-            interface TokenModule {
-                suspend fun token(): String
-            }
-            class Session(val token: String)
-
-            @DIFactory(builds = Session::class, from = TokenModule::class, suspend = Suspend.Forbid)
-            internal object SessionDIFactory
-            """
-        )
-    }
-
-    @Test
     fun allow_ambiguousBetweenSuspendAndNonSuspendCandidates_isRejected() {
         // A suspend candidate is now just as eligible as a non-suspend one under Suspend.Allow, so
         // two exact-type matches - one of each - are ambiguous exactly like any other pair.
@@ -819,51 +772,6 @@ class DIFactoryValidationTest {
     }
 
     @Test
-    fun withArgument_oneParameterMemberWhoseParameterTheWithValueCannotBePassedTo_isNotACandidate() {
-        assertRejected(
-            "Cannot resolve argument 'greeting'",
-            """
-            package sample.factory
-
-            import org.kodein.di.inara.DIFactory
-            import org.kodein.di.inara.DIModule
-
-            class Ctx
-            @DIModule
-            interface GreetingModule {
-                fun greetingFor(count: Int): String
-            }
-            class Greeter(val greeting: String)
-
-            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = Ctx::class)
-            internal object GreeterDIFactory
-            """
-        )
-    }
-
-    @Test
-    fun withArgument_unresolvableArgument_suggestionCarriesTheWithParameter() {
-        assertRejected(
-            "Cannot resolve argument 'greeting' of 'Greeter' from 'GreetingModule' - add a " +
-                "'fun GreetingModule.argGreeting(with: Ctx): String' function to 'GreeterDIFactory'.",
-            """
-            package sample.factory
-
-            import org.kodein.di.inara.DIFactory
-            import org.kodein.di.inara.DIModule
-
-            class Ctx
-            @DIModule
-            interface GreetingModule { val unrelated: Int }
-            class Greeter(val greeting: String)
-
-            @DIFactory(builds = Greeter::class, from = GreetingModule::class, with = Ctx::class)
-            internal object GreeterDIFactory
-            """
-        )
-    }
-
-    @Test
     fun bothWithAndWithNullable_isRejected() {
         assertRejected(
             "Only one of 'with' and 'withNullable' may be set on @DIFactory - 'GreeterDIFactory' sets both.",
@@ -908,73 +816,6 @@ class DIFactoryValidationTest {
             internal object GreeterDIFactory {
                 fun GreetingModule.argGreeting(ctx: Ctx): String = greeting
             }
-            """
-        )
-    }
-
-    @Test
-    fun withNullable_nonNullableOneParameterMember_isNotACandidate() {
-        assertRejected(
-            "Cannot resolve argument 'greeting' of 'Greeter' from 'GreetingModule' - add a " +
-                "'fun GreetingModule.argGreeting(with: Ctx?): String' function to 'GreeterDIFactory'.",
-            """
-            package sample.factory
-
-            import org.kodein.di.inara.DIFactory
-            import org.kodein.di.inara.DIModule
-
-            class Ctx
-            @DIModule
-            interface GreetingModule {
-                fun greetingFor(ctx: Ctx): String
-            }
-            class Greeter(val greeting: String)
-
-            @DIFactory(builds = Greeter::class, from = GreetingModule::class, withNullable = Ctx::class)
-            internal object GreeterDIFactory
-            """
-        )
-    }
-
-    @Test
-    fun withNullable_varargMember_isNotACandidate() {
-        assertRejected(
-            "Cannot resolve argument 'text'",
-            """
-            package sample.factory
-
-            import org.kodein.di.inara.DIFactory
-            import org.kodein.di.inara.DIModule
-
-            @DIModule
-            interface PathModule {
-                fun join(vararg parts: String): String
-            }
-            class Thing(val text: String)
-
-            @DIFactory(builds = Thing::class, from = PathModule::class, withNullable = Array<String>::class)
-            internal object ThingDIFactory
-            """
-        )
-    }
-
-    @Test
-    fun withNullable_nonNullableConstructorArgument_isNotResolvedFromTheCallTimeValue() {
-        assertRejected(
-            "Cannot resolve argument 'ctx' of 'Screen' from 'EmptyModule'",
-            """
-            package sample.factory
-
-            import org.kodein.di.inara.DIFactory
-            import org.kodein.di.inara.DIModule
-
-            class Ctx
-            @DIModule
-            interface EmptyModule { val unrelated: Int }
-            class Screen(val ctx: Ctx)
-
-            @DIFactory(builds = Screen::class, from = EmptyModule::class, withNullable = Ctx::class)
-            internal object ScreenDIFactory
             """
         )
     }
@@ -1044,6 +885,54 @@ class DIFactoryValidationTest {
             internal object Fac {
                 fun AppModule.argTitle(): Boolean = true   // wrong return type for both
             }
+            """
+        )
+    }
+
+    @Test
+    fun publicObject_withUnresolvableArgumentOfAnInternalType_isRejected() {
+        // 'greeting' can't resolve off the module, so it would become a pass-through parameter -
+        // but its type 'Secret' is 'internal', which a 'public' generated function can't name.
+        assertRejected(
+            "Cannot generate the 'public' factory function 'GreeterDIFactory.Greeter'",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            internal class Secret
+            @DIModule
+            interface EmptyModule { val unrelated: Int }
+            class Greeter(val greeting: Secret)
+
+            @DIFactory(builds = Greeter::class, from = EmptyModule::class)
+            public object GreeterDIFactory
+            """
+        )
+    }
+
+    @Test
+    fun genericBuildsClass_unresolvableTypeParameterArgument_isRejected() {
+        // 'Box<T>' is a generic class used as more than a raw type; 'value: T' can't resolve off the
+        // module and can't become a pass-through parameter either - a type parameter of 'Box' means
+        // nothing in the generated function's own signature - so this is a dedicated diagnostic
+        // rather than the processor crashing on 'T'.toTypeName()`.
+        assertRejected(
+            "refers to a type parameter of 'Box'",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Box<T>(val value: T)
+
+            @DIModule
+            interface EmptyModule { val unrelated: Int }
+
+            @DIFactory(builds = Box::class, from = EmptyModule::class)
+            internal object BoxDIFactory
             """
         )
     }
