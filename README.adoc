@@ -9,7 +9,7 @@
 
 Inara turns a plain Kotlin interface into a dependency-injection module. You declare _what_ a module
 offers as ordinary interface members; you decide _how_ each member is produced by supplying a
-`Binding` at construction time. A KSP processor generates the implementation.
+`Binding` at construction time. Inara plugs and validates everything at compile time, then gets out of your way.
 
 .Main.kt
 [source,kotlin]
