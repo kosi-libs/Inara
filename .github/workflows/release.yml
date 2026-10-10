@@ -8,23 +8,23 @@ jobs:
   build-upload:
     runs-on: macOS-latest
     steps:
-      - name: Check out
-        uses: actions/checkout@v7
-      - name: Set up JDK Temurin 17
-        uses: actions/setup-java@v5
+      - name: Setup
+        uses: KodeinKoders/kodein-github-actions/gradle-kotlin-setup@v0.1
+      - name: Check version
+        uses: KodeinKoders/kodein-github-actions/version-check@v0.1
         with:
-          distribution: temurin
-          java-version: 17
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+          releaseName: ${{ github.event.release.name }}
       - name: Build
         run: ./gradlew --stacktrace --scan build
         shell: bash
-      - name: Upload to Maven Central
-        env:
-          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.CENTRAL_PORTAL_TOKEN_USERNAME }}
-          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.CENTRAL_PORTAL_TOKEN_PASSWORD }}
-          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.PGP_SIGNING_KEY }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.PGP_SIGNING_PASSWORD }}
-        run: ./gradlew --stacktrace --scan -PRELEASE_SIGNING_ENABLED=true publishAndReleaseToMavenCentral
-        shell: bash
+      - name: Publish
+        uses: KodeinKoders/kodein-github-actions/publish@v0.1
+        with:
+          central-portal-token-username: ${{ secrets.CENTRAL_PORTAL_TOKEN_USERNAME }}
+          central-portal-token-password: ${{ secrets.CENTRAL_PORTAL_TOKEN_PASSWORD }}
+          pgp-signing-key: ${{ secrets.PGP_SIGNING_KEY }}
+          pgp-signing-password: ${{ secrets.PGP_SIGNING_PASSWORD }}
+      - name: Release branch
+        uses: KodeinKoders/kodein-github-actions/release-branches@v0.1
+        with:
+          releaseName: ${{ github.event.release.name }}
