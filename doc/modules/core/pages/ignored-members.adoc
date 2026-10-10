@@ -1,0 +1,49 @@
+= Ignored members
+
+Three kinds of members cannot be represented by a `Binding`:
+
+* `var` properties, since a binding has no setter;
+* extension members, since a binding has no extension receiver;
+* generic functions, since the type arguments of a binding are fixed per instance.
+
+
+== With a default implementation
+
+When such a member has a default implementation, it is silently excluded from the module: it gets no binding parameter and no override in the generated class.
+Ordinary Kotlin inheritance resolves it to the interface's own body.
+
+[source,kotlin]
+----
+@DIModule
+interface Module {
+    val name: String // <1>
+
+    var tag: String // <2>
+        get() = "default-tag"
+        set(_) {}
+
+    val String.shoutedLength: Int // <3>
+        get() = uppercase().length
+
+    fun <T> identity(value: T): T = value // <4>
+}
+
+val module = Module(name = Binding.value("x")) // <5>
+module.tag // "default-tag"
+module.identity(42) // 42
+----
+<1> Bound normally.
+<2> Ignored: a `var` whose accessors both have a body.
+<3> Ignored: an extension property with a body.
+<4> Ignored: a generic function with a body.
+<5> `name` is the only parameter.
+
+This makes it possible to put helpers in a module interface, and to extend interfaces that declare such members.
+
+
+== Without a default implementation
+
+Without a default implementation, these members are compile errors: there would be no way to provide them.
+
+A `var` needs *both* of its accessors implemented to be ignored.
+A single abstract accessor still leaves something that cannot be provided.

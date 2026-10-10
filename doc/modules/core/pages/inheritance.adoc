@@ -1,0 +1,79 @@
+= Inheritance
+
+A `@DIModule` interface may extend other `@DIModule` interfaces.
+Inherited members are flattened into the child: they are bound exactly as if they were declared directly on it.
+
+[source,kotlin]
+----
+@DIModule
+interface GreeterModule {
+    val greeting: String
+}
+
+@DIModule
+interface CounterModule {
+    fun next(): Int
+}
+
+@DIModule
+interface AppModule : GreeterModule, CounterModule {
+    val label: String
+}
+
+val app = AppModule(
+    greeting = Binding.value("Hi"), // <1>
+    next = Binding.provider { 0 }, // <1>
+    label = Binding.value("app"), // <2>
+)
+----
+<1> Inherited members.
+<2> A member declared on `AppModule` itself.
+
+Since `AppModule` extends both parents, an `AppModule` can be passed anywhere a `GreeterModule` or a `CounterModule` is expected.
+
+
+== Bindings belong to the leaf
+
+Every binding is parameterized on the module being built: all bindings above are `Binding<AppModule, …>`.
+A body bound to an inherited member can therefore reach members declared on the child:
+
+[source,kotlin]
+----
+AppModule(
+    greeting = Binding.provider { "Hi from $label" }, // <1>
+    next = Binding.provider { 0 },
+    label = Binding.value("app"),
+)
+----
+<1> `greeting` is declared on `GreeterModule`, but its body reads `label`, declared on `AppModule`.
+
+
+== Diamond inheritance
+
+A shared ancestor reached through several paths contributes its members only once:
+
+[source,kotlin]
+----
+@DIModule interface BaseModule { val base: String }
+@DIModule interface LeftModule : BaseModule
+@DIModule interface RightModule : BaseModule
+
+@DIModule
+interface DiamondModule : LeftModule, RightModule {
+    val extra: Int
+}
+
+DiamondModule(
+    base = Binding.value("shared"), // <1>
+    extra = Binding.value(42),
+)
+----
+<1> Bound once, even though it is reached through both `LeftModule` and `RightModule`.
+
+
+== Inheriting versus composing
+
+Inheritance flattens parents into the child: every member, inherited or not, gets its own binding parameter.
+When the parent modules are already built, and you want to reuse them as they are rather than rebind their members, use xref:composition.adoc[composition] instead.
+
+A parent does not have to be a `@DIModule`: xref:supertypes.adoc[] explains how members of plain interfaces are bound.

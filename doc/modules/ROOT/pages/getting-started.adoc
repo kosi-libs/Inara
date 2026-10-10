@@ -1,0 +1,87 @@
+= Getting started
+
+This page takes a JVM project from nothing to a working module.
+For Kotlin Multiplatform projects, see xref:core:setup.adoc[].
+
+1. Apply the KSP plugin, and add both Inara artifacts:
++
+[source,kotlin,subs="verbatim,attributes"]
+.build.gradle.kts
+----
+plugins {
+    kotlin("jvm") version "{kotlin-version}"
+    id("com.google.devtools.ksp") version "{ksp-version}" // <1>
+}
+
+dependencies {
+    implementation("org.kodein.di.inara:inara-runtime:{page-component-version}") // <2>
+    ksp("org.kodein.di.inara:inara-processor:{page-component-version}") // <3>
+}
+----
+<1> Apply the KSP plugin that corresponds to the Kotlin version you are using.
+<2> The runtime: `Binding` types and annotations.
+<3> The processor that generates module implementations.
+
+2. Declare a module as an interface annotated with `@DIModule`:
++
+[source,kotlin]
+.AppModule.kt
+----
+@DIModule
+interface AppModule {
+    val databaseUrl: String
+    fun database(): Database
+    fun userRepository(): UserRepository
+}
+----
+
+3. Build the project once, so that the processor generates the `AppModule(...)` builder function.
++
+NOTE: Your IDE only sees generated code once it has been generated, so the builder appears as unresolved until the first build.
+
+4. Build the module, giving one `Binding` per member:
++
+--
+[source,kotlin]
+.Main.kt
+----
+fun main() {
+    val app = AppModule(
+        databaseUrl = Binding.value("jdbc:h2:mem:app"), // <1>
+        database = Binding.single { Database.connect(databaseUrl) }, // <2>
+        userRepository = Binding.provider { UserRepository(database()) }, // <3>
+    )
+
+    val repository = app.userRepository()
+}
+----
+<1> `value` binds a pre-built value.
+<2> `single` builds the value once, on first access, and keeps it forever.
+<3> `provider` builds a new value on every access.
+
+Each binding body runs with the module as its receiver, which is why `databaseUrl` and `database()` can be read directly.
+--
+
+5. Optionally, let Inara build your own classes for you with xref:factory:basics.adoc[`@DIFactory`]:
++
+--
+[source,kotlin]
+.UserController.kt
+----
+class UserController(val repository: UserRepository) // <1>
+
+@DIFactory(builds = UserController::class, from = AppModule::class)
+object UserControllerFactory
+----
+<1> A plain class that knows nothing about Inara.
+
+The processor generates `UserControllerFactory.UserController(module: AppModule)`, which finds the `repository` argument in `AppModule` by its type:
+
+[source,kotlin]
+----
+val controller = UserControllerFactory.UserController(app)
+----
+--
+
+That's it!
+From here, xref:core:modules.adoc[] and xref:core:bindings.adoc[] explain everything a module can hold.

@@ -1,0 +1,58 @@
+= Extending plain interfaces
+
+A `@DIModule` interface may extend *any* interface, not only `@DIModule` ones.
+Members reachable through a plain supertype are bound exactly like the module's own members:
+
+[source,kotlin]
+----
+interface Taggable {
+    val id: String
+    fun tag(): String = "tag:$id"
+}
+
+@DIModule
+interface TaggableModule : Taggable {
+    val extra: Int
+}
+
+TaggableModule(
+    id = Binding.value("x1"), // <1>
+    extra = Binding.value(7),
+) // <2>
+----
+<1> `id` comes from `Taggable` and is abstract, so it must be bound.
+<2> `tag` also comes from `Taggable`, but it has a xref:defaults.adoc[default implementation], so its binding is optional.
+
+This lets a module implement an interface that is defined elsewhere, for example in a library that knows nothing about Inara, and be passed wherever that interface is expected.
+
+
+== Generic supertypes
+
+Type arguments of a generic supertype are substituted in the binding types:
+
+[source,kotlin]
+----
+interface Converter<T> {
+    val default: T
+    fun convert(input: T): T
+}
+
+@DIModule
+interface StringConverterModule : Converter<String> {
+    val prefix: String
+}
+
+StringConverterModule(
+    default = Binding.value(""), // <1>
+    convert = Binding.factory { input -> prefix + input }, // <2>
+    prefix = Binding.value("> "),
+)
+----
+<1> A `Binding<StringConverterModule, Unit, String>`.
+<2> A `Binding<StringConverterModule, String, String>`.
+
+
+== Plain supertypes and composition
+
+A plain supertype is not a module, so there is no built instance of it to reuse.
+Under xref:composition.adoc[`@DIModule(composed = true)`], its members therefore appear as binding parameters of the from-parents builder, next to the members declared on the module itself.

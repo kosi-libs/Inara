@@ -1,0 +1,7 @@
+* Guides
+** xref:testing.adoc[]
+** xref:scopes.adoc[]
+** xref:multi-module.adoc[]
+** xref:thread-safety.adoc[]
+** xref:inspecting.adoc[]
+** xref:platforms.adoc[]

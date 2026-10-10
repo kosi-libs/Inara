@@ -1,0 +1,79 @@
+= Inspecting modules
+
+A generated module describes its own wiring.
+Its `toString()` lists every member, with its signature and the binding it holds:
+
+[source,kotlin]
+----
+val network = NetworkModule(
+    baseUrl = Binding.value("http://example.com"),
+    httpClient = Binding.single { HttpClient(baseUrl) },
+    endpoint = Binding.factory { path -> "$baseUrl/$path" },
+)
+
+println(network)
+----
+
+[source]
+----
+module NetworkModule {
+    val baseUrl: String => value ( String )
+    fun httpClient(): HttpClient => single(Synchronized) { HttpClient }
+    fun endpoint(path: String): String => factory { String -> String }
+}
+----
+
+
+== Binding descriptions
+
+Each binding describes itself with its kind and the types it handles:
+
+[cols="2,3"]
+|===
+| Binding | Description
+
+| `value`
+| `value ( T )`
+
+| `provider`
+| `provider { T }`
+
+| `factory`
+| `factory { A -> T }`
+
+| `single`
+| `single(Synchronized) { T }` or `single(Published) { T }`
+
+| `weakSingle`
+| `weakSingle(Synchronized) { T }` or `weakSingle(Published) { T }`
+
+| `multiplex`
+| `multiplex { A -> T }`
+|===
+
+Two more markers can appear:
+
+* `[default]`: the member is not bound, and uses its xref:core:defaults.adoc[default implementation];
+* `[delegated to ...]`: the member is read from a xref:core:composition.adoc[parent module] that could not share its binding, such as a member with several parameters.
+
+`suspend` bindings are described like their non-suspending counterparts: the `suspend` keyword on the member signature tells them apart.
+
+[source]
+----
+module AsyncModule {
+    val name: String => value ( String )
+    suspend fun load(): Service => provider { Service }
+    suspend fun described(): String => [default]
+}
+----
+
+
+== Reading the generated code
+
+Generated code is plain Kotlin, under `build/generated/ksp`.
+For a module or a factory named `Name`, it lives in `Inara<Name>.kt`, in the same package.
+
+Reading it is the most direct way to understand how a xref:factory:resolution.adoc[factory resolves its arguments], or which overloads a module gets.
+
+NOTE: The generated `Inara<Module>` implementation classes, as well as the `BindingImpls` and `SuspendBindingImpls` classes of the runtime, are public only so that generated code can use them.
+They require opting into `@InternalInaraGeneration`, and are not meant to be used directly.

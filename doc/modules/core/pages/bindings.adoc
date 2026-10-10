@@ -1,0 +1,175 @@
+= Bindings
+
+A binding decides *how* and *when* a member produces its value.
+All bindings are built with the factories of the `Binding` companion object.
+
+[cols="2,2,5"]
+|===
+| Factory | Body | Behaviour
+
+| `value(v)`
+| none
+| Always returns the same pre-built `v`.
+
+| `provider { }`
+| `M.() -> T`
+| Runs the body on *every* access.
+
+| `factory { }`
+| `M.(A) -> T`
+| Runs the body on every access, with the caller's argument.
+
+| `single { }`
+| `M.() -> T`
+| Runs the body *once*, on first access, and keeps the result forever.
+
+| `weakSingle { }`
+| `M.() -> T`
+| Like `single`, but keeps the result behind a weak reference.
+
+| `multiplex { }`
+| `(A) -> Binding<M, Unit, T>`
+| Builds and keeps one sub-binding per distinct argument value.
+|===
+
+
+== `value`
+
+`value` binds a value that already exists.
+Nothing is ever computed:
+
+[source,kotlin]
+----
+Binding.value(Config(debug = true))
+----
+
+Use it for configuration, constants, and objects that were built outside of the module.
+
+
+== `provider`
+
+`provider` runs its body every time the member is accessed, producing a fresh value each time:
+
+[source,kotlin]
+----
+Binding.provider { Clock.System.now() }
+----
+
+Use it for values that must never be shared, or that are cheap and change over time.
+
+
+== `single`
+
+`single` runs its body the first time the member is accessed, then returns that same instance forever:
+
+[source,kotlin]
+----
+Binding.single { SqlDatabase(databaseUrl) }
+----
+
+Use it for services that should exist once per module: clients, databases, repositories.
+
+The body runs lazily: a `single` that is never accessed is never built.
+
+`single` takes an optional thread-safety mode, described in xref:guides:thread-safety.adoc[]:
+
+[source,kotlin]
+----
+Binding.single(SingleThreadSafety.Published) { ExpensiveButPureValue() }
+----
+
+
+== `weakSingle`
+
+`weakSingle` behaves like `single`, except that the module only holds a weak reference to the instance.
+Once nothing else references it, the instance may be garbage collected, and the next access builds a new one:
+
+[source,kotlin]
+----
+Binding.weakSingle { ImageCache() }
+----
+
+Use it for values that are expensive but can be rebuilt, and that you do not want to keep in memory just because a module can produce them.
+The produced type must be non-nullable.
+
+Like `single`, it takes an optional xref:guides:thread-safety.adoc[thread-safety mode].
+
+
+[#factory]
+== `factory`
+
+`factory` is for members that take an argument.
+It runs its body on every access, passing the caller's argument:
+
+[source,kotlin]
+----
+@DIModule
+interface AppModule {
+    fun user(id: Int): User
+}
+
+AppModule(
+    user = Binding.factory { id -> User(id) },
+)
+----
+
+`factory` is the argument-taking equivalent of `provider`: nothing is kept between calls.
+xref:arguments.adoc[] explains how members with several parameters or `vararg` parameters are bound.
+
+
+[#multiplex]
+== `multiplex`
+
+`multiplex` gives an argument-taking member a lifecycle.
+For each distinct argument value, it calls its lambda once to build a sub-binding, keeps it, and delegates every call with that argument to it:
+
+[source,kotlin]
+----
+@DIModule
+interface AppModule {
+    fun connection(host: String): Connection
+}
+
+AppModule(
+    connection = Binding.multiplex { host -> Binding.single { Connection(host) } }, // <1>
+)
+----
+<1> One `Connection` per host, each built once and kept forever.
+
+The sub-binding can be any no-argument binding: `single`, `weakSingle`, `provider`, or even `value`.
+
+[WARNING]
+====
+The per-argument cache is never evicted.
+`multiplex` is for a *small, bounded* set of arguments: hosts, tenants, enum values.
+Keyed on an unbounded value, like a user id, a request id or a timestamp, it is a memory leak: use `factory` there.
+
+An array argument, or a xref:arguments.adoc#multiple-parameters[generated arguments class] holding an array, never equals a fresh one.
+With such an argument, every call misses the cache, which grows by one entry per call.
+====
+
+
+== Choosing a binding
+
+[cols="3,2"]
+|===
+| You want... | Use
+
+| a value you already have
+| `value`
+
+| one instance for the lifetime of the module
+| `single`
+
+| one instance, as long as someone uses it
+| `weakSingle`
+
+| a new instance every time
+| `provider`
+
+| a new instance every time, built from an argument
+| `factory`
+
+| one instance per argument value, from a small set
+| `multiplex`
+|===

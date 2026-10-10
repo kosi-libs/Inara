@@ -1,0 +1,105 @@
+= Declaring a module
+
+A module is an interface annotated with `@DIModule`.
+Every member of the interface is a slot that must be filled with a `Binding` when the module is built.
+
+[source,kotlin]
+.AppModule.kt
+----
+@DIModule
+interface AppModule {
+    val config: Config
+    fun repository(): Repository
+    fun user(id: Int): User
+}
+----
+
+
+== The generated builder
+
+The processor generates a builder function with the same name as the interface, taking one `Binding` parameter per member:
+
+[source,kotlin]
+.InaraAppModule.kt
+----
+public fun AppModule(
+    config: Binding<AppModule, Unit, Config>,
+    repository: Binding<AppModule, Unit, Repository>,
+    user: Binding<AppModule, Int, User>,
+): AppModule
+----
+
+Because the parameters are named after the members, a call site reads like the interface itself:
+
+[source,kotlin]
+----
+val app = AppModule(
+    config = Binding.value(Config(debug = true)),
+    repository = Binding.single { SqlRepository(config) },
+    user = Binding.factory { id -> repository().findUser(id) },
+)
+----
+
+Every parameter is mandatory.
+If you forget one, or if a new member is added to the interface, the call does not compile.
+
+
+== The shape of a `Binding`
+
+A binding is a recipe for producing a value:
+
+[source,kotlin]
+----
+public interface Binding<in M, in A, out T> {
+    public fun get(module: M, arg: A): T
+}
+----
+
+* `M` is the module type.
+It is always the module being built, which is what lets a binding body reach any other member through its receiver.
+* `A` is the argument type: `Unit` for a member without parameters, otherwise derived from the member's parameters (see xref:arguments.adoc[]).
+* `T` is the type of the produced value.
+
+You never implement `Binding` yourself: you build one with the factories described in xref:bindings.adoc[].
+
+
+== Binding bodies see the whole module
+
+Every binding body runs with the module as its receiver (`this`).
+It can therefore read any other member of the module, without you wiring anything:
+
+[source,kotlin]
+----
+AppModule(
+    config = Binding.value(Config(debug = true)),
+    repository = Binding.single { SqlRepository(this.config) }, // <1>
+    user = Binding.factory { id -> repository().findUser(id) }, // <2>
+)
+----
+<1> `this` is the `AppModule` being built.
+<2> `this` is implicit, as in any Kotlin lambda with a receiver.
+
+Because members are read through the module rather than captured, a body always sees the bindings of the module it runs in, including when that module was built by xref:copy.adoc[`copy`].
+
+
+== Properties and functions are equivalent
+
+A property and a function without parameters are the same thing to Inara: both are bound with a `Binding<M, Unit, T>`.
+Choosing between them is purely about how you want the call site to read.
+
+What a declaration does *not* decide is the lifecycle of the value.
+Nothing about `val` implies a stored constant, and nothing about `fun` implies a new value on every call: that is entirely up to the binding.
+
+[source,kotlin]
+----
+AppModule(
+    config = Binding.provider { loadConfig() }, // <1>
+    repository = Binding.value(FixedRepository), // <2>
+    user = Binding.factory { id -> User(id) },
+)
+----
+<1> A `val`, recomputed on every read.
+<2> A `fun`, always returning the same instance.
+
+TIP: A good convention is to declare as `val` what reads like a configuration value, and as `fun` what reads like a service.
+Inara does not care either way.

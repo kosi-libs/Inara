@@ -1,0 +1,79 @@
+= Composing modules
+
+xref:inheritance.adoc[Inheritance] rebinds every inherited member.
+Often, though, the parent modules are already built, and the child should simply reuse them.
+Passing `composed = true` to `@DIModule` adds a builder that takes already-built parent modules:
+
+[source,kotlin]
+----
+@DIModule(composed = true)
+interface AppModule : GreeterModule, CounterModule {
+    val label: String
+}
+----
+
+
+== Two builders
+
+A composed module gets two builder overloads.
+The first one takes one built module per direct `@DIModule` parent, and only binds the members declared on the child itself:
+
+[source,kotlin]
+----
+val greeter = GreeterModule(greeting = Binding.value("Hi"))
+val counter = CounterModule(next = Binding.provider { 0 })
+
+val app = AppModule(
+    greeterModule = greeter, // <1>
+    counterModule = counter,
+    label = Binding.value("app"), // <2>
+)
+----
+<1> Parent parameters are named after the parent interface, decapitalized: `GreeterModule` becomes `greeterModule`.
+<2> Only the members declared on `AppModule` need a binding.
+
+The second one is the regular builder, which binds every member individually, exactly as with a plain `@DIModule`:
+
+[source,kotlin]
+----
+val app = AppModule(
+    greeting = Binding.value("Hi"),
+    next = Binding.provider { 0 },
+    label = Binding.value("app"),
+)
+----
+
+Both overloads build the same implementation.
+
+
+== Parent bindings are reused as they are
+
+When a parent was built by Inara, the child reuses each of its bindings as is, rather than calling through the parent.
+The bindings are therefore *shared* between the parent and the child: a `single` that was already built in the parent is not built again in the child.
+
+This is the same sharing as with xref:copy.adoc#copied-bindings-are-shared[`copy`], and it comes with the same rule: a memoized binding is built by whichever module accesses it first, with that module as its receiver.
+
+A parent that implements the interface by hand, or an inherited member that takes several parameters, is read through a lightweight delegate to the parent instead.
+
+
+== Swapping a parent
+
+A composed module also gets an extra `copy` overload, which replaces a whole parent at once:
+
+[source,kotlin]
+----
+val withOtherGreeter = app.copy(greeterModule = otherGreeter)
+----
+
+Each parent parameter defaults to the module being copied, so omitted parents are kept as they are.
+
+
+== Restrictions
+
+* A composed module must extend at least one `@DIModule` interface.
+* Diamond inheritance is rejected.
+Two parents that both provide the same ancestor's members are ambiguous: the child could not know which parent to read those members from.
+Plain, non-composed `@DIModule` interfaces have no such restriction.
+* Members coming from a xref:supertypes.adoc[plain, non-`@DIModule` supertype] cannot be read from a parent module: in the from-parents builder, they are binding parameters, next to the members declared on the child.
+
+TIP: Composition is the building block of xref:guides:scopes.adoc[scopes], and of xref:guides:multi-module.adoc[multi-module projects].

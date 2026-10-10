@@ -1,0 +1,58 @@
+= Default implementations
+
+A member that has a body in the interface does not need a binding.
+Its builder parameter is a nullable binding that defaults to `null`, meaning "keep the interface's own implementation".
+
+[source,kotlin]
+.GreetingModule.kt
+----
+@DIModule
+interface GreetingModule {
+    val name: String
+    val greeting: String get() = "Hello, $name"
+    fun shout(): String = "$greeting!!!"
+}
+----
+
+Only the abstract member must be bound:
+
+[source,kotlin]
+----
+val module = GreetingModule(name = Binding.value("World"))
+module.greeting // "Hello, World"
+module.shout()  // "Hello, World!!!"
+----
+
+
+== Overriding a default
+
+Any default can still be bound, which replaces the interface's body:
+
+[source,kotlin]
+----
+val module = GreetingModule(
+    name = Binding.value("World"),
+    greeting = Binding.provider { "Hi $name" },
+)
+module.shout() // "Hi World!!!" <1>
+----
+<1> The default body of `shout()` reads the overridden `greeting`.
+
+Default bodies run against the module that was actually built.
+A default that reads another member therefore observes whatever that member was bound to.
+
+
+== Defaults and lifecycles
+
+A default body behaves like a `provider`: it runs on every access, since it is ordinary interface code.
+To memoize a member that has a sensible default, bind it explicitly:
+
+[source,kotlin]
+----
+GreetingModule(
+    name = Binding.value("World"),
+    greeting = Binding.single { "Hello, $name" },
+)
+----
+
+TIP: Default implementations are a good place for derived values, and for convenience functions that combine other members of the module.

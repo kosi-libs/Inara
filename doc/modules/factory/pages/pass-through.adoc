@@ -1,0 +1,102 @@
+= Pass-through arguments
+
+A constructor argument that nothing resolves, neither an `arg<Argument>` function, nor the `with` value, nor a default value, nor a module member, is not an error.
+It simply becomes a parameter of the generated function, passed straight through to the constructor.
+
+
+== Example
+
+[source,kotlin]
+----
+@DIModule
+interface SupportModule {
+    fun httpClient(): HttpClient
+}
+
+class Ticket(val httpClient: HttpClient, val subject: String, val priority: Int)
+
+@DIFactory(builds = Ticket::class, from = SupportModule::class)
+object TicketFactory
+----
+
+`SupportModule` provides an `HttpClient`, but neither a `String` nor an `Int`, so the generated function asks the caller for them:
+
+[source,kotlin]
+.InaraTicketFactory.kt
+----
+public fun TicketFactory.Ticket(module: SupportModule, argSubject: String, argPriority: Int): Ticket =
+    Ticket(
+        httpClient = module.httpClient(), // <1>
+        subject = argSubject, // <2>
+        priority = argPriority,
+    )
+----
+<1> Resolved from the module.
+<2> Passed through from the caller.
+
+[source,kotlin]
+----
+val ticket = TicketFactory.Ticket(support, argSubject = "Login fails", argPriority = 2)
+----
+
+
+== The generated signature
+
+A generated function is legible by prefix alone:
+
+* one `module` parameter;
+* zero or one `with` parameter (see xref:with.adoc[]);
+* zero or more `arg<Argument>` parameters, one per pass-through argument.
+
+Pass-through parameters are named `arg` followed by the capitalized argument name, exactly like the `arg<Argument>` function that would otherwise resolve them.
+That prefix guarantees that they never collide with `module` or `with`.
+
+They come after `module` and `with`, in the declaration order of the constructor.
+In the rare case where two constructor parameters would produce the same name, such as `count` and `Count`, a trailing `_` disambiguates them.
+
+Some arguments never become pass-through parameters:
+
+* a `vararg`, which is always omitted when nothing resolves it;
+* an argument matched by several module members, which is an ambiguity error (see xref:resolution.adoc[]).
+
+
+== Pitfalls
+
+=== Accidental type matches
+
+An argument is only passed through when *no* module member produces its type.
+If the module happens to provide a value of that type, even an unrelated one, the factory resolves the argument from it.
+
+[source,kotlin]
+----
+@DIModule
+interface NetworkModule {
+    val baseUrl: String
+    fun httpClient(): HttpClient
+}
+
+class Ticket(val httpClient: HttpClient, val subject: String)
+
+@DIFactory(builds = Ticket::class, from = NetworkModule::class)
+object TicketFactory
+// generates: fun TicketFactory.Ticket(module: NetworkModule): Ticket <1>
+----
+<1> `subject` is resolved from `baseUrl`, because it is the only `String` member of `NetworkModule`.
+
+TIP: Generic types like `String` or `Int` are easily matched by accident.
+Wrapping caller-provided values in dedicated types, like `value class Subject(val text: String)`, makes the intent explicit and keeps the factory from picking them up from the module.
+
+
+=== Adding a default value
+
+A default value outranks a pass-through.
+Adding a default value to a constructor parameter that used to be passed through therefore *removes* the parameter from the generated function.
+This changes the signature for every caller, without any warning.
+
+
+=== Visibility
+
+The type of a pass-through parameter appears in the generated signature, so it has to be nameable from it:
+
+* a `public` factory object cannot pass through an `internal` type, so make the object `internal`;
+* a type that is `internal` to *another* Gradle module can never be passed through, whatever the visibility of the object.

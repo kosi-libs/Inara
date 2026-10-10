@@ -1,0 +1,52 @@
+= Visibility & nesting
+
+This page covers where a module interface can be declared, and who can see the code generated for it.
+
+
+== Visibility
+
+A module interface must be `public` or `internal`.
+
+An `internal` module gets an `internal` builder, `internal` `copy` functions, and an `internal` arguments container:
+
+[source,kotlin]
+----
+@DIModule
+internal interface SecretsModule {
+    val apiKey: String
+}
+----
+
+A `private` or `protected` module interface is a compile error, since the generated top-level builder and `copy` functions could not name it.
+
+TIP: An `internal` module is a good way to keep the wiring of a Gradle module private, while exposing only its public types.
+See xref:guides:multi-module.adoc[].
+
+
+== Nested modules
+
+A module interface can be nested in another type:
+
+[source,kotlin]
+----
+interface Outer {
+    @DIModule
+    interface Inner {
+        val label: String
+    }
+}
+
+val inner: Outer.Inner = Inner(label = Binding.value("inner")) // <1>
+----
+<1> The builder function keeps the interface's own simple name.
+
+The generated implementation class and file flatten the enclosing scopes: `InaraOuterInner`, in `InaraOuterInner.kt`.
+The builder function, however, keeps the simple name of the interface, so you call it the way you write the interface.
+
+[NOTE]
+====
+Two nested modules with the same simple name in the same package share a builder name.
+This is harmless as soon as either of them has a member, since the `Binding` parameter types differ, which makes the two functions valid overloads.
+
+In the rare case where both are empty, the two builders conflict, and the generated files fail to compile.
+====

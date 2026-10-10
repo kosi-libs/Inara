@@ -1,0 +1,121 @@
+= Building plain classes
+
+A `@DIModule` produces values, but your own classes should not have to know about it.
+`@DIFactory` generates a constructor-shaped function that builds one of your classes from a module, resolving each constructor argument from the module's members.
+
+The built class never references Inara at all: it is ordinary Kotlin, with ordinary constructor parameters.
+
+
+== A first factory
+
+Given a module and a plain class:
+
+[source,kotlin]
+----
+@DIModule
+interface NetworkModule {
+    val baseUrl: String
+    fun httpClient(): HttpClient
+}
+
+class UsersApi(val httpClient: HttpClient) // <1>
+----
+<1> No Inara import, no annotation.
+
+Annotate an object with `@DIFactory`, naming the class it `builds` and the module it builds it `from`:
+
+[source,kotlin]
+----
+@DIFactory(builds = UsersApi::class, from = NetworkModule::class)
+object UsersApiFactory
+----
+
+The processor generates an extension function on that object, named after the built class:
+
+[source,kotlin]
+.InaraUsersApiFactory.kt
+----
+public fun UsersApiFactory.UsersApi(module: NetworkModule): UsersApi =
+    UsersApi(
+        httpClient = module.httpClient(), // <1>
+    )
+----
+<1> `httpClient()` is the only member of `NetworkModule` that returns an `HttpClient`.
+
+You call it off the object, with a built module:
+
+[source,kotlin]
+----
+val api = UsersApiFactory.UsersApi(network)
+----
+
+Each constructor argument is resolved in turn, by name or by type.
+The full set of rules is described in xref:resolution.adoc[].
+
+
+== Telling Inara how to resolve an argument
+
+When an argument cannot be found by its type, or should be computed differently, declare an `arg<Argument>` extension function on the object.
+Its receiver is the module, and its name is `arg` followed by the capitalized argument name:
+
+[source,kotlin]
+----
+class UsersController(val httpClient: HttpClient, val endpoint: String)
+
+@DIFactory(builds = UsersController::class, from = NetworkModule::class)
+object UsersControllerFactory {
+    internal fun NetworkModule.argEndpoint(): String = "$baseUrl/users" // <1>
+}
+----
+<1> Resolves the `endpoint` argument.
+It is `internal` because the object is public, see <<visibility>>.
+
+[source,kotlin]
+.InaraUsersControllerFactory.kt
+----
+public fun UsersControllerFactory.UsersController(module: NetworkModule): UsersController =
+    UsersController(
+        httpClient = module.httpClient(),
+        endpoint = module.argEndpoint(),
+    )
+----
+
+These `arg<Argument>` functions are the *only* declarations a `@DIFactory` object may contain.
+Anything else in the object is a compile error.
+
+
+[#visibility]
+== Visibility
+
+The annotated object must be `public` or `internal`, and the generated function has the same visibility as the object.
+
+On a `public` object:
+
+* every `arg<Argument>` function must be `internal`, since they are implementation details, not public API;
+* the `from` module, the `builds` class, its selected constructor, and every type that appears in the generated signature must be `public`, otherwise the generated function could not compile.
+
+When one of those types is `internal`, make the object `internal` as well:
+
+[source,kotlin]
+----
+internal class AuditLog(val httpClient: HttpClient)
+
+@DIFactory(builds = AuditLog::class, from = NetworkModule::class)
+internal object AuditLogFactory // <1>
+----
+<1> Generates `internal fun AuditLogFactory.AuditLog(module: NetworkModule): AuditLog`.
+
+The `arg<Argument>` functions of an `internal` object do not need any modifier.
+
+An `arg<Argument>` function can never be `private`: the generated function is an extension on the object, not a member, so it could not reach it.
+
+NOTE: Because `arg<Argument>` is a reserved naming convention, a `@DIModule` member may not be named `arg` followed by an uppercase letter.
+
+
+== The `builds` class
+
+The built class must be a concrete class: neither `abstract` nor `sealed`.
+The class and the constructor that the factory calls must both be `public` or `internal`.
+
+By default, that constructor is the primary one.
+xref:constructors.adoc[] explains how to select another one.

@@ -1,0 +1,93 @@
+= Scopes & lifecycles
+
+Inara has no notion of scope.
+It does not need one: a scope is simply a module instance.
+A `single` lives exactly as long as the module that holds it, so the lifetime of a value is the lifetime of the module you built it in.
+
+
+== One module per lifetime
+
+Group members by how long they should live:
+
+* an application module, built once at startup, for everything that lives as long as the application;
+* a session module, built when a user logs in and dropped when they log out;
+* a screen or request module, built for one screen or one request.
+
+Each shorter-lived module xref:core:composition.adoc[composes] the longer-lived one, so it can use its members without rebinding them.
+
+[source,kotlin]
+----
+@DIModule
+interface AppModule {
+    fun httpClient(): HttpClient
+    fun database(): Database
+}
+
+@DIModule(composed = true)
+interface SessionModule : AppModule {
+    val user: User
+    fun repository(): UserRepository
+}
+----
+
+[source,kotlin]
+----
+val app = AppModule( // <1>
+    httpClient = Binding.single { HttpClient() },
+    database = Binding.single { Database.open() },
+)
+
+fun onLogin(user: User): SessionModule = SessionModule( // <2>
+    appModule = app,
+    user = Binding.value(user),
+    repository = Binding.single { UserRepository(httpClient(), database(), user) }, // <3>
+)
+----
+<1> Built once, at startup.
+<2> Built at every login.
+<3> One repository per session, which reads members of both modules.
+
+The session module reuses the bindings of the application module as they are: `httpClient()` returns the very same instance in every session.
+When the session module is no longer referenced, its own `single` instances are garbage collected with it, while the application module keeps its own.
+
+
+== Lifecycles within a module
+
+Within a module, the binding of each member decides its lifecycle:
+
+[cols="2,3"]
+|===
+| Lifetime | Binding
+
+| the module
+| `single`
+
+| as long as something uses it
+| `weakSingle`
+
+| one per argument value, for the module
+| `multiplex { Binding.single { ... } }`
+
+| none: a new instance every time
+| `provider`, `factory`
+|===
+
+See xref:core:bindings.adoc[] for each of them.
+
+
+== Building classes in a scope
+
+xref:factory:basics.adoc[`@DIFactory`] builds classes from whichever module you give it.
+A factory `from` the session module builds a class that can depend on members of both the session and the application:
+
+[source,kotlin]
+----
+class ProfileViewModel(val user: User, val repository: UserRepository)
+
+@DIFactory(builds = ProfileViewModel::class, from = SessionModule::class)
+object ProfileViewModelFactory
+
+val viewModel = ProfileViewModelFactory.ProfileViewModel(session)
+----
+
+Values that only exist for one call, like a route or a request, are passed as xref:factory:with.adoc[`with` arguments] rather than stored in a module.

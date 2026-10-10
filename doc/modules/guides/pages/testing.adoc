@@ -1,0 +1,104 @@
+= Testing
+
+Inara keeps business code independent from the dependency-injection layer, which makes most tests trivial: classes take their dependencies as constructor parameters, so tests simply construct them.
+This page covers the tests where a module is involved.
+
+
+== Testing business classes
+
+A class built by a xref:factory:basics.adoc[`@DIFactory`] is an ordinary class.
+Tests construct it directly, with whatever test doubles they need, without any module:
+
+[source,kotlin]
+----
+class UsersControllerTest {
+    @Test
+    fun listsUsers() {
+        val controller = UsersController(
+            httpClient = FakeHttpClient(),
+            endpoint = "https://test/users",
+        )
+        // ...
+    }
+}
+----
+
+
+== Building a test module
+
+When the code under test takes a module, build one with test bindings, exactly like a production module:
+
+[source,kotlin]
+----
+val testApp = AppModule(
+    config = Binding.value(Config(debug = true)),
+    repository = Binding.value(InMemoryRepository()),
+    user = Binding.factory { id -> User(id) },
+)
+----
+
+The compiler makes sure that every member is bound, so a test module can never be missing a dependency.
+
+Test doubles from a mocking library plug in the same way: `Binding.value(mockRepository)`.
+
+
+== Overriding production wiring
+
+When the production wiring is mostly what a test needs, use xref:core:copy.adoc[`copy`] to override only what differs:
+
+[source,kotlin]
+----
+val testApp = productionApp.copy(
+    repository = Binding.value(InMemoryRepository()),
+)
+----
+
+[WARNING]
+====
+`copy` shares the bindings it does not override with the original module, including the state of `single`, `weakSingle` and `multiplex` bindings.
+A test variant built with `copy` can therefore:
+
+* return an instance that was already built by the production module, with production dependencies;
+* build an instance that the production module then returns, with test dependencies.
+
+See xref:core:copy.adoc#copied-bindings-are-shared[Copied bindings are shared].
+====
+
+To keep tests isolated, build each test module from scratch, with a function that returns fresh bindings every time it is called:
+
+[source,kotlin]
+----
+fun appModule(
+    repositoryBinding: Binding<AppModule, Unit, Repository> = Binding.single { SqlRepository(config) }, // <1>
+): AppModule = AppModule(
+    config = Binding.value(loadConfig()),
+    repository = repositoryBinding,
+    user = Binding.factory { id -> repository().findUser(id) },
+)
+
+val productionApp = appModule()
+val testApp = appModule(repositoryBinding = Binding.value(InMemoryRepository())) // <2>
+----
+<1> A default argument is evaluated on every call, so each module gets its own `single`.
+<2> Nothing is shared with `productionApp`.
+
+This is plain Kotlin: bindings are values, so a function can produce them.
+
+
+== Testing `suspend` members
+
+A `suspend` member needs a `SuspendBinding`.
+To supply a fixed value without writing a `suspend` body, lift a regular binding with xref:core:suspend.adoc#reusing-a-non-suspending-binding[`suspend()`], or use `SuspendBinding.value`:
+
+[source,kotlin]
+----
+val testSession = session.copy(
+    token = SuspendBinding.value(Token("test-token")),
+)
+----
+
+
+== Checking the wiring
+
+A module's `toString()` lists every member with the binding it holds, which is useful to make sure a test overrides what it should.
+See xref:inspecting.adoc[].

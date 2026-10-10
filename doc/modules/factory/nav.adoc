@@ -1,0 +1,8 @@
+* Factories
+** xref:basics.adoc[]
+** xref:resolution.adoc[]
+** xref:with.adoc[]
+** xref:pass-through.adoc[]
+** xref:suspend.adoc[]
+** xref:constructors.adoc[]
+** xref:multiple.adoc[]

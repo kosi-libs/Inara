@@ -1,0 +1,90 @@
+= Copying a module
+
+Every module gets a generated `copy` extension function, which builds a new module from an existing one.
+It takes one parameter per member, each defaulting to the binding the module *currently* holds for that member, so you only name what you want to override:
+
+[source,kotlin]
+----
+val app = AppModule(
+    config = Binding.value(Config(debug = false)),
+    repository = Binding.single { SqlRepository(config) },
+    user = Binding.factory { id -> repository().findUser(id) },
+)
+
+val debugApp = app.copy(
+    config = Binding.value(Config(debug = true)),
+)
+----
+
+The original module is never modified: `copy` returns a new module, and `app` keeps its own bindings.
+
+Calling `copy()` without any argument returns the very same module, since there is nothing to change.
+
+
+[#copied-bindings-are-shared]
+== Copied bindings are shared
+
+An omitted parameter carries the *same binding object* across to the new module.
+That is what lets a copy keep an already-built `single` instead of building it a second time, but it also means that the original and the copy share that binding's state.
+
+[source,kotlin]
+----
+val debugApp = app.copy(
+    config = Binding.value(Config(debug = true)),
+)
+
+debugApp.repository() // <1>
+app.repository() // <2>
+----
+<1> `repository` was carried across, so the copy and the original share its `single`.
+If it was not built yet, it is built now, with `debugApp` as its receiver, so it reads the *debug* `config`.
+<2> The original module returns that same instance, built with the debug configuration.
+
+[WARNING]
+====
+A `single`, `weakSingle` or `multiplex` binding that is shared between modules is built by whichever module accesses it first, with that module as its receiver.
+When you override a member that a memoized binding depends on, give the dependent member a fresh binding too:
+
+[source,kotlin]
+----
+val debugApp = app.copy(
+    config = Binding.value(Config(debug = true)),
+    repository = Binding.single { SqlRepository(config) },
+)
+----
+====
+
+Bindings that do not keep any state, like `value`, `provider` and `factory`, always run against the module they are accessed through, so sharing them is harmless.
+
+
+== Default implementations
+
+For a member that has a xref:defaults.adoc[default implementation], an omitted parameter keeps the member as it was.
+If it was unbound, its default body keeps being used, and runs against the *new* module: it therefore observes the members you overrode in the same `copy` call.
+
+Such a member additionally accepts an explicit `null`, which drops its binding and goes back to the interface's own body:
+
+[source,kotlin]
+----
+val module = GreetingModule(
+    name = Binding.value("World"),
+    greeting = Binding.provider { "Hi $name" },
+)
+
+val restored = module.copy(greeting = null)
+restored.greeting // "Hello, World"
+----
+
+
+== Chaining copies
+
+A copy is a module like any other, so it can be copied in turn:
+
+[source,kotlin]
+----
+val variant = app
+    .copy(config = Binding.value(Config(debug = true)))
+    .copy(user = Binding.factory { id -> User.guest(id) })
+----
+
+TIP: xref:guides:testing.adoc[] shows how `copy` is used to build test variants of a module.

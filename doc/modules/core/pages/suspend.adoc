@@ -1,0 +1,71 @@
+= Asynchronous members
+
+A member declared `suspend` is bound with a `SuspendBinding` instead of a `Binding`.
+Its bodies are themselves `suspend`, so a value that needs asynchronous work to be built can be built asynchronously:
+
+[source,kotlin]
+.SessionModule.kt
+----
+@DIModule
+interface SessionModule {
+    val authClient: AuthClient
+    suspend fun token(): Token
+    suspend fun profile(userId: String): Profile
+}
+
+val session = SessionModule(
+    authClient = Binding.single { AuthClient() },
+    token = SuspendBinding.single { authClient.fetchToken() }, // <1>
+    profile = SuspendBinding.factory { userId -> authClient.fetchProfile(userId, token()) }, // <2>
+)
+----
+<1> `fetchToken()` is a `suspend` function.
+<2> A `suspend` body can call other `suspend` members.
+
+The generated override is itself `suspend`, so asynchronous construction propagates to callers the way any `suspend` call does, instead of hiding behind `runBlocking` or a `Deferred` that every call site has to await.
+
+
+== `SuspendBinding` factories
+
+`SuspendBinding` mirrors every xref:bindings.adoc[`Binding` factory], with `suspend` bodies:
+
+[source,kotlin]
+----
+SuspendBinding.value(token)
+SuspendBinding.provider { fetchToken() }
+SuspendBinding.factory { id -> fetchProfile(id) }
+SuspendBinding.single { fetchToken() }
+SuspendBinding.weakSingle { fetchCache() }
+SuspendBinding.multiplex { region -> SuspendBinding.single { connect(region) } }
+----
+
+`single` and `weakSingle` take the same xref:guides:thread-safety.adoc[`SingleThreadSafety` mode] as on `Binding`.
+The only difference is that `Synchronized` guards the one-time build with a coroutine `Mutex` instead of a system lock, so that concurrent first callers suspend rather than block.
+
+
+[#reusing-a-non-suspending-binding]
+== Reusing a non-suspending binding
+
+An existing `Binding` can be lifted into a `SuspendBinding` with `suspend()`.
+The result keeps the lifecycle of the original binding:
+
+[source,kotlin]
+----
+val tokenBinding: Binding<SessionModule, Unit, Token> = Binding.single { Token.anonymous() }
+
+SessionModule(
+    authClient = Binding.single { AuthClient() },
+    token = tokenBinding.suspend(),
+    profile = SuspendBinding.factory { userId -> authClient.fetchProfile(userId, token()) },
+)
+----
+
+This is mostly useful in tests, to supply a fixed value to a `suspend` member without writing a `suspend` body.
+
+
+== Mixing both kinds
+
+A module can freely mix `suspend` and non-suspending members.
+A non-suspending body cannot call a `suspend` member, exactly as in any Kotlin code, so asynchronous dependencies naturally flow towards `suspend` members.
+
+`suspend` members can also have xref:defaults.adoc[default implementations], and can take xref:arguments.adoc[arguments] exactly like other members.

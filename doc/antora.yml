@@ -1,0 +1,11 @@
+name: inara
+title: Inara
+nav:
+  - modules/ROOT/nav.adoc
+  - modules/core/nav.adoc
+  - modules/factory/nav.adoc
+  - modules/guides/nav.adoc
+asciidoc:
+  attributes:
+    kotlin-version: '2.4.20'
+    ksp-version: '2.3.12'

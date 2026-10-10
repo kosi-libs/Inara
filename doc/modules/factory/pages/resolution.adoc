@@ -1,0 +1,119 @@
+= Resolving constructor arguments
+
+Each constructor argument is resolved independently, by the first rule that applies, in this order:
+
+. an `arg<Argument>` function declared on the factory object;
+. the call-time value, when the factory has a xref:with.adoc[`with` argument] whose type fits;
+. the parameter's default value, or an empty array for a `vararg`;
+. a member of the `from` module whose type matches *exactly*, then a member whose type is a *subtype*;
+. a xref:pass-through.adoc[parameter of the generated function], when nothing above applies.
+
+This page details rules 1, 3 and 4.
+Rules 2 and 5 have their own pages.
+
+
+== `arg<Argument>` functions
+
+An extension function on the `from` module, declared in the factory object, and named `arg` followed by the capitalized argument name, always wins:
+
+[source,kotlin]
+----
+class Greeter(val greeting: String)
+
+@DIFactory(builds = Greeter::class, from = NetworkModule::class)
+object GreeterFactory {
+    internal fun NetworkModule.argGreeting(): String = "Hello from $baseUrl" // <1>
+}
+----
+<1> Resolves `greeting`, even though `NetworkModule.baseUrl` is also a `String`.
+
+An `arg<Argument>` function always resolves the argument it is named after, including when a module member or a default value would also fit.
+
+
+== Default values
+
+A parameter that declares a default value is left out of the constructor call, so that Kotlin applies its default.
+A `vararg` parameter is left out too, and receives an empty array.
+
+[source,kotlin]
+----
+class Client(val httpClient: HttpClient, val retries: Int = 3, vararg val tags: String)
+
+@DIFactory(builds = Client::class, from = NetworkModule::class)
+object ClientFactory
+----
+
+[source,kotlin]
+.InaraClientFactory.kt
+----
+public fun ClientFactory.Client(module: NetworkModule): Client =
+    Client(
+        httpClient = module.httpClient(), // <1>
+    )
+----
+<1> `retries` and `tags` are omitted.
+
+A default value written on the built class outranks any module member: it is a deliberate, local statement of intent, whereas a type match is not.
+To override a default, declare an `arg<Argument>` function.
+
+
+[#matching-module-members-by-type]
+== Matching module members by type
+
+When none of the above applies, the factory looks for a member of the `from` module that produces the argument's type:
+
+. a member whose type is *exactly* the argument's type;
+. failing that, a member whose type is a *subtype* of the argument's type.
+
+[source,kotlin]
+----
+@DIModule
+interface StorageModule {
+    fun sqlDatabase(): SqlDatabase // <1>
+    fun cache(): MemoryCache
+}
+
+class Repository(val database: Database, val cache: MemoryCache)
+
+@DIFactory(builds = Repository::class, from = StorageModule::class)
+object RepositoryFactory
+----
+<1> `SqlDatabase` implements `Database`.
+
+[source,kotlin]
+.InaraRepositoryFactory.kt
+----
+public fun RepositoryFactory.Repository(module: StorageModule): Repository =
+    Repository(
+        database = module.sqlDatabase(), // <1>
+        cache = module.cache(), // <2>
+    )
+----
+<1> No member returns exactly `Database`, but `sqlDatabase()` returns a subtype of it.
+<2> An exact match.
+
+Only members without parameters are candidates.
+The single exception is a member that takes one argument, when the factory has a xref:with.adoc[`with` argument] that fits it.
+
+[IMPORTANT]
+====
+Two or more matching members, at the same step, are a compile error.
+An ambiguous module is a real mistake, so Inara never silently picks one, nor defers the decision to the caller.
+
+For example, if `StorageModule` also declared `fun fileDatabase(): FileDatabase`, another `Database` implementation, the `database` argument would no longer compile.
+Resolve the ambiguity with an `arg<Argument>` function:
+
+[source,kotlin]
+----
+@DIFactory(builds = Repository::class, from = StorageModule::class)
+object RepositoryFactory {
+    internal fun StorageModule.argDatabase(): Database = sqlDatabase()
+}
+----
+====
+
+
+== When nothing matches
+
+An argument that no rule resolves becomes a parameter of the generated function, which the caller provides.
+See xref:pass-through.adoc[].

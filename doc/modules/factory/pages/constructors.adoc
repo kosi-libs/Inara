@@ -1,0 +1,34 @@
+= Choosing a constructor
+
+By default, `@DIFactory` calls the primary constructor of the `builds` class.
+`constructorIndex` selects another one, in declaration order:
+
+* `0`, the default, is the primary constructor;
+* `1` is the first secondary constructor;
+* `2` is the second secondary constructor, and so on.
+
+This is useful when the intended entry point is not the primary constructor, for example a `private` primary constructor paired with a public secondary one:
+
+[source,kotlin]
+----
+class Greeter private constructor(val greeting: String, private val marker: Int) {
+    constructor(baseUrl: String) : this("Hello from $baseUrl", 0)
+}
+
+@DIFactory(builds = Greeter::class, from = NetworkModule::class, constructorIndex = 1)
+object GreeterFactory
+----
+
+[source,kotlin]
+.InaraGreeterFactory.kt
+----
+public fun GreeterFactory.Greeter(module: NetworkModule): Greeter =
+    Greeter(
+        baseUrl = module.baseUrl,
+    )
+----
+
+Only the parameters of the selected constructor are resolved.
+Every other constructor, including the primary one, is ignored entirely, `arg<Argument>` name matching included.
+
+The selected constructor must be `public` or `internal`.

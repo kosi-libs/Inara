@@ -1,0 +1,64 @@
+= Thread safety
+
+Every binding is safe to use from several threads at once.
+This page details what each binding guarantees when its first access is itself concurrent.
+
+
+== `single` and `weakSingle`
+
+`single` and `weakSingle` take a `SingleThreadSafety` mode:
+
+[cols="1,3"]
+|===
+| Mode | Guarantee
+
+| `Synchronized` (default)
+| The body runs *exactly once*, under a lock.
+Concurrent first callers wait for it to finish.
+
+| `Published`
+| Lock-free.
+Concurrent first callers may each run the body, but all of them converge on a single winning instance.
+|===
+
+[source,kotlin]
+----
+Binding.single { Database.open() } // <1>
+Binding.single(SingleThreadSafety.Published) { Regex("[a-z]+") } // <2>
+----
+<1> `Synchronized`: opening a database twice must never happen.
+<2> `Published`: building the value twice is harmless, and avoids a lock.
+
+Choose `Published` only when the body is cheap and free of side effects, since it may run more than once.
+Once the value is built, both modes return it without any locking.
+
+
+== `suspend` bindings
+
+`SuspendBinding.single` and `SuspendBinding.weakSingle` take the same modes.
+`Synchronized` guards the one-time build with a coroutine `Mutex` instead of a system lock, so that concurrent first callers suspend instead of blocking their thread.
+
+
+== `multiplex`
+
+`multiplex` keeps its per-argument cache in a lock-free, copy-on-write map:
+
+* reading an argument that is already cached is a plain atomic read, without contention;
+* two concurrent *first-time* arguments race to extend the cache, the loser retrying, and the lambda building the sub-binding still runs at most once per call.
+
+Filling the cache with _n_ distinct arguments costs O(n²) copies.
+This is intended, and only acceptable because `multiplex` is meant for a xref:core:bindings.adoc#multiplex[small, bounded set of arguments].
+
+Each sub-binding then provides its own guarantees: a `multiplex { Binding.single { ... } }` builds each value exactly once.
+
+
+== `value`, `provider` and `factory`
+
+These bindings hold no state, so they have nothing to synchronize.
+Their bodies run on the caller's thread, on every access, and must be thread-safe themselves if they touch shared state.
+
+
+== JS and Wasm
+
+On JS and Wasm, there is no other thread to wait for, so thread synchronization is a no-op.
+Every other behaviour is identical to the other platforms.

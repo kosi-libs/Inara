@@ -1,0 +1,107 @@
+= Member arguments
+
+A `Binding` carries exactly one argument, of type `A`.
+The parameters of a member decide what that argument is:
+
+[cols="1,1"]
+|===
+| Member | Binding type
+
+| `val name: T`
+| `Binding<M, Unit, T>`
+
+| `fun make(): T`
+| `Binding<M, Unit, T>`
+
+| `fun make(id: Int): T`
+| `Binding<M, Int, T>`
+
+| `fun make(vararg s: String): T`
+| `Binding<M, Array<out String>, T>`
+
+| `fun make(vararg i: Int): T`
+| `Binding<M, IntArray, T>`
+
+| `fun make(a: A, b: B): T`
+| `Binding<M, ModuleBindingArguments.Make, T>`
+|===
+
+A member with arguments is bound with xref:bindings.adoc#factory[`factory`], or with xref:bindings.adoc#multiplex[`multiplex`] to give it a lifecycle.
+
+
+== One parameter
+
+The argument is the parameter itself:
+
+[source,kotlin]
+----
+@DIModule
+interface UserModule {
+    fun user(id: Int): User
+}
+
+UserModule(
+    user = Binding.factory { id -> User(id) },
+)
+----
+
+
+== A `vararg` parameter
+
+A `vararg` parameter arrives as the array Kotlin builds for it: an `Array<out T>`, or a primitive array such as `IntArray` for primitive types.
+
+[source,kotlin]
+----
+@DIModule
+interface PathModule {
+    fun path(vararg segments: String): String
+}
+
+PathModule(
+    path = Binding.factory { segments -> segments.joinToString("/") },
+)
+----
+
+
+[#multiple-parameters]
+== Multiple parameters
+
+When a member takes two or more parameters, the processor generates a `<Module>BindingArguments` container, holding one `data class` per such member.
+Each class is named after its member, capitalized, and has one property per parameter.
+
+[source,kotlin]
+.SearchModule.kt
+----
+@DIModule
+interface SearchModule {
+    fun index(): SearchIndex
+    fun search(query: String, limit: Int): List<SearchResult>
+    fun tagged(vararg tags: String, strict: Boolean = false): List<SearchResult>
+}
+----
+
+generates:
+
+[source,kotlin]
+.InaraSearchModule.kt
+----
+public class SearchModuleBindingArguments private constructor() {
+    public data class Search(val query: String, val limit: Int)
+
+    @Suppress("ArrayInDataClass")
+    public data class Tagged(val tags: Array<out String>, val strict: Boolean)
+}
+----
+
+The binding receives an instance of that class:
+
+[source,kotlin]
+----
+SearchModule(
+    index = Binding.single { SearchIndex() },
+    search = Binding.factory { args -> index().find(args.query).take(args.limit) },
+    tagged = Binding.factory { args -> index().findTagged(args.tags.toSet(), args.strict) },
+)
+----
+
+Because the arguments classes are data classes, they can serve as `multiplex` keys, as long as they hold no array (see the warning in xref:bindings.adoc#multiplex[`multiplex`]).

@@ -1,0 +1,55 @@
+= Multiple factories
+
+`@DIFactory` is repeatable.
+Annotating one object several times builds several related classes, each annotation generating its own function, all in one file named after the object:
+
+[source,kotlin]
+----
+class LoginScreen(val heading: String)
+class HomeScreen(val heading: String, val count: Int)
+
+@DIFactory(builds = LoginScreen::class, from = ScreenModule::class)
+@DIFactory(builds = HomeScreen::class, from = ScreenModule::class)
+object ScreensFactory {
+    internal fun ScreenModule.argHeading(): String = "Welcome to $appName" // <1>
+}
+----
+<1> Shared by both factories.
+
+[source,kotlin]
+.InaraScreensFactory.kt
+----
+public fun ScreensFactory.LoginScreen(module: ScreenModule): LoginScreen = ...
+public fun ScreensFactory.HomeScreen(module: ScreenModule): HomeScreen = ...
+----
+
+
+== Shared `arg<Argument>` functions
+
+An `arg<Argument>` function serves every annotation whose `from` is its receiver, and whose selected constructor has a parameter with the matching name.
+Above, `argHeading` resolves `heading` for both screens.
+
+An `arg<Argument>` function that serves none of the annotations is a compile error.
+
+
+== Per-annotation options
+
+`with`, `withNullable`, `suspend` and `constructorIndex` are set per annotation.
+A single object can, for example, generate a `suspend` function next to a regular one, or build the same class from two different modules:
+
+[source,kotlin]
+----
+@DIFactory(builds = Profile::class, from = OfflineModule::class)
+@DIFactory(builds = Profile::class, from = SessionModule::class, suspend = DIFactory.Suspend.Force)
+object ProfileFactory
+----
+
+
+== Conflicting annotations
+
+Two annotations that would generate the same signature are a compile error.
+The signature is made of the `builds` class, the `from` module, the `with` type, and the types of the xref:pass-through.adoc[pass-through parameters].
+
+Two annotations that only differ by `constructorIndex` are therefore valid, as long as the selected constructors leave different arguments to pass through.
+
+TIP: Grouping the factories of a feature in one object keeps its wiring in one place, and lets them share their `arg<Argument>` functions.

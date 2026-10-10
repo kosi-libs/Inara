@@ -1,0 +1,67 @@
+= Asynchronous factories
+
+A constructor argument can be resolved by a `suspend` provider: a `suspend` member of the module, or a `suspend` `arg<Argument>` function.
+The `suspend` parameter of `@DIFactory` controls whether that is allowed, and whether the generated function is `suspend`.
+
+
+== `Suspend.Allow`
+
+By default, a `suspend` provider is as eligible as any other.
+The generated function becomes `suspend` if, and only if, an argument actually resolves to a `suspend` provider:
+
+[source,kotlin]
+----
+@DIModule
+interface AsyncModule {
+    suspend fun load(): Service
+}
+
+class AsyncGreeter(val service: Service)
+
+@DIFactory(builds = AsyncGreeter::class, from = AsyncModule::class)
+object AsyncGreeterFactory
+----
+
+[source,kotlin]
+.InaraAsyncGreeterFactory.kt
+----
+public suspend fun AsyncGreeterFactory.AsyncGreeter(module: AsyncModule): AsyncGreeter =
+    AsyncGreeter(
+        service = module.load(), // <1>
+    )
+----
+<1> `load()` is a `suspend` member, so the generated function is `suspend` too.
+
+An `arg<Argument>` function can be `suspend` as well:
+
+[source,kotlin]
+----
+@DIFactory(builds = Dashboard::class, from = SessionModule::class)
+object DashboardFactory {
+    internal suspend fun SessionModule.argProfile(): Profile = fetchProfile(token())
+}
+----
+
+
+== `Suspend.Forbid`
+
+`suspend = Suspend.Forbid` excludes every `suspend` provider from resolution, and the generated function is never `suspend`.
+
+[source,kotlin]
+----
+@DIFactory(builds = AsyncGreeter::class, from = AsyncModule::class, suspend = DIFactory.Suspend.Forbid)
+object BlockingGreeterFactory
+// generates: fun BlockingGreeterFactory.AsyncGreeter(module: AsyncModule, argService: Service): AsyncGreeter <1>
+----
+<1> The only provider of `Service` is `suspend`, so the argument is xref:pass-through.adoc[passed through] instead.
+
+An argument whose only candidate is `suspend` is not an error: it falls through to the next rule, like any argument nothing else resolves.
+
+Use it to make sure that building a class never suspends, for example when it must be built from a non-suspending context.
+
+
+== `Suspend.Force`
+
+`suspend = Suspend.Force` resolves exactly like `Allow`, but always generates a `suspend` function, whether or not a provider actually is `suspend`.
+
+Use it to keep the signature stable: a factory that may need asynchronous dependencies in the future will not change its signature for every caller when it starts using one.

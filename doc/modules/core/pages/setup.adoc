@@ -1,0 +1,100 @@
+= Setup
+
+Inara ships two artifacts:
+
+[cols="2,3"]
+|===
+| Artifact | Purpose
+
+| `org.kodein.di.inara:inara-runtime`
+| The `Binding` types and the annotations.
+A normal dependency.
+
+| `org.kodein.di.inara:inara-processor`
+| The KSP processor that generates module and factory implementations.
+|===
+
+IMPORTANT: Inara runs on KSP but does not install it in your project.
+The KSP version to use depends on the Kotlin version you are using, so it is your responsibility to apply it alongside Inara.
+
+
+== JVM
+
+On a JVM-only project, KSP wires its generated sources into the compilation and into the IDE automatically:
+
+[source,kotlin,subs="verbatim,attributes"]
+.build.gradle.kts
+----
+plugins {
+    kotlin("jvm") version "{kotlin-version}"
+    id("com.google.devtools.ksp") version "{ksp-version}"
+}
+
+dependencies {
+    implementation("org.kodein.di.inara:inara-runtime:{page-component-version}")
+    ksp("org.kodein.di.inara:inara-processor:{page-component-version}")
+}
+----
+
+
+== Kotlin Multiplatform
+
+On a multiplatform project, declare your modules in `commonMain`.
+The processor then runs *once*, over the common metadata source set, and its output is fed back into `commonMain`, so that every target shares a single set of generated implementations:
+
+[source,kotlin,subs="verbatim,attributes"]
+.build.gradle.kts
+----
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompilationTask
+
+plugins {
+    kotlin("multiplatform") version "{kotlin-version}"
+    id("com.google.devtools.ksp") version "{ksp-version}"
+}
+
+kotlin {
+    jvm()
+    iosArm64()
+    iosSimulatorArm64()
+    // ...your other targets
+
+    sourceSets {
+        commonMain {
+            kotlin.srcDir(layout.buildDirectory.dir("generated/ksp/metadata/commonMain/kotlin")) // <1>
+            dependencies {
+                implementation("org.kodein.di.inara:inara-runtime:{page-component-version}")
+            }
+        }
+    }
+}
+
+dependencies {
+    add("kspCommonMainMetadata", "org.kodein.di.inara:inara-processor:{page-component-version}") // <2>
+}
+
+tasks.matching { it.name != "kspCommonMainKotlinMetadata" }.configureEach { // <3>
+    if (name.startsWith("ksp") || this is KotlinCompilationTask<*>) {
+        dependsOn("kspCommonMainKotlinMetadata")
+    }
+}
+----
+<1> Adds the generated common sources to `commonMain`.
+KSP already registers this directory as an output, but IntelliJ only indexes it as source code if it is also declared here.
+<2> Runs the processor over the common metadata source set only, rather than once per target.
+<3> Every compilation, and every per-target KSP task, reads the generated `commonMain` sources, so all of them must wait for the common KSP task to run.
+
+TIP: Inara supports every Kotlin/Native, JS and Wasm target listed in xref:guides:platforms.adoc[].
+
+
+== What gets generated
+
+For each `@DIModule` interface, the processor generates, in the same package:
+
+* a builder function named after the interface, which you call to build the module;
+* `copy` functions, which build a variant of an existing module (see xref:copy.adoc[]);
+* an `Inara<Module>` implementation class, which is reserved to generated code and should never be referenced directly;
+* a `<Module>BindingArguments` container, only if a member takes several parameters (see xref:arguments.adoc[]).
+
+For each `@DIFactory` object, it generates one extension function per annotation (see xref:factory:basics.adoc[]).
+
+All of it lives in a file named `Inara<Name>.kt` under `build/generated/ksp`.

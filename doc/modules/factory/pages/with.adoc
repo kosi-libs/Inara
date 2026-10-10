@@ -1,0 +1,122 @@
+= Call-time arguments
+
+Some values cannot be known at module level: a request context, a screen route, the id of the user an instance is for.
+`with` gives the generated function a second parameter, to pass such a value when building the class.
+
+
+== Declaring a `with` type
+
+[source,kotlin]
+----
+data class RequestContext(val userId: String)
+
+class UserSession(val httpClient: HttpClient, val context: RequestContext)
+
+@DIFactory(builds = UserSession::class, from = NetworkModule::class, with = RequestContext::class)
+object UserSessionFactory
+----
+
+The generated function takes the call-time value as `with`:
+
+[source,kotlin]
+.InaraUserSessionFactory.kt
+----
+public fun UserSessionFactory.UserSession(module: NetworkModule, with: RequestContext): UserSession =
+    UserSession(
+        httpClient = module.httpClient(), // <1>
+        context = with, // <2>
+    )
+----
+<1> Resolved from the module, as usual.
+<2> The call-time value fits the argument's type, so it is used directly.
+
+[source,kotlin]
+----
+val session = UserSessionFactory.UserSession(network, RequestContext(userId = "42"))
+----
+
+A constructor argument whose type the `with` value is assignable to resolves straight to it.
+This takes precedence over the argument's default value and over any module member: the caller supplied the value for this very call, so it shadows a module member of the same type.
+A `vararg` argument is never resolved this way.
+
+`with` defaults to `Unit`, which means "no call-time argument": the generated function then only takes the module.
+
+
+== `arg<Argument>` functions receive the value
+
+Under `with`, every `arg<Argument>` function must take exactly one parameter, of the `with` type:
+
+[source,kotlin]
+----
+class Greeting(val httpClient: HttpClient, val message: String)
+
+@DIFactory(builds = Greeting::class, from = NetworkModule::class, with = RequestContext::class)
+object GreetingFactory {
+    internal fun NetworkModule.argMessage(context: RequestContext): String = "Hello, ${context.userId}"
+}
+----
+
+[source,kotlin]
+.InaraGreetingFactory.kt
+----
+public fun GreetingFactory.Greeting(module: NetworkModule, with: RequestContext): Greeting =
+    Greeting(
+        httpClient = module.httpClient(),
+        message = module.argMessage(with),
+    )
+----
+
+An `arg<Argument>` function without parameter, or with a parameter of another type, is a compile error.
+
+
+== Module members that take the value
+
+Under `with`, a member of the `from` module that takes a single parameter, into which the `with` value fits, becomes a candidate for xref:resolution.adoc#matching-module-members-by-type[type matching].
+So does a member whose only parameter is a `vararg` whose array type the value is.
+
+[source,kotlin]
+----
+@DIModule
+interface ProfileModule {
+    fun profile(context: RequestContext): Profile
+}
+
+class ProfileScreen(val profile: Profile)
+
+@DIFactory(builds = ProfileScreen::class, from = ProfileModule::class, with = RequestContext::class)
+object ProfileScreenFactory
+----
+
+[source,kotlin]
+.InaraProfileScreenFactory.kt
+----
+public fun ProfileScreenFactory.ProfileScreen(module: ProfileModule, with: RequestContext): ProfileScreen =
+    ProfileScreen(
+        profile = module.profile(with),
+    )
+----
+
+These members compete on equal footing with members that take no parameter: a member with no parameter and a member with one parameter that both match the same argument are ambiguous, which is a compile error.
+
+
+== Nullable call-time values
+
+Use `withNullable` instead of `with` for a nullable parameter:
+
+[source,kotlin]
+----
+@DIFactory(builds = UserSession::class, from = NetworkModule::class, withNullable = RequestContext::class)
+object UserSessionFactory
+// generates: fun UserSessionFactory.UserSession(module: NetworkModule, with: RequestContext?): UserSession
+----
+
+`withNullable` is `with` in every respect, except that:
+
+* the value only resolves constructor arguments that are themselves nullable;
+* every `arg<Argument>` function must declare its parameter as nullable, like `RequestContext?`;
+* only a module member whose single parameter accepts `null` is a type-matching candidate, and a `vararg` member never is.
+
+Setting both `with` and `withNullable` is a compile error.
+
+TIP: `with` carries a single value.
+When a class needs several values that the module cannot provide, see xref:pass-through.adoc[].
