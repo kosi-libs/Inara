@@ -31,8 +31,8 @@ plugins {
 }
 
 dependencies {
-    implementation("org.kodein.di.inara:inara-runtime:{page-component-version}")
-    ksp("org.kodein.di.inara:inara-processor:{page-component-version}")
+    implementation("org.kodein.di.inara:inara-runtime:{version}")
+    ksp("org.kodein.di.inara:inara-processor:{version}")
 }
 ----
 
@@ -62,14 +62,14 @@ kotlin {
         commonMain {
             kotlin.srcDir(layout.buildDirectory.dir("generated/ksp/metadata/commonMain/kotlin")) // <1>
             dependencies {
-                implementation("org.kodein.di.inara:inara-runtime:{page-component-version}")
+                implementation("org.kodein.di.inara:inara-runtime:{version}")
             }
         }
     }
 }
 
 dependencies {
-    add("kspCommonMainMetadata", "org.kodein.di.inara:inara-processor:{page-component-version}") // <2>
+    add("kspCommonMainMetadata", "org.kodein.di.inara:inara-processor:{version}") // <2>
 }
 
 tasks.matching { it.name != "kspCommonMainKotlinMetadata" }.configureEach { // <3>

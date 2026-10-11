@@ -14,8 +14,8 @@ plugins {
 }
 
 dependencies {
-    implementation("org.kodein.di.inara:inara-runtime:{page-component-version}") // <2>
-    ksp("org.kodein.di.inara:inara-processor:{page-component-version}") // <3>
+    implementation("org.kodein.di.inara:inara-runtime:{version}") // <2>
+    ksp("org.kodein.di.inara:inara-processor:{version}") // <3>
 }
 ----
 <1> Apply the KSP plugin that corresponds to the Kotlin version you are using.
