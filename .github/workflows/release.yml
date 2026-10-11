@@ -7,13 +7,15 @@ on:
 jobs:
   build-upload:
     runs-on: macOS-latest
+    permissions:
+      contents: write
     steps:
       - name: Setup
         uses: KodeinKoders/kodein-github-actions/gradle-kotlin-setup@v0.1
       - name: Check version
         uses: KodeinKoders/kodein-github-actions/version-check@v0.1
         with:
-          releaseName: ${{ github.event.release.name }}
+          release-name: ${{ github.event.release.name }}
       - name: Build
         run: ./gradlew --stacktrace --scan build
         shell: bash
@@ -27,4 +29,4 @@ jobs:
       - name: Release branch
         uses: KodeinKoders/kodein-github-actions/release-branches@v0.1
         with:
-          releaseName: ${{ github.event.release.name }}
+          release-name: ${{ github.event.release.name }}
