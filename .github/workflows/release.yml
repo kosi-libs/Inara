@@ -13,7 +13,7 @@ jobs:
       - name: Setup
         uses: KodeinKoders/kodein-github-actions/gradle-kotlin-setup@v0.1
       - name: Check version
-        uses: KodeinKoders/kodein-github-actions/version-check@v0.1
+        uses: KodeinKoders/kodein-github-actions/version-check@v0.2
         with:
           release-name: ${{ github.event.release.name }}
       - name: Build
@@ -27,6 +27,6 @@ jobs:
           pgp-signing-key: ${{ secrets.PGP_SIGNING_KEY }}
           pgp-signing-password: ${{ secrets.PGP_SIGNING_PASSWORD }}
       - name: Release branch
-        uses: KodeinKoders/kodein-github-actions/release-branches@v0.1
+        uses: KodeinKoders/kodein-github-actions/release-branches@v0.2
         with:
           release-name: ${{ github.event.release.name }}
