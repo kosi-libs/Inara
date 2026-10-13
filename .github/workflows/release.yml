@@ -7,8 +7,6 @@ on:
 jobs:
   build-upload:
     runs-on: macOS-latest
-    permissions:
-      contents: write
     steps:
       - name: Setup
         uses: KodeinKoders/kodein-github-actions/gradle-kotlin-setup@v0.1
@@ -26,7 +24,29 @@ jobs:
           central-portal-token-password: ${{ secrets.CENTRAL_PORTAL_TOKEN_PASSWORD }}
           pgp-signing-key: ${{ secrets.PGP_SIGNING_KEY }}
           pgp-signing-password: ${{ secrets.PGP_SIGNING_PASSWORD }}
+
+  # Its own job, so that the write permission is confined to it.
+  release-branch:
+    needs: [build-upload]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
       - name: Release branch
         uses: KodeinKoders/kodein-github-actions/release-branches@v0.2
         with:
           release-name: ${{ github.event.release.name }}
+
+  # The website reads the release branches, so it is rebuilt once they are updated. The workflow lives
+  # in another repository, which the workflow's own token cannot reach: DOCUMENTATION_DISPATCH_TOKEN
+  # is a token that can run the workflows (Actions: write) of kosi-libs/documentation.
+  build-website:
+    needs: [release-branch]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Trigger the website build
+        env:
+          GH_TOKEN: ${{ secrets.DOCUMENTATION_DISPATCH_TOKEN }}
+        run: gh workflow run build-website.yml --repo kosi-libs/documentation --ref master
+        shell: bash
