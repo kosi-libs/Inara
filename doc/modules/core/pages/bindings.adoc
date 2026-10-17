@@ -33,6 +33,7 @@ All bindings are built with the factories of the `Binding` companion object.
 |===
 
 
+[#value]
 == `value`
 
 `value` binds a value that already exists.
@@ -46,6 +47,7 @@ Binding.value(Config(debug = true))
 Use it for configuration, constants, and objects that were built outside of the module.
 
 
+[#provider]
 == `provider`
 
 `provider` runs its body every time the member is accessed, producing a fresh value each time:
@@ -58,6 +60,7 @@ Binding.provider { Clock.System.now() }
 Use it for values that must never be shared, or that are cheap and change over time.
 
 
+[#single]
 == `single`
 
 `single` runs its body the first time the member is accessed, then returns that same instance forever:
@@ -79,6 +82,7 @@ Binding.single(SingleThreadSafety.Published) { ExpensiveButPureValue() }
 ----
 
 
+[#weak-single]
 == `weakSingle`
 
 `weakSingle` behaves like `single`, except that the module only holds a weak reference to the instance.
@@ -149,6 +153,7 @@ With such an argument, every call misses the cache, which grows by one entry per
 ====
 
 
+[#choosing-a-binding]
 == Choosing a binding
 
 [cols="3,2"]

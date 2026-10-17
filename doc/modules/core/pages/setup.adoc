@@ -15,26 +15,7 @@ A normal dependency.
 |===
 
 IMPORTANT: Inara runs on KSP but does not install it in your project.
-The KSP version to use depends on the Kotlin version you are using, so it is your responsibility to apply it alongside Inara.
-
-
-== JVM
-
-On a JVM-only project, KSP wires its generated sources into the compilation and into the IDE automatically:
-
-[source,kotlin,subs="verbatim,attributes"]
-.build.gradle.kts
-----
-plugins {
-    kotlin("jvm") version "{kotlin-version}"
-    id("com.google.devtools.ksp") version "{ksp-version}"
-}
-
-dependencies {
-    implementation("org.kodein.di.inara:inara-runtime:{version}")
-    ksp("org.kodein.di.inara:inara-processor:{version}")
-}
-----
+You apply the KSP plugin yourself, alongside Inara.
 
 
 == Kotlin Multiplatform
@@ -84,6 +65,25 @@ KSP already registers this directory as an output, but IntelliJ only indexes it 
 <3> Every compilation, and every per-target KSP task, reads the generated `commonMain` sources, so all of them must wait for the common KSP task to run.
 
 TIP: Inara supports every Kotlin/Native, JS and Wasm target listed in xref:guides:platforms.adoc[].
+
+
+== JVM
+
+On a JVM-only project, KSP wires its generated sources into the compilation and into the IDE automatically:
+
+[source,kotlin,subs="verbatim,attributes"]
+.build.gradle.kts
+----
+plugins {
+    kotlin("jvm") version "{kotlin-version}"
+    id("com.google.devtools.ksp") version "{ksp-version}"
+}
+
+dependencies {
+    implementation("org.kodein.di.inara:inara-runtime:{version}")
+    ksp("org.kodein.di.inara:inara-processor:{version}")
+}
+----
 
 
 == What gets generated

@@ -1,5 +1,10 @@
 * Guides
 ** xref:testing.adoc[]
+*** xref:testing.adoc#testing-business-classes[Testing business classes]
+*** xref:testing.adoc#building-a-test-module[Building a test module]
+*** xref:testing.adoc#overriding-production-wiring[Overriding production wiring]
+*** xref:testing.adoc#testing-suspend-members[Testing `suspend` members]
+*** xref:testing.adoc#checking-the-wiring[Checking the wiring]
 ** xref:scopes.adoc[]
 ** xref:multi-module.adoc[]
 ** xref:thread-safety.adoc[]

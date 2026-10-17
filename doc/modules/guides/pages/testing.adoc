@@ -4,6 +4,7 @@ Inara keeps business code independent from the dependency-injection layer, which
 This page covers the tests where a module is involved.
 
 
+[#testing-business-classes]
 == Testing business classes
 
 A class built by a xref:factory:basics.adoc[`@DIFactory`] is an ordinary class.
@@ -24,6 +25,7 @@ class UsersControllerTest {
 ----
 
 
+[#building-a-test-module]
 == Building a test module
 
 When the code under test takes a module, build one with test bindings, exactly like a production module:
@@ -42,6 +44,7 @@ The compiler makes sure that every member is bound, so a test module can never b
 Test doubles from a mocking library plug in the same way: `Binding.value(mockRepository)`.
 
 
+[#overriding-production-wiring]
 == Overriding production wiring
 
 When the production wiring is mostly what a test needs, use xref:core:copy.adoc[`copy`] to override only what differs:
@@ -85,6 +88,7 @@ val testApp = appModule(repositoryBinding = Binding.value(InMemoryRepository()))
 This is plain Kotlin: bindings are values, so a function can produce them.
 
 
+[#testing-suspend-members]
 == Testing `suspend` members
 
 A `suspend` member needs a `SuspendBinding`.
@@ -98,6 +102,7 @@ val testSession = session.copy(
 ----
 
 
+[#checking-the-wiring]
 == Checking the wiring
 
 A module's `toString()` lists every member with the binding it holds, which is useful to make sure a test overrides what it should.
