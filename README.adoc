@@ -5,7 +5,7 @@
 :idseparator: -
 :icons: font
 :source-highlighter: highlight.js
-:version: 0.1.0
+:version: 0.2.0
 
 [.lead]
 Compile-time dependency injection for Kotlin Multiplatform: your modules are just interfaces.
