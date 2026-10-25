@@ -56,6 +56,8 @@ val debugApp = app.copy(
 
 Bindings that do not keep any state, like `value`, `provider` and `factory`, always run against the module they are accessed through, so sharing them is harmless.
 
+TIP: When the original module must not observe your overrides at all, use xref:shadow.adoc[`shadow`] instead.
+
 
 == Default implementations
 

@@ -65,6 +65,8 @@ A test variant built with `copy` can therefore:
 * build an instance that the production module then returns, with test dependencies.
 
 See xref:core:copy.adoc#copied-bindings-are-shared[Copied bindings are shared].
+
+xref:core:shadow.adoc[`shadow`] avoids the second case: the production module keeps building its instances with its own dependencies.
 ====
 
 To keep tests isolated, build each test module from scratch, with a function that returns fresh bindings every time it is called:

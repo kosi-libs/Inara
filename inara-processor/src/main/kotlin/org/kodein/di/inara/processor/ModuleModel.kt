@@ -492,7 +492,7 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
      * without an error. Once a member is excluded this way, the *structural* rule below it
      * (visibility) no longer applies either - Inara never touches the member, so it's irrelevant to
      * it. The three naming-identity rules above stay unconditional regardless: a `Binding`-suffixed,
-     * `copy`-named, or `arg<Argument>`-shaped member could still collide with the generated class's
+     * `copy`-named, `shadow`-named, or `arg<Argument>`-shaped member could still collide with the generated class's
      * own naming scheme, or with a `@DIFactory` object's expected extension-function convention,
      * even while unbound.
      *
@@ -512,6 +512,7 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
 
         if (name.endsWith("Binding")) fail("A @DIModule member name may not end with 'Binding': '$name'.")
         if (name == "copy") fail("A @DIModule member may not be named 'copy'.")
+        if (name == "shadow") fail("A @DIModule member may not be named 'shadow'.")
         // A member shaped like `argFoo` would silently shadow a same-named @DIFactory extension
         // function (`fun M.argFoo(): T`) - Kotlin always prefers a member over an extension, so the
         // factory's function would never actually be called, with no error to say so.

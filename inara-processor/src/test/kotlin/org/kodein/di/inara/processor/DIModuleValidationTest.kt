@@ -158,6 +158,40 @@ class DIModuleValidationTest {
     }
 
     @Test
+    fun memberNamedShadow_propertyIsRejected() {
+        assertRejected(
+            "may not be named 'shadow'",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface ShadowPropertyModule {
+                val shadow: String
+            }
+            """
+        )
+    }
+
+    @Test
+    fun memberNamedShadow_functionIsRejected() {
+        assertRejected(
+            "may not be named 'shadow'",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface ShadowFunctionModule {
+                fun shadow(): String
+            }
+            """
+        )
+    }
+
+    @Test
     fun varProperty_isRejected() {
         assertRejected(
             "var properties are not supported",

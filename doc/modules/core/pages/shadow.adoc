@@ -1,0 +1,66 @@
+= Shadowing a module
+
+Every module gets a generated `shadow` extension function, which builds a new module on top of an existing one.
+Like xref:copy.adoc[`copy`], it takes one parameter per member and you only name what you want to override.
+Unlike `copy`, the original module never sees your overrides:
+
+[source,kotlin]
+----
+val parent = MyModule(
+    name = Binding.value("John"),
+    hello = Binding.single { "Hello, $name" },
+)
+
+val child = parent.shadow(
+    name = Binding.value("Jane"),
+)
+
+child.name // "Jane"
+child.hello // "Hello, John" <1>
+----
+<1> `hello` was not overridden, so the parent evaluates it, against itself.
+
+The name comes from lexical scoping: a name declared in the child hides the parent's one for the child only.
+
+Calling `shadow()` without any argument returns the very same module.
+
+
+== How it differs from `copy`
+
+An omitted parameter of `copy` carries the parent's binding across, and that binding then runs against the *new* module.
+An omitted parameter of `shadow` instead *delegates to the parent*, which evaluates it against itself:
+
+* a binding you override runs against the child, so it sees the child's other overrides and the parent's values for everything else;
+* a binding you do not override runs against the parent, so it never sees the overrides;
+* a `single`, `weakSingle` or `multiplex` that you do not override is built and memoized by the parent only, so the child and the parent always agree on its instance.
+
+[source,kotlin]
+----
+val copied = parent.copy(name = Binding.value("Jane"))
+copied.hello // "Hello, Jane", if `hello` was not built yet
+----
+
+
+== Default implementations
+
+For a member that has a xref:defaults.adoc[default implementation], an omitted parameter delegates to the parent, whose body runs against the parent.
+An explicit `null` runs the interface's own body against the *child*, so it observes the overrides:
+
+[source,kotlin]
+----
+val child = parent.shadow(name = Binding.value("Jane"), greeting = null)
+child.greeting() // "Hello, Jane"
+----
+
+
+== Chaining shadows
+
+A shadow is a module like any other, so it can be shadowed in turn.
+Each level delegates to the one below it:
+
+[source,kotlin]
+----
+val grandChild = child.shadow(name = Binding.value("Joan"))
+----
+
+TIP: Use `copy` to rebuild a variant of a module that works as a whole, and `shadow` to override a few members without disturbing the original.

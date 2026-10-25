@@ -201,7 +201,8 @@ private fun bindingTypeOf(
  * (`SuspendBindingImpls.SuspendDelegate` for a `suspend` member): a binding that reads [member]'s
  * *current* value off [receiver] on every `get`. The fallback for when a real stored binding can't
  * be reached - a hand-written `<Module>` implementation, or an inherited member with 2+ parameters
- * (see [parentBindingCode]). [receiver]'s own runtime class is passed through so the delegate's
+ * (see [parentBindingCode]) - and, deliberately even for the generated implementation, the default
+ * of every `shadow(...)` parameter (see [buildMemberShadowFunction]). [receiver]'s own runtime class is passed through so the delegate's
  * `toString()` can name it (`[delegated to ManualModule]`) - always a hand-written implementation or
  * such an inherited member, since the generated implementation itself is read straight off its
  * `<member>Binding` property instead of ever reaching this fallback.
@@ -330,7 +331,8 @@ private fun parentSwapInheritedCode(
  * module type for every member, inherited or not, so a `Binding` built for one module was never
  * reusable for another regardless - duplicating the small data class alongside it costs nothing.
  *
- * See [buildCopyFunctions] for the `copy` function(s) appended after these.
+ * See [buildCopyFunctions] and [buildShadowFunctions] for the `copy` and `shadow` function(s)
+ * appended after these.
  */
 internal fun generateModuleFile(model: ModuleModel): FileSpec {
     val moduleClassName = model.moduleClassName
@@ -362,6 +364,10 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
 
     for (copyFun in buildCopyFunctions(model, argsClassName)) {
         fileBuilder.addFunction(copyFun)
+    }
+
+    for (shadowFun in buildShadowFunctions(model, argsClassName)) {
+        fileBuilder.addFunction(shadowFun)
     }
 
     return fileBuilder.build()
@@ -678,6 +684,82 @@ private fun buildMemberOverrideCopyFunction(
     for (member in members) {
         val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, argsClassName, member))
         paramBuilder.defaultValue(storedBindingOrDelegateCode(member, CodeBlock.of("this@copy"), selfGeneratedClass))
+        funBuilder.addParameter(paramBuilder.build())
+    }
+
+    val callCode = CodeBlock.builder()
+        .add("return %N(\n", generatedClassName)
+        .indent()
+        .apply {
+            for (member in members) {
+                addStatement("%N = %N,", "${member.name}Binding", member.name)
+            }
+        }
+        .unindent()
+        .add(")\n")
+        .build()
+
+    return funBuilder.addCode(callCode).build()
+}
+
+/**
+ * Emits every `shadow` extension function for [model]:
+ * - a no-argument `shadow()` that returns the receiver unchanged. Always emitted.
+ * - a `shadow(...)` taking one `Binding`/`SuspendBinding` per member in [ModuleModel.allMembers],
+ *   building the `Inara<Module>` class. Only emitted when there is at least one member. See
+ *   [buildMemberShadowFunction].
+ *
+ * Unlike `copy`, an omitted parameter never carries the receiver's stored binding across: it
+ * delegates to the receiver itself, so the receiver keeps evaluating against its own members and
+ * never sees what the shadowing module overrides.
+ */
+internal fun buildShadowFunctions(model: ModuleModel, argsClassName: ClassName): List<FunSpec> {
+    val moduleClassName = model.moduleClassName
+    val generatedClassName = inaraName(model.generatedBaseName)
+
+    val noArgShadow = FunSpec.builder("shadow")
+        .receiver(moduleClassName)
+        .returns(moduleClassName)
+        .apply { if (model.visibility == Visibility.INTERNAL) addModifiers(KModifier.INTERNAL) }
+        .addStatement("return this")
+        .build()
+
+    val shadowFunctions = mutableListOf(noArgShadow)
+
+    if (model.allMembers.isNotEmpty()) {
+        shadowFunctions += buildMemberShadowFunction(moduleClassName, argsClassName, generatedClassName, model.allMembers, model.visibility)
+    }
+
+    return shadowFunctions
+}
+
+/**
+ * The `shadow(...)` overload that lets any individual member's binding be overridden.
+ *
+ * Every parameter defaults to a current-value delegate over the receiver (see
+ * [delegateBindingCode]) - always, even when the receiver is the generated implementation, since
+ * carrying its stored binding across would re-bind that binding's receiver to the new module. An
+ * omitted member is therefore evaluated by the receiver, against the receiver, and a memoized
+ * binding is built and kept by the receiver alone. A default-body member keeps its nullable
+ * parameter: an explicit `null` runs the interface's own body against the *new* module.
+ */
+private fun buildMemberShadowFunction(
+    moduleClassName: ClassName,
+    argsClassName: ClassName,
+    generatedClassName: String,
+    members: List<MemberModel>,
+    visibility: Visibility,
+): FunSpec {
+    val funBuilder = FunSpec.builder("shadow")
+        .receiver(moduleClassName)
+        .returns(moduleClassName)
+    if (visibility == Visibility.INTERNAL) {
+        funBuilder.addModifiers(KModifier.INTERNAL)
+    }
+
+    for (member in members) {
+        val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, argsClassName, member))
+        paramBuilder.defaultValue(delegateBindingCode(member, CodeBlock.of("this@shadow")))
         funBuilder.addParameter(paramBuilder.build())
     }
 

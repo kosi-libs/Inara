@@ -132,8 +132,8 @@ public class BindingImpls {
      * to [Factory], but under a name that reads correctly in generated `copy(...)` signatures
      * (`= BindingImpls.Delegate(this@copy::class) { this@copy.member }`). [cls] is the receiver's own
      * runtime class - always a hand-written implementation or an inherited 2+-parameter member (see
-     * `ModuleFileGenerator.parentBindingCode`), since the generated implementation itself is read
-     * straight off its `<member>Binding` property instead - so [toString] can name it. */
+     * `ModuleFileGenerator.parentBindingCode`) or the receiver of a generated `shadow(...)`, which may be the
+     * generated implementation itself - so [toString] can name it. */
     public class Delegate<in M : Any, in A, out T>(private val cls: KClass<out M>, private val delegate: M.(A) -> T) : Binding<M, A, T> {
         override fun get(module: M, arg: A): T = delegate(module, arg)
         override fun toString(): String = "[delegated to ${cls.simpleName ?: "?"}]"
