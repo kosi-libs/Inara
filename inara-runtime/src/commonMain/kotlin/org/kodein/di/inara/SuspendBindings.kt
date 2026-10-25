@@ -26,6 +26,11 @@ public interface SuspendBinding<in M, in A, out T> {
     /** Produces the value for [module] and [arg] - the `suspend` counterpart to [Binding.get]. */
     public suspend fun get(module: M, arg: A): T
 
+    /** A copy of this binding for a copied module - the `suspend` counterpart to
+     * [Binding.copyBinding]: a fresh twin when the binding keeps state, `this` when it doesn't, and
+     * no default implementation. */
+    public fun copyBinding(): SuspendBinding<M, A, T>
+
     /** Every way to build a [SuspendBinding]. */
     @OptIn(InternalInaraGeneration::class)
     public companion object Bindings {
@@ -90,25 +95,37 @@ public fun <M, A, T> Binding<M, A, T>.suspend(): SuspendBinding<M, A, T> = Suspe
 /**
  * Implementation classes backing every [SuspendBinding] the [SuspendBinding.Bindings] factories
  * produce - the `suspend` counterpart to [BindingImpls]. Not for direct use, same as there -
- * [SuspendDelegate] is public only because a generated `copy(...)` function needs it.
+ * [SuspendDelegate] and [copyOf] are public only because a generated `copy(...)` or `shadow(...)`
+ * function needs them.
  */
 @InternalInaraGeneration
 public class SuspendBindingImpls {
+    public companion object {
+        /** The `suspend` counterpart of [BindingImpls.copyOf]: a copy of [binding] with its own,
+         * unbuilt state, or [binding] itself when it is stateless (or `null`). */
+        @Suppress("UNCHECKED_CAST")
+        public fun <B : SuspendBinding<*, *, *>?> copyOf(binding: B): B =
+            binding?.copyBinding() as B
+    }
+
     @PublishedApi
     internal class Value<in M, out T>(private val cls: KClass<T & Any>?, private val value: T) : SuspendBinding<M, Unit, T> {
         override suspend fun get(module: M, arg: Unit): T = value
+        override fun copyBinding() = this
         override fun toString(): String = "value ( ${cls?.simpleName ?: "?"} )"
     }
 
     @PublishedApi
     internal class Provider<in M, out T>(private val cls: KClass<T & Any>?, private val provider: suspend M.() -> T) : SuspendBinding<M, Unit, T> {
         override suspend fun get(module: M, arg: Unit): T = provider(module)
+        override fun copyBinding() = this
         override fun toString(): String = "provider { ${cls?.simpleName ?: "?"} }"
     }
 
     @PublishedApi
     internal class Factory<in M, in A, out T>(private val aCls: KClass<A & Any>?, private val tCls: KClass<T & Any>?, private val factory: suspend M.(A) -> T) : SuspendBinding<M, A, T> {
         override suspend fun get(module: M, arg: A): T = factory(module, arg)
+        override fun copyBinding() = this
         override fun toString(): String = "factory { ${aCls?.simpleName ?: "?"} -> ${tCls?.simpleName ?: "?"} }"
     }
 
@@ -118,6 +135,7 @@ public class SuspendBindingImpls {
      * [cls] is the receiver's own runtime class - see [BindingImpls.Delegate] for why. */
     public class SuspendDelegate<in M : Any, in A, out T>(private val cls: KClass<out M>, private val delegate: suspend M.(A) -> T) : SuspendBinding<M, A, T> {
         override suspend fun get(module: M, arg: A): T = delegate(module, arg)
+        override fun copyBinding(): SuspendBinding<M, A, T> = this
         override fun toString(): String = "[delegated to ${cls.simpleName ?: "?"}]"
     }
 
@@ -128,12 +146,15 @@ public class SuspendBindingImpls {
     @PublishedApi
     internal class Lifted<in M, in A, out T>(private val binding: Binding<M, A, T>) : SuspendBinding<M, A, T> {
         override suspend fun get(module: M, arg: A): T = binding.get(module, arg)
+        override fun copyBinding(): SuspendBinding<M, A, T> {
+            val copy = binding.copyBinding()
+            return if (copy === binding) this else Lifted(copy)
+        }
         override fun toString(): String = binding.toString()
     }
 
     @PublishedApi
-    internal class SynchronizedSingle<in M, out T>(private val cls: KClass<T & Any>?, builder: suspend M.() -> T) : SuspendBinding<M, Unit, T> {
-        private var builder: (suspend M.() -> T)? = builder
+    internal class SynchronizedSingle<in M, out T>(private val cls: KClass<T & Any>?, private val builder: suspend M.() -> T) : SuspendBinding<M, Unit, T> {
         @Volatile private var value: Any? = Uninitialized
         private val mutex = Mutex()
 
@@ -141,12 +162,10 @@ public class SuspendBindingImpls {
             value.ifInitialized<T> { return it }
             return mutex.withLock {
                 value.ifInitialized<T> { return it }
-                builder!!(module).also {
-                    builder = null
-                    value = it
-                }
+                builder(module).also { value = it }
             }
         }
+        override fun copyBinding() = SynchronizedSingle(cls, builder)
         override fun toString(): String = "single(Synchronized) { ${cls?.simpleName ?: "?"} }"
     }
 
@@ -155,22 +174,16 @@ public class SuspendBindingImpls {
      * and every caller returns it. See [SuspendBinding] for why the suspend side offers this. */
     @OptIn(ExperimentalAtomicApi::class)
     @PublishedApi
-    internal class PublishedSingle<in M, out T>(private val cls: KClass<T & Any>?, builder: suspend M.() -> T) : SuspendBinding<M, Unit, T> {
-        @Volatile private var builder: (suspend M.() -> T)? = builder
+    internal class PublishedSingle<in M, out T>(private val cls: KClass<T & Any>?, private val builder: suspend M.() -> T) : SuspendBinding<M, Unit, T> {
         private val ref: AtomicReference<Any?> = AtomicReference(Uninitialized)
         override suspend fun get(module: M, arg: Unit): T {
             ref.load().ifInitialized<T> { return it }
-            val builder = this.builder
-            if (builder != null) {
-                builder(module).also {
-                    if (ref.compareAndSet(Uninitialized, it)) {
-                        this.builder = null
-                        return it
-                    }
-                }
+            builder(module).also {
+                if (ref.compareAndSet(Uninitialized, it)) return it
             }
             @Suppress("UNCHECKED_CAST") return ref.load() as T
         }
+        override fun copyBinding() = PublishedSingle(cls, builder)
         override fun toString(): String = "single(Published) { ${cls?.simpleName ?: "?"} }"
     }
 
@@ -188,6 +201,7 @@ public class SuspendBindingImpls {
                 }
             }
         }
+        override fun copyBinding() = SynchronizedWeakSingle(cls, builder)
         override fun toString(): String = "weakSingle(Synchronized) { ${cls.simpleName ?: "?"} }"
     }
 
@@ -210,6 +224,7 @@ public class SuspendBindingImpls {
                 }
             }
         }
+        override fun copyBinding() = PublishedWeakSingle(cls, builder)
         override fun toString(): String = "weakSingle(Published) { ${cls.simpleName ?: "?"} }"
     }
 
@@ -246,6 +261,7 @@ public class SuspendBindingImpls {
                 }
             }
         }
+        override fun copyBinding(): SuspendBinding<M, A, T> = Multiplex(aCls, tCls, delegate)
         override fun toString(): String = "multiplex { ${aCls?.simpleName ?: "?"} -> ${tCls?.simpleName ?: "?"} }"
     }
 }

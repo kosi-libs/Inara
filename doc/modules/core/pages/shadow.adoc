@@ -27,8 +27,8 @@ Calling `shadow()` without any argument returns the very same module.
 
 == How it differs from `copy`
 
-An omitted parameter of `copy` carries the parent's binding across, and that binding then runs against the *new* module.
-An omitted parameter of `shadow` instead *delegates to the parent*, which evaluates it against itself:
+`copy` gives the new module its own copy of every binding, each running against the new module.
+`shadow` instead *delegates to the parent* for every member you omit, which evaluates it against itself:
 
 * a binding you override runs against the child, so it sees the child's other overrides and the parent's values for everything else;
 * a binding you do not override runs against the parent, so it never sees the overrides;
@@ -37,7 +37,7 @@ An omitted parameter of `shadow` instead *delegates to the parent*, which evalua
 [source,kotlin]
 ----
 val copied = parent.copy(name = Binding.value("Jane"))
-copied.hello // "Hello, Jane", if `hello` was not built yet
+copied.hello // "Hello, Jane": the copy has its own `single`
 ----
 
 
@@ -63,4 +63,4 @@ Each level delegates to the one below it:
 val grandChild = child.shadow(name = Binding.value("Joan"))
 ----
 
-TIP: Use `copy` to rebuild a variant of a module that works as a whole, and `shadow` to override a few members without disturbing the original.
+TIP: Use xref:copy.adoc[`copy`] to build a variant that works as a whole, with its own state, and `shadow` to override a few members while keeping the original in charge of everything else.

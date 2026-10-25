@@ -7,6 +7,9 @@ import org.kodein.di.inara.SuspendBinding.Bindings.provider
 import org.kodein.di.inara.SuspendBinding.Bindings.single
 import org.kodein.di.inara.SuspendBinding.Bindings.value
 import org.kodein.di.inara.SuspendBinding.Bindings.weakSingle
+import kotlin.test.assertNotSame
+import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -86,5 +89,38 @@ class SuspendBindingsTest {
         // "[delegated to ...]" marker.
         val lifted = bindingValue<SuspendTestModule, String>("x").suspend()
         assertEquals("value ( String )", lifted.toString())
+    }
+
+    @OptIn(InternalInaraGeneration::class)
+    @Test
+    fun copyOf_everyStatefulKind_returnsAFreshBinding() {
+        val bindings = listOf<SuspendBinding<SuspendTestModule, *, *>>(
+            single<SuspendTestModule, Any>(SingleThreadSafety.Synchronized) { Any() },
+            single<SuspendTestModule, Any>(SingleThreadSafety.Published) { Any() },
+            weakSingle<SuspendTestModule, Any>(SingleThreadSafety.Synchronized) { Any() },
+            weakSingle<SuspendTestModule, Any>(SingleThreadSafety.Published) { Any() },
+            multiplex<SuspendTestModule, Int, Any> { provider { Any() } },
+            Binding.Bindings.single<SuspendTestModule, Any> { Any() }.suspend(),
+        )
+        for (binding in bindings) {
+            val copy = SuspendBindingImpls.copyOf(binding)
+            assertNotSame(binding, copy)
+            assertEquals(binding.toString(), copy.toString())
+        }
+    }
+
+    @OptIn(InternalInaraGeneration::class)
+    @Test
+    fun copyOf_statelessBindingsAndNull_areReturnedAsTheyAre() {
+        val stateless = listOf<SuspendBinding<SuspendTestModule, *, *>>(
+            value<SuspendTestModule, String>("x"),
+            provider<SuspendTestModule, String> { "x" },
+            factory<SuspendTestModule, Int, String> { "x" },
+            bindingValue<SuspendTestModule, String>("x").suspend(),
+        )
+        for (binding in stateless) assertSame(binding, SuspendBindingImpls.copyOf(binding))
+
+        val none: SuspendBinding<SuspendTestModule, Unit, String>? = null
+        assertNull(SuspendBindingImpls.copyOf(none))
     }
 }

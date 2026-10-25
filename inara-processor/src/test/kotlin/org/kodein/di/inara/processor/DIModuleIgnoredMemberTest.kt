@@ -258,7 +258,7 @@ class DIModuleIgnoredMemberTest {
         val generated = compilation.generatedSource("sample/ignored", "InaraOnlyIgnoredModule.kt")
         assertTrue("valueBinding" !in generated, generated)
         assertTrue("public fun OnlyIgnoredModule(): OnlyIgnoredModule" in generated, generated)
-        assertTrue("public fun OnlyIgnoredModule.copy(): OnlyIgnoredModule = this" in generated, generated)
+        assertTrue(Regex("""public fun OnlyIgnoredModule\.copy\(\): OnlyIgnoredModule = Inara\w*\(\s*\)""").containsMatchIn(generated), generated)
         assertEquals(1, Regex("""fun OnlyIgnoredModule\.copy\(""").findAll(generated).count(), generated)
     }
 }

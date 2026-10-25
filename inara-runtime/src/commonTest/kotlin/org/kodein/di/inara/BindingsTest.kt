@@ -256,4 +256,65 @@ class BindingsTest {
             BindingImpls.Delegate<TestModule, Unit, String>(TestModule::class) { name }.toString(),
         )
     }
+
+    @OptIn(InternalInaraGeneration::class)
+    @Test
+    fun copyOf_single_buildsItsOwnInstance() {
+        var builds = 0
+        val original = single<TestModule, Any> { builds++; Any() }
+        val module = TestModule()
+        val first = original.get(module, Unit)
+
+        val copy = BindingImpls.copyOf(original)
+
+        assertNotSame(original, copy)
+        assertNotSame(first, copy.get(module, Unit))
+        assertSame(first, original.get(module, Unit))
+        assertEquals(2, builds)
+    }
+
+    @OptIn(InternalInaraGeneration::class)
+    @Test
+    fun copyOf_everyStatefulKind_returnsAFreshBinding() {
+        val bindings = listOf<Binding<TestModule, *, *>>(
+            single<TestModule, Any>(SingleThreadSafety.Synchronized) { Any() },
+            single<TestModule, Any>(SingleThreadSafety.Published) { Any() },
+            weakSingle<TestModule, Any>(SingleThreadSafety.Synchronized) { Any() },
+            weakSingle<TestModule, Any>(SingleThreadSafety.Published) { Any() },
+            multiplex<TestModule, Int, Any> { provider { Any() } },
+        )
+        for (binding in bindings) {
+            val copy = BindingImpls.copyOf(binding)
+            assertNotSame(binding, copy)
+            assertEquals(binding.toString(), copy.toString())
+        }
+    }
+
+    @OptIn(InternalInaraGeneration::class)
+    @Test
+    fun copyOf_multiplex_startsWithAnEmptyCache() {
+        val original = multiplex<TestModule, Int, Any> { single { Any() } }
+        val module = TestModule()
+        val first = original.get(module, 1)
+
+        val copy = BindingImpls.copyOf(original)
+
+        assertNotSame(first, copy.get(module, 1))
+        assertSame(first, original.get(module, 1))
+    }
+
+    @OptIn(InternalInaraGeneration::class)
+    @Test
+    fun copyOf_statelessBindingsAndNull_areReturnedAsTheyAre() {
+        val stateless = listOf<Binding<TestModule, *, *>>(
+            value<TestModule, String>("x"),
+            provider<TestModule, String> { "x" },
+            factory<TestModule, Int, String> { "x" },
+            BindingImpls.Delegate<TestModule, Unit, String>(TestModule::class) { name },
+        )
+        for (binding in stateless) assertSame(binding, BindingImpls.copyOf(binding))
+
+        val none: Binding<TestModule, Unit, String>? = null
+        assertNull(BindingImpls.copyOf(none))
+    }
 }

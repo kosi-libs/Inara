@@ -214,8 +214,8 @@ class DIModuleShadowTest {
         assertEquals("Jane!!", results[2])
         assertEquals("John", results[3])
         assertEquals("John!", results[4])
-        // Contrast: the `single` was already built (and memoized) by the parent via the shadow.
-        assertEquals("Hello, John", results[5])
+        // Contrast: a copy builds its own `single`, against itself.
+        assertEquals("Hello, Jane", results[5])
     }
 
     @Test

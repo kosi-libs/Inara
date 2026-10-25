@@ -27,6 +27,8 @@ import com.squareup.kotlinpoet.ksp.toTypeName
 
 private val BINDING = ClassName("org.kodein.di.inara", "Binding")
 private val SUSPEND_BINDING = ClassName("org.kodein.di.inara", "SuspendBinding")
+private val BINDING_IMPLS = ClassName("org.kodein.di.inara", "BindingImpls")
+private val SUSPEND_BINDING_IMPLS = ClassName("org.kodein.di.inara", "SuspendBindingImpls")
 private val BINDING_IMPLS_DELEGATE = ClassName("org.kodein.di.inara", "BindingImpls").nestedClass("Delegate")
 private val SUSPEND_BINDING_IMPLS_DELEGATE = ClassName("org.kodein.di.inara", "SuspendBindingImpls").nestedClass("SuspendDelegate")
 private val INTERNAL_INARA_GENERATION = ClassName("org.kodein.di.inara", "InternalInaraGeneration")
@@ -231,18 +233,29 @@ private fun delegateBindingCode(member: MemberModel, receiver: CodeBlock): CodeB
 }
 
 /**
- * The binding for [member] read off the `copy` receiver: `this@copy.<member>Binding` when the
- * receiver is the [generatedClass] implementation, otherwise a current-value delegate (see
- * [delegateBindingCode]). [receiver] is always `this@copy` here - the receiver's own generated
- * class, so its `<member>Binding` is exactly the right type even for a multi-parameter member.
+ * `BindingImpls.copyOf(<bindingCode>)` (`SuspendBindingImpls.copyOf` for a `suspend` member): a copy
+ * of the binding with its own, unbuilt state, so a copied module never shares a `single` /
+ * `weakSingle` / `multiplex` with the module it came from.
+ */
+private fun copiedBindingCode(member: MemberModel, bindingCode: CodeBlock): CodeBlock =
+    CodeBlock.of("%T.copyOf(%L)", if (member.isSuspend) SUSPEND_BINDING_IMPLS else BINDING_IMPLS, bindingCode)
+
+/**
+ * The binding for [member] read off the `copy` receiver: a copy (see [copiedBindingCode]) of
+ * `this@copy.<member>Binding` when the receiver is the [generatedClass] implementation, otherwise a
+ * current-value delegate (see [delegateBindingCode]) - a hand-written receiver's state is not ours
+ * to copy. [receiver] is always `this@copy` here - the receiver's own generated class, so its
+ * `<member>Binding` is exactly the right type even for a multi-parameter member.
  */
 private fun storedBindingOrDelegateCode(
     member: MemberModel,
     receiver: CodeBlock,
     generatedClass: ClassName,
 ): CodeBlock = CodeBlock.of(
-    "if (%L is %T) %L.%N else %L",
-    receiver, generatedClass, receiver, "${member.name}Binding", delegateBindingCode(member, receiver),
+    "if (%L is %T) %L else %L",
+    receiver, generatedClass,
+    copiedBindingCode(member, CodeBlock.of("%L.%N", receiver, "${member.name}Binding")),
+    delegateBindingCode(member, receiver),
 )
 
 /**
@@ -254,17 +267,23 @@ private fun storedBindingOrDelegateCode(
  * `<Module>BindingArguments` data class, so the parent's `Binding<Parent, ParentArgs.X, T>` can't
  * fill the child's `Binding<Child, ChildArgs.X, T>` slot (`A` is invariant) - the delegate sidesteps
  * it by unpacking and forwarding.
+ *
+ * With [copied], the binding read off the parent is a copy (see [copiedBindingCode]) - the
+ * parent-swapping `copy` gives the new module its own state - rather than shared with the parent as
+ * in the composed builder. The delegate fallback is never copied: it holds no state of its own.
  */
 private fun parentBindingCode(
     member: MemberModel,
     parentParam: String,
     parentGeneratedClass: ClassName,
+    copied: Boolean = false,
 ): CodeBlock {
     val delegate = delegateBindingCode(member, CodeBlock.of("%N", parentParam))
     if (member.parameters.size > 1) return delegate
+    val stored = CodeBlock.of("%N.%N", parentParam, "${member.name}Binding")
     return CodeBlock.of(
-        "if (%N is %T) %N.%N else %L",
-        parentParam, parentGeneratedClass, parentParam, "${member.name}Binding", delegate,
+        "if (%N is %T) %L else %L",
+        parentParam, parentGeneratedClass, if (copied) copiedBindingCode(member, stored) else stored, delegate,
     )
 }
 
@@ -274,8 +293,8 @@ private fun parentBindingCode(
  *
  * - the parent *was* swapped (`<parentParam> !== this@copy`) - take the binding from the new parent
  *   instance ([parentBindingCode]);
- * - it wasn't, and the receiver is the generated implementation - carry `this@copy.<member>Binding`
- *   straight across, exactly like the member-override `copy`;
+ * - it wasn't, and the receiver is the generated implementation - carry a copy of
+ *   `this@copy.<member>Binding` across, exactly like the member-override `copy`;
  * - it wasn't, and the receiver is hand-written - a current-value delegate over `this@copy`.
  */
 private fun parentSwapInheritedCode(
@@ -291,9 +310,12 @@ private fun parentSwapInheritedCode(
         .add(
             "%N !== this@copy -> %L\n",
             parentParamName,
-            parentBindingCode(member, parentParamName, parentGeneratedClass),
+            parentBindingCode(member, parentParamName, parentGeneratedClass, copied = true),
         )
-        .add("this@copy is %T -> this@copy.%N\n", selfGeneratedClass, bindingPropertyName)
+        .add(
+            "this@copy is %T -> %L\n",
+            selfGeneratedClass, copiedBindingCode(member, CodeBlock.of("this@copy.%N", bindingPropertyName)),
+        )
         .add("else -> %L\n", delegateBindingCode(member, CodeBlock.of("this@copy")))
         .unindent()
         .add("}")
@@ -618,8 +640,10 @@ private fun buildComposedBuilderFunction(
 
 /**
  * Emits every `copy` extension function for [model]:
- * - a no-argument `copy()` that returns the receiver unchanged, so a copy with no overrides doesn't
- *   allocate one. Always emitted.
+ * - a no-argument `copy()` that builds a fresh `Inara<Module>` holding a copy of every binding, with
+ *   the same defaults as the member-override overload. Always emitted - it is also what keeps a bare
+ *   `copy()` call from being ambiguous between the overloads.
+ *   (A copy never shares state: every binding it holds is a copy, see [copiedBindingCode].)
  * - a `copy(...)` taking one `Binding`/`SuspendBinding` per member in [ModuleModel.allMembers],
  *   building the `Inara<Module>` class. Only emitted when there is at least one member - with
  *   none, it would take no parameters and collide with the no-arg overload. See
@@ -639,7 +663,22 @@ internal fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName): L
         .receiver(moduleClassName)
         .returns(moduleClassName)
         .apply { if (model.visibility == Visibility.INTERNAL) addModifiers(KModifier.INTERNAL) }
-        .addStatement("return this")
+        .addCode(
+            CodeBlock.builder()
+                .add("return %N(\n", generatedClassName)
+                .indent()
+                .apply {
+                    for (member in model.allMembers) {
+                        addStatement(
+                            "%N = %L,", "${member.name}Binding",
+                            storedBindingOrDelegateCode(member, CodeBlock.of("this@copy"), selfGeneratedClass),
+                        )
+                    }
+                }
+                .unindent()
+                .add(")\n")
+                .build()
+        )
         .build()
 
     val copyFunctions = mutableListOf(noArgCopy)
@@ -658,12 +697,12 @@ internal fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName): L
 /**
  * The `copy(...)` overload that lets any individual member's binding be overridden.
  *
- * Every parameter defaults to the binding the receiver currently holds for that member (see
- * [storedBindingOrDelegateCode]): `this@copy.<member>Binding` when the receiver is the generated
- * implementation, a current-value `BindingImpls.Delegate` otherwise. Omitting a parameter therefore
- * changes nothing about that member, including a `single`/`multiplex` binding's memo and a
- * default-body member's `null` (its body then re-runs against the *new* module, still observing any
- * sibling overridden in the same call). A default-body member keeps its nullable parameter so a
+ * Every parameter defaults to a copy of the binding the receiver currently holds for that member
+ * (see [storedBindingOrDelegateCode]): a copy of `this@copy.<member>Binding` when the receiver is the
+ * generated implementation, a current-value `BindingImpls.Delegate` otherwise. Omitting a parameter
+ * therefore keeps that member's recipe but not its state - a `single`/`multiplex` starts unbuilt in
+ * the new module - and a default-body member's `null` stays `null` (its body then re-runs against
+ * the *new* module, still observing any sibling overridden in the same call). A default-body member keeps its nullable parameter so a
  * caller can still pass an explicit `null` to force it back to the interface's own body.
  */
 private fun buildMemberOverrideCopyFunction(

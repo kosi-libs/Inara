@@ -56,18 +56,12 @@ val testApp = productionApp.copy(
 )
 ----
 
-[WARNING]
-====
-`copy` shares the bindings it does not override with the original module, including the state of `single`, `weakSingle` and `multiplex` bindings.
-A test variant built with `copy` can therefore:
+`copy` gives the test module its own copy of every binding it does not override, so a `single`, `weakSingle` or `multiplex` is never shared with the production module.
+A test variant never returns an instance that the production module already built, and never leaves one behind for it.
 
-* return an instance that was already built by the production module, with production dependencies;
-* build an instance that the production module then returns, with test dependencies.
+See xref:core:copy.adoc#copied-bindings-have-their-own-state[Copied bindings have their own state].
 
-See xref:core:copy.adoc#copied-bindings-are-shared[Copied bindings are shared].
-
-xref:core:shadow.adoc[`shadow`] avoids the second case: the production module keeps building its instances with its own dependencies.
-====
+When a test must read the production module's own instances, use xref:core:shadow.adoc[`shadow`] instead.
 
 To keep tests isolated, build each test module from scratch, with a function that returns fresh bindings every time it is called:
 

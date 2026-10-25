@@ -18,45 +18,38 @@ val debugApp = app.copy(
 
 The original module is never modified: `copy` returns a new module, and `app` keeps its own bindings.
 
-Calling `copy()` without any argument returns the very same module, since there is nothing to change.
+Calling `copy()` without any argument still builds a new module, with its own copy of every binding.
 
 
-[#copied-bindings-are-shared]
-== Copied bindings are shared
+[#copied-bindings-have-their-own-state]
+== Copied bindings have their own state
 
-An omitted parameter carries the *same binding object* across to the new module.
-That is what lets a copy keep an already-built `single` instead of building it a second time, but it also means that the original and the copy share that binding's state.
-
-[source,kotlin]
-----
-val debugApp = app.copy(
-    config = Binding.value(Config(debug = true)),
-)
-
-debugApp.repository() // <1>
-app.repository() // <2>
-----
-<1> `repository` was carried across, so the copy and the original share its `single`.
-If it was not built yet, it is built now, with `debugApp` as its receiver, so it reads the *debug* `config`.
-<2> The original module returns that same instance, built with the debug configuration.
-
-[WARNING]
-====
-A `single`, `weakSingle` or `multiplex` binding that is shared between modules is built by whichever module accesses it first, with that module as its receiver.
-When you override a member that a memoized binding depends on, give the dependent member a fresh binding too:
+Every binding the new module holds is a *copy* of the original's: same recipe, but its own state.
+A `single`, `weakSingle` or `multiplex` that is already built in the original starts unbuilt in the copy, and is built there, with the copy as its receiver:
 
 [source,kotlin]
 ----
-val debugApp = app.copy(
-    config = Binding.value(Config(debug = true)),
-    repository = Binding.single { SqlRepository(config) },
+val parent = MyModule(
+    name = Binding.value("John"),
+    hello = Binding.single { "Hello, $name" },
 )
+
+val child = parent.copy(
+    name = Binding.value("Jane"),
+)
+
+child.hello // "Hello, Jane" <1>
+parent.hello // "Hello, John" <2>
 ----
-====
+<1> The child initializes its own `single`.
+<2> The parent's `single` is untouched, and still reads the parent's `name`.
 
-Bindings that do not keep any state, like `value`, `provider` and `factory`, always run against the module they are accessed through, so sharing them is harmless.
+Bindings that do not keep any state, like `value`, `provider` and `factory`, are not duplicated: they always run against the module they are accessed through.
 
-TIP: When the original module must not observe your overrides at all, use xref:shadow.adoc[`shadow`] instead.
+NOTE: A module that implements the interface by hand has no bindings to copy.
+Its members are read through a delegate, so they keep whatever state that module has.
+
+TIP: To share the original's state instead, and keep the original from ever seeing your overrides, use xref:shadow.adoc[`shadow`].
 
 
 == Default implementations

@@ -43,21 +43,21 @@ class DIModuleCopyTest {
 
         assertEquals(2, Regex("""fun NetworkModule\.copy\(""").findAll(generated).count(), generated)
 
-        assertTrue("public fun NetworkModule.copy(): NetworkModule = this" in generated, generated)
+        assertTrue(Regex("""public fun NetworkModule\.copy\(\): NetworkModule = InaraNetworkModule\(\s*baseUrlBinding = if \(this@copy is InaraNetworkModule\) BindingImpls\.copyOf\(this@copy\.baseUrlBinding\)""").containsMatchIn(generated), generated)
 
         assertTrue("@file:OptIn(InternalInaraGeneration::class)" in generated, generated)
         // Each parameter defaults to the receiver's own stored binding when it's the generated
         // implementation, falling back to a current-value delegate for any other implementation.
         assertTrue(
-            "baseUrl: Binding<NetworkModule, Unit, String> = if (this@copy is InaraNetworkModule) this@copy.baseUrlBinding else BindingImpls.Delegate(this@copy::class) { this@copy.baseUrl }" in generated,
+            "baseUrl: Binding<NetworkModule, Unit, String> = if (this@copy is InaraNetworkModule) BindingImpls.copyOf(this@copy.baseUrlBinding) else BindingImpls.Delegate(this@copy::class) { this@copy.baseUrl }" in generated,
             generated,
         )
         assertTrue(
-            "httpClient: Binding<NetworkModule, Unit, HttpClient> = if (this@copy is InaraNetworkModule) this@copy.httpClientBinding else BindingImpls.Delegate(this@copy::class) { this@copy.httpClient() }" in generated,
+            "httpClient: Binding<NetworkModule, Unit, HttpClient> = if (this@copy is InaraNetworkModule) BindingImpls.copyOf(this@copy.httpClientBinding) else BindingImpls.Delegate(this@copy::class) { this@copy.httpClient() }" in generated,
             generated,
         )
         assertTrue(
-            "context: Binding<NetworkModule, Int, Context> = if (this@copy is InaraNetworkModule) this@copy.contextBinding else BindingImpls.Delegate(this@copy::class) { this@copy.context(it) }" in generated,
+            "context: Binding<NetworkModule, Int, Context> = if (this@copy is InaraNetworkModule) BindingImpls.copyOf(this@copy.contextBinding) else BindingImpls.Delegate(this@copy::class) { this@copy.context(it) }" in generated,
             generated,
         )
         assertTrue("baseUrlBinding = baseUrl" in generated, generated)
@@ -85,7 +85,7 @@ class DIModuleCopyTest {
         val generated = compilation.generatedSource("sample/copy", "InaraEmptyModule.kt")
 
         assertEquals(1, Regex("""fun EmptyModule\.copy\(""").findAll(generated).count(), generated)
-        assertTrue("public fun EmptyModule.copy(): EmptyModule = this" in generated, generated)
+        assertTrue(Regex("""public fun EmptyModule\.copy\(\): EmptyModule = InaraEmptyModule\(\s*\)""").containsMatchIn(generated), generated)
     }
 
     @Test
@@ -114,7 +114,7 @@ class DIModuleCopyTest {
         // binding, so omitting it changes nothing - even a not-yet-resolved single/multiplex keeps
         // its memo. A non-generated implementation falls back to a current-value delegate.
         assertTrue(
-            "name: Binding<DefaultsModule, Unit, String> = if (this@copy is InaraDefaultsModule) this@copy.nameBinding else BindingImpls.Delegate(this@copy::class) { this@copy.name }" in generated,
+            "name: Binding<DefaultsModule, Unit, String> = if (this@copy is InaraDefaultsModule) BindingImpls.copyOf(this@copy.nameBinding) else BindingImpls.Delegate(this@copy::class) { this@copy.name }" in generated,
             generated,
         )
 
@@ -123,7 +123,7 @@ class DIModuleCopyTest {
         // stored binding, which is itself `null` when the member was never bound - the body then
         // re-runs against the *new* module, seeing `name` if that's overridden in the same call.
         assertTrue(
-            "greeting: Binding<DefaultsModule, Unit, String>? = if (this@copy is InaraDefaultsModule) this@copy.greetingBinding else BindingImpls.Delegate(this@copy::class) { this@copy.greeting() }" in generated,
+            "greeting: Binding<DefaultsModule, Unit, String>? = if (this@copy is InaraDefaultsModule) BindingImpls.copyOf(this@copy.greetingBinding) else BindingImpls.Delegate(this@copy::class) { this@copy.greeting() }" in generated,
             generated,
         )
 
@@ -153,7 +153,7 @@ class DIModuleCopyTest {
         val generated = compilation.generatedSource("sample/copy", "InaraAsyncModule.kt")
 
         assertTrue(
-            "load: SuspendBinding<AsyncModule, Unit, String> = if (this@copy is InaraAsyncModule) this@copy.loadBinding else SuspendBindingImpls.SuspendDelegate(this@copy::class) { this@copy.load() }" in generated,
+            "load: SuspendBinding<AsyncModule, Unit, String> = if (this@copy is InaraAsyncModule) SuspendBindingImpls.copyOf(this@copy.loadBinding) else SuspendBindingImpls.SuspendDelegate(this@copy::class) { this@copy.load() }" in generated,
             generated,
         )
     }
@@ -182,7 +182,7 @@ class DIModuleCopyTest {
         // The implementation class mirrors the interface's visibility - internal here, so it can't
         // expose the internal InternalModule supertype.
         assertTrue("@InternalInaraGeneration\ninternal class InaraInternalModule(" in generated, generated)
-        assertTrue("internal fun InternalModule.copy(): InternalModule = this" in generated, generated)
+        assertTrue(Regex("""internal fun InternalModule\.copy\(\): InternalModule = InaraInternalModule\(""").containsMatchIn(generated), generated)
         assertTrue(
             Regex("""internal fun InternalModule\.copy\(\s*secret""").containsMatchIn(generated),
             generated,
@@ -220,16 +220,16 @@ class DIModuleCopyTest {
 
         assertEquals(3, Regex("""fun Module3\.copy\(""").findAll(generated).count(), generated)
 
-        assertTrue("public fun Module3.copy(): Module3 = this" in generated, generated)
+        assertTrue("public fun Module3.copy(): Module3 = InaraModule3(" in generated, generated)
 
         // Member-override overload: one parameter per member, inherited included, all on Module3,
         // each a single-holder guard over the one implementation class.
         assertTrue(
-            "a: Binding<Module3, Unit, TypeA> = if (this@copy is InaraModule3) this@copy.aBinding else BindingImpls.Delegate(this@copy::class) { this@copy.a }" in generated,
+            "a: Binding<Module3, Unit, TypeA> = if (this@copy is InaraModule3) BindingImpls.copyOf(this@copy.aBinding) else BindingImpls.Delegate(this@copy::class) { this@copy.a }" in generated,
             generated,
         )
         assertTrue(
-            "c: Binding<Module3, Unit, TypeC> = if (this@copy is InaraModule3) this@copy.cBinding else BindingImpls.Delegate(this@copy::class) { this@copy.c }" in generated,
+            "c: Binding<Module3, Unit, TypeC> = if (this@copy is InaraModule3) BindingImpls.copyOf(this@copy.cBinding) else BindingImpls.Delegate(this@copy::class) { this@copy.c }" in generated,
             generated,
         )
 
@@ -240,14 +240,14 @@ class DIModuleCopyTest {
         assertTrue(
             Regex(
                 Regex.escape("aBinding = when {") + "\\s*" +
-                    Regex.escape("module1 !== this@copy -> if (module1 is InaraModule1) module1.aBinding else BindingImpls.Delegate(module1::class) { module1.a }") + "\\s*" +
-                    Regex.escape("this@copy is InaraModule3 -> this@copy.aBinding") + "\\s*" +
+                    Regex.escape("module1 !== this@copy -> if (module1 is InaraModule1) BindingImpls.copyOf(module1.aBinding) else BindingImpls.Delegate(module1::class) { module1.a }") + "\\s*" +
+                    Regex.escape("this@copy is InaraModule3 -> BindingImpls.copyOf(this@copy.aBinding)") + "\\s*" +
                     Regex.escape("else -> BindingImpls.Delegate(this@copy::class) { this@copy.a }") + "\\s*\\}"
             ).containsMatchIn(generated),
             generated,
         )
         val moduleOverrideCall = generated.substringAfterLast("module1: Module1 = this")
-        assertTrue("cBinding = if (this@copy is InaraModule3) this@copy.cBinding else BindingImpls.Delegate(this@copy::class) { this@copy.c }" in moduleOverrideCall, generated)
+        assertTrue("cBinding = if (this@copy is InaraModule3) BindingImpls.copyOf(this@copy.cBinding) else BindingImpls.Delegate(this@copy::class) { this@copy.c }" in moduleOverrideCall, generated)
     }
 
     @Test
@@ -282,19 +282,126 @@ class DIModuleCopyTest {
         assertTrue("InaraDelegatedModule3" !in generated, generated)
         assertEquals(2, Regex("""fun Module3\.copy\(""").findAll(generated).count(), generated)
 
-        assertTrue("public fun Module3.copy(): Module3 = this" in generated, generated)
+        assertTrue("public fun Module3.copy(): Module3 = InaraModule3(" in generated, generated)
         // No delegated class here, so every member's default is a single-holder guard.
         assertTrue(
-            "a: Binding<Module3, Unit, TypeA> = if (this@copy is InaraModule3) this@copy.aBinding else BindingImpls.Delegate(this@copy::class) { this@copy.a }" in generated,
+            "a: Binding<Module3, Unit, TypeA> = if (this@copy is InaraModule3) BindingImpls.copyOf(this@copy.aBinding) else BindingImpls.Delegate(this@copy::class) { this@copy.a }" in generated,
             generated,
         )
         assertTrue(
-            "b: Binding<Module3, Unit, TypeB> = if (this@copy is InaraModule3) this@copy.bBinding else BindingImpls.Delegate(this@copy::class) { this@copy.b }" in generated,
+            "b: Binding<Module3, Unit, TypeB> = if (this@copy is InaraModule3) BindingImpls.copyOf(this@copy.bBinding) else BindingImpls.Delegate(this@copy::class) { this@copy.b }" in generated,
             generated,
         )
         assertTrue(
-            "c: Binding<Module3, Unit, TypeC> = if (this@copy is InaraModule3) this@copy.cBinding else BindingImpls.Delegate(this@copy::class) { this@copy.c }" in generated,
+            "c: Binding<Module3, Unit, TypeC> = if (this@copy is InaraModule3) BindingImpls.copyOf(this@copy.cBinding) else BindingImpls.Delegate(this@copy::class) { this@copy.c }" in generated,
             generated,
         )
+    }
+
+    private fun runHarness(source: SourceFile, pkg: String): Array<Any?> {
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+        val harnessClass = compilation.classLoader.loadClass("$pkg.Harness")
+        @Suppress("UNCHECKED_CAST")
+        return harnessClass.getMethod("run").invoke(null) as Array<Any?>
+    }
+
+    @Test
+    fun copy_givesTheCopyItsOwnSingles() {
+        val results = runHarness(
+            SourceFile.kotlin(
+                "CopyBehaviour.kt",
+                """
+                package sample.copybehaviour
+
+                import org.kodein.di.inara.DIModule
+                import org.kodein.di.inara.Binding.Bindings.single
+                import org.kodein.di.inara.Binding.Bindings.value
+                import org.kodein.di.inara.Binding.Bindings.multiplex
+                import org.kodein.di.inara.Binding.Bindings.provider
+
+                @DIModule
+                interface MyModule {
+                    val name: String
+                    val hello: String
+                    val shared: Any
+                    fun tagged(id: Int): Any
+                    fun greeting(): String = "Hi, ${'$'}name"
+                }
+
+                object Harness {
+                    @JvmStatic
+                    fun run(): Array<Any?> {
+                        val parent = MyModule(
+                            name = value("John"),
+                            hello = single { "Hello, ${'$'}name" },
+                            shared = single { Any() },
+                            tagged = multiplex { _: Int -> single { Any() } },
+                        )
+                        val builtBefore = parent.shared
+                        val child = parent.copy(name = value("Jane"))
+                        val again = parent.copy()
+                        return arrayOf(
+                            child.hello, parent.hello,
+                            builtBefore === child.shared, builtBefore === parent.shared,
+                            child.shared === child.shared,
+                            parent.tagged(1) === child.tagged(1), child.tagged(1) === child.tagged(1),
+                            again.shared === parent.shared, again !== parent, again.name,
+                            child.greeting(),
+                        )
+                    }
+                }
+                """
+            ),
+            "sample.copybehaviour",
+        )
+
+        assertEquals("Hello, Jane", results[0])
+        assertEquals("Hello, John", results[1])
+        assertEquals(false, results[2]) // a single built before the copy is rebuilt by the copy
+        assertEquals(true, results[3])
+        assertEquals(true, results[4])
+        assertEquals(false, results[5]) // multiplex caches are separate
+        assertEquals(true, results[6])
+        assertEquals(false, results[7]) // copy() with no argument is a fresh module too
+        assertEquals(true, results[8])
+        assertEquals("John", results[9])
+        assertEquals("Hi, Jane", results[10]) // a default-body member stays unbound and re-runs
+    }
+
+    @Test
+    fun parentSwapCopy_copiesTheNewParentsBindingsButTheComposedBuilderSharesThem() {
+        val results = runHarness(
+            SourceFile.kotlin(
+                "CopyComposed.kt",
+                """
+                package sample.copycomposed
+
+                import org.kodein.di.inara.DIModule
+                import org.kodein.di.inara.Binding.Bindings.single
+
+                @DIModule
+                interface Greeter { val service: Any }
+
+                @DIModule(composed = true)
+                interface App : Greeter { val other: Any }
+
+                object Harness {
+                    @JvmStatic
+                    fun run(): Array<Any?> {
+                        val greeter = Greeter(service = single { Any() })
+                        val app = App(greeter, other = single { Any() })
+                        val swapped = app.copy(greeter = greeter)
+                        return arrayOf(app.service === greeter.service, swapped.service === greeter.service, swapped.service === app.service)
+                    }
+                }
+                """
+            ),
+            "sample.copycomposed",
+        )
+
+        assertEquals(true, results[0]) // the composed builder shares the parent's binding
+        assertEquals(false, results[1]) // the swapped-in parent keeps its singles to itself
+        assertEquals(false, results[2])
     }
 }

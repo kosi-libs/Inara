@@ -21,9 +21,9 @@ import kotlin.reflect.typeOf
  * builder relies on this to hand a parent module's own bindings straight to the composed
  * implementation.
  *
- * Never implement this directly - build one through the factories on the [Bindings] companion
- * ([value], [provider], [factory], [single], [weakSingle], [multiplex]), which cover every
- * lifecycle Inara supports.
+ * Prefer building one through the factories on the [Bindings] companion ([value], [provider],
+ * [factory], [single], [weakSingle], [multiplex]), which cover every lifecycle Inara supports. A
+ * custom implementation must also decide how it is [copied][copyBinding].
  *
  * [A] and [T] are likewise declared `in`/`out` for the same reason - neither ever appears in an
  * invariant position on any implementation this file builds.
@@ -33,6 +33,16 @@ public interface Binding<in M, in A, out T> {
      * call, memoized, cached per argument - depends entirely on which [Bindings] factory built
      * this instance. */
     public fun get(module: M, arg: A): T
+
+    /**
+     * A copy of this binding for a copied module: same recipe, own state. A binding that keeps
+     * state - a memoized value, a per-argument cache - returns a fresh twin with nothing built
+     * yet, so the copy never shares it with the original. A stateless binding returns `this`.
+     *
+     * There is deliberately no default implementation: whoever writes a binding has to decide
+     * whether it holds state. Called by the generated `copy(...)` functions.
+     */
+    public fun copyBinding(): Binding<M, A, T>
 
     /** Every way to build a [Binding]. */
     @Suppress("UNCHECKED_CAST")
@@ -104,27 +114,42 @@ public interface Binding<in M, in A, out T> {
 /**
  * Implementation classes backing every [Binding] the [Binding.Bindings] factories produce.
  *
- * Not for direct use - [Delegate] is public only because a generated `copy(...)` function needs it
- * to express "keep the module's current value for this member" as its parameter default; the rest
- * is `internal`. Gated behind [InternalInaraGeneration] as a signal, not an enforcement mechanism.
+ * Not for direct use - [Delegate] and [copyOf] are public only because a generated `copy(...)` or
+ * `shadow(...)` function needs them, to express "keep the module's current value for this member"
+ * and "a copy of the module's binding for this member"; the rest is `internal`. Gated behind
+ * [InternalInaraGeneration] as a signal, not an enforcement mechanism.
  */
 @InternalInaraGeneration
 public class BindingImpls {
+    public companion object {
+        /**
+         * [binding]'s [copyBinding], or `null` for `null` - so a default-body member's absent binding
+         * stays absent. A `single` builds its own instance in the copy, a `multiplex` starts with an
+         * empty cache, a stateless binding is returned as it is.
+         */
+        @Suppress("UNCHECKED_CAST")
+        public fun <B : Binding<*, *, *>?> copyOf(binding: B): B =
+            binding?.copyBinding() as B
+    }
+
     @PublishedApi
     internal class Value<in M, out T>(private val cls: KClass<T & Any>?, private val value: T) : Binding<M, Unit, T> {
         override fun get(module: M, arg: Unit): T = value
+        override fun copyBinding() = this
         override fun toString(): String = "value ( ${cls?.simpleName ?: "?"} )"
     }
 
     @PublishedApi
     internal class Provider<in M, out T>(private val cls: KClass<T & Any>?, private val provider: M.() -> T) : Binding<M, Unit, T> {
         override fun get(module: M, arg: Unit): T = provider(module)
+        override fun copyBinding() = this
         override fun toString(): String = "provider { ${cls?.simpleName ?: "?"} }"
     }
 
     @PublishedApi
     internal class Factory<in M, in A, out T>(private val aCls: KClass<A & Any>?, private val tCls: KClass<T & Any>?, private val factory: M.(A) -> T) : Binding<M, A, T> {
         override fun get(module: M, arg: A): T = factory(module, arg)
+        override fun copyBinding() = this
         override fun toString(): String = "factory { ${aCls?.simpleName ?: "?"} -> ${tCls?.simpleName ?: "?"} }"
     }
 
@@ -136,6 +161,7 @@ public class BindingImpls {
      * generated implementation itself - so [toString] can name it. */
     public class Delegate<in M : Any, in A, out T>(private val cls: KClass<out M>, private val delegate: M.(A) -> T) : Binding<M, A, T> {
         override fun get(module: M, arg: A): T = delegate(module, arg)
+        override fun copyBinding(): Binding<M, A, T> = this
         override fun toString(): String = "[delegated to ${cls.simpleName ?: "?"}]"
     }
 
@@ -147,41 +173,32 @@ public class BindingImpls {
     }
 
     @PublishedApi
-    internal class SynchronizedSingle<in M, out T>(private val cls: KClass<T & Any>?, builder: M.() -> T) : Binding<M, Unit, T> {
-        private var builder: (M.() -> T)? = builder
+    internal class SynchronizedSingle<in M, out T>(private val cls: KClass<T & Any>?, private val builder: M.() -> T) : Binding<M, Unit, T> {
         @Volatile private var value: Any? = Uninitialized
         private val lock = ReentrantLock()
         override fun get(module: M, arg: Unit): T {
             value.ifInitialized<T> { return it }
             return lock.withLock {
                 value.ifInitialized<T> { return it }
-                builder!!(module).also {
-                    builder = null
-                    value = it
-                }
+                builder(module).also { value = it }
             }
         }
+        override fun copyBinding() = SynchronizedSingle(cls, builder)
         override fun toString(): String = "single(Synchronized) { ${cls?.simpleName ?: "?"} }"
     }
 
     @OptIn(ExperimentalAtomicApi::class)
     @PublishedApi
-    internal class PublishedSingle<in M, out T>(private val cls: KClass<T & Any>?, builder: M.() -> T) : Binding<M, Unit, T> {
-        @Volatile private var builder: (M.() -> T)? = builder
+    internal class PublishedSingle<in M, out T>(private val cls: KClass<T & Any>?, private val builder: M.() -> T) : Binding<M, Unit, T> {
         private val ref: AtomicReference<Any?> = AtomicReference(Uninitialized)
         override fun get(module: M, arg: Unit): T {
             ref.load().ifInitialized<T> { return it }
-            val builder = this.builder
-            if (builder != null) {
-                builder(module).also {
-                    if (ref.compareAndSet(Uninitialized, it)) {
-                        this.builder = null
-                        return it
-                    }
-                }
+            builder(module).also {
+                if (ref.compareAndSet(Uninitialized, it)) return it
             }
             @Suppress("UNCHECKED_CAST") return ref.load() as T
         }
+        override fun copyBinding() = PublishedSingle(cls, builder)
         override fun toString(): String = "single(Published) { ${cls?.simpleName ?: "?"} }"
     }
 
@@ -198,6 +215,7 @@ public class BindingImpls {
                 }
             }
         }
+        override fun copyBinding() = SynchronizedWeakSingle(cls, builder)
         override fun toString(): String = "weakSingle(Synchronized) { ${cls.simpleName ?: "?"} }"
     }
 
@@ -218,6 +236,7 @@ public class BindingImpls {
                 }
             }
         }
+        override fun copyBinding() = PublishedWeakSingle(cls, builder)
         override fun toString(): String = "weakSingle(Published) { ${cls.simpleName ?: "?"} }"
     }
 
@@ -252,6 +271,7 @@ public class BindingImpls {
                 }
             }
         }
+        override fun copyBinding(): Binding<M, A, T> = Multiplex(aCls, tCls, delegate)
         override fun toString(): String = "multiplex { ${aCls?.simpleName ?: "?"} -> ${tCls?.simpleName ?: "?"} }"
     }
 }

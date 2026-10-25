@@ -51,7 +51,7 @@ Both overloads build the same implementation.
 When a parent was built by Inara, the child reuses each of its bindings as is, rather than calling through the parent.
 The bindings are therefore *shared* between the parent and the child: a `single` that was already built in the parent is not built again in the child.
 
-This is the same sharing as with xref:copy.adoc#copied-bindings-are-shared[`copy`], and it comes with the same rule: a memoized binding is built by whichever module accesses it first, with that module as its receiver.
+A memoized binding that is shared this way is built by whichever of the two modules accesses it first, with that module as its receiver.
 
 A parent that implements the interface by hand, or an inherited member that takes several parameters, is read through a lightweight delegate to the parent instead.
 
@@ -66,6 +66,7 @@ val withOtherGreeter = app.copy(greeterModule = otherGreeter)
 ----
 
 Each parent parameter defaults to the module being copied, so omitted parents are kept as they are.
+As with any other xref:copy.adoc[`copy`], the new module gets its own copy of every binding, including those it takes from the parent you pass in: that parent keeps its own `single` instances to itself.
 
 
 == Restrictions
