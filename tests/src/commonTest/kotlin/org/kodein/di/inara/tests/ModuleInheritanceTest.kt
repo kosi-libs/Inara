@@ -5,6 +5,7 @@ import org.kodein.di.inara.Binding
 import org.kodein.di.inara.SuspendBinding
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotSame
 import kotlin.test.assertSame
 
 class ModuleInheritanceTest {
@@ -61,11 +62,10 @@ class ModuleInheritanceTest {
     }
 
     @Test
-    fun composedModule_copyPreservesInheritedSingletonBinding() {
-        // The bug this design fixes: a composed module built from parent instances used to become a
-        // InaraDelegated* with no binding property for inherited members, so copy() couldn't
-        // carry them across and rebuilt a delegate - dropping the single's memo. Now it holds the
-        // parent's actual binding, so the memo survives the copy.
+    fun composedModule_copyGetsItsOwnInheritedSingleton() {
+        // A composed module built from parent instances holds the parent's actual binding for an
+        // inherited member, so copy() can carry it across - as a copy of the binding, which builds
+        // its own instance instead of sharing the original's memo.
         var builds = 0
         val greeter = GreeterModule(greeting = Binding.single { Greeting("built-${builds++}") })
         val module = ComposedModule(
@@ -77,8 +77,9 @@ class ModuleInheritanceTest {
         val first = module.greeting
         val copy = module.copy(label = Binding.value("b"))
 
-        assertSame(first, copy.greeting)
-        assertEquals(1, builds)
+        assertNotSame(first, copy.greeting)
+        assertSame(first, module.greeting)
+        assertEquals(2, builds)
         assertEquals("b", copy.label)
     }
 
