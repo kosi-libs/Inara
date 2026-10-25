@@ -74,6 +74,27 @@ Use it for services that should exist once per module: clients, databases, repos
 
 The body runs lazily: a `single` that is never accessed is never built.
 
+[CAUTION]
+====
+A `single` guarantees one instance *per module*, not one instance *in the application*.
+Every xref:copy.adoc[`copy`] of a module gets its own copy of the `single`, which builds its own instance:
+
+[source,kotlin]
+----
+val copy = module.copy(name = Binding.value("Jane"))
+
+copy.database === module.database // false <1>
+----
+<1> Both modules built their own `SqlDatabase`.
+
+If the application holds both modules, it holds two instances.
+For a resource that must exist only once, like a connection pool, build the module once and pass it around, or use xref:shadow.adoc[`shadow`] instead.
+
+`shadow` does not copy the bindings you leave out: it delegates them to the parent, which keeps the only instance.
+`copy` re-runs each of them against the new module, so the instance can even differ in content when it reads a member you overrode.
+Prefer `shadow` to `copy` unless you do want a separate instance, for example to give a test its own state.
+====
+
 `single` takes an optional thread-safety mode, described in xref:guides:thread-safety.adoc[]:
 
 [source,kotlin]
