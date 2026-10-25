@@ -30,6 +30,18 @@ All bindings are built with the factories of the `Binding` companion object.
 | `multiplex { }`
 | `(A) -> Binding<M, Unit, T>`
 | Builds and keeps one sub-binding per distinct argument value.
+
+| `detachedSingle { }`
+| `() -> T`
+| Like `single`, but never sees the module, so every copy of the module shares it.
+
+| `detachedWeakSingle { }`
+| `() -> T`
+| Like `weakSingle`, but never sees the module, so every copy of the module shares it.
+
+| `detachedMultiplex { }`
+| `(A) -> Binding<Any?, Unit, T>`
+| Like `multiplex`, but never sees the module, so every copy of the module shares it.
 |===
 
 
@@ -88,7 +100,7 @@ copy.database === module.database // false <1>
 <1> Both modules built their own `SqlDatabase`.
 
 If the application holds both modules, it holds two instances.
-For a resource that must exist only once, like a connection pool, build the module once and pass it around, or use xref:shadow.adoc[`shadow`] instead.
+For a resource that must exist only once, like a connection pool, use <<detached,`detachedSingle`>>, build the module once and pass it around, or use xref:shadow.adoc[`shadow`] instead.
 
 `shadow` does not copy the bindings you leave out: it delegates them to the parent, which keeps the only instance.
 `copy` re-runs each of them against the new module, so the instance can even differ in content when it reads a member you overrode.
@@ -174,6 +186,31 @@ With such an argument, every call misses the cache, which grows by one entry per
 ====
 
 
+[#detached]
+== Detached bindings
+
+`detachedSingle`, `detachedWeakSingle` and `detachedMultiplex` behave like `single`, `weakSingle` and `multiplex`, except that they are *detached from the module*.
+Their body takes no receiver, so it cannot read the module, and they return a `Binding<Any?, ...>`, which fits a member of any module:
+
+[source,kotlin]
+----
+AppModule(
+    pool = Binding.detachedSingle { ConnectionPool(url = "jdbc:...") }, // <1>
+    connection = Binding.detachedMultiplex { host -> Binding.detachedSingle { Connection(host) } }, // <2>
+)
+----
+<1> One `ConnectionPool` in the application, however many times the module is xref:copy.adoc[copied].
+<2> The sub-bindings are given `null` as their module, so they cannot reach it either.
+
+Since nothing a detached binding builds can depend on the module, xref:copy.adoc[`copy`] keeps the binding itself instead of copying it: the module, its copies, its xref:shadow.adoc[shadows] and the modules composed from it all share one instance, and it is built only once.
+
+A detached body cannot call the other members of the module.
+Capture the values it needs when you build it, or use a plain `single` when the instance has to read the module.
+
+They take the same optional xref:guides:thread-safety.adoc[thread-safety mode] as `single` and `weakSingle`.
+`SuspendBinding` has the same three factories, with `suspend` bodies.
+
+
 [#choosing-a-binding]
 == Choosing a binding
 
@@ -189,6 +226,9 @@ With such an argument, every call misses the cache, which grows by one entry per
 
 | one instance, as long as someone uses it
 | `weakSingle`
+
+| one instance for the whole application, shared by every copy of the module
+| `detachedSingle`
 
 | a new instance every time
 | `provider`

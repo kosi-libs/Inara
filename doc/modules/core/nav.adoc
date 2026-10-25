@@ -8,6 +8,7 @@
 *** xref:bindings.adoc#weak-single[`weakSingle`]
 *** xref:bindings.adoc#factory[`factory`]
 *** xref:bindings.adoc#multiplex[`multiplex`]
+*** xref:bindings.adoc#detached[Detached bindings]
 *** xref:bindings.adoc#choosing-a-binding[Choosing a binding]
 ** xref:arguments.adoc[]
 ** xref:defaults.adoc[]

@@ -12,6 +12,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 private class SuspendTestModule(val name: String = "module")
 
@@ -122,5 +123,20 @@ class SuspendBindingsTest {
 
         val none: SuspendBinding<SuspendTestModule, Unit, String>? = null
         assertNull(SuspendBindingImpls.copyOf(none))
+    }
+
+    @OptIn(InternalInaraGeneration::class)
+    @Test
+    fun detached_isItsOwnCopy_andToStringPrefixesTheWrappedBinding() {
+        val bindings = listOf<SuspendBinding<Any?, *, *>>(
+            SuspendBinding.detachedSingle { "x" },
+            SuspendBinding.detachedWeakSingle { "x" },
+            SuspendBinding.detachedMultiplex<Int, String> { _ -> provider<Any?, String> { "x" } },
+        )
+        for (binding in bindings) {
+            assertSame(binding, SuspendBindingImpls.copyOf(binding))
+            assertTrue(binding.toString().startsWith("detached "), binding.toString())
+        }
+        assertEquals("detached single(Published) { String }", SuspendBinding.detachedSingle(SingleThreadSafety.Published) { "x" }.toString())
     }
 }

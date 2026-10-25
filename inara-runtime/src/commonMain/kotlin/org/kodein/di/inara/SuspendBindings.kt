@@ -84,6 +84,25 @@ public interface SuspendBinding<in M, in A, out T> {
         public inline fun <M, reified A, reified T> multiplex(
             noinline builder: (A) -> SuspendBinding<M, Unit, T>
         ) : SuspendBinding<M, A, T> = SuspendBindingImpls.Multiplex(Binding.cls<A>(), Binding.cls<T>(), builder)
+
+        /** The `suspend` counterpart of [Binding.Bindings.detachedSingle]: [builder] takes no
+         * receiver and the binding is shared by every copy of the module. */
+        public inline fun <reified T> detachedSingle(
+            safety: SingleThreadSafety = SingleThreadSafety.Synchronized,
+            noinline builder: suspend () -> T
+        ) : SuspendBinding<Any?, Unit, T> = SuspendBindingImpls.Detached(single<Any?, T>(safety) { builder() })
+
+        /** The `suspend` counterpart of [Binding.Bindings.detachedWeakSingle]. */
+        public inline fun <reified T : Any> detachedWeakSingle(
+            safety: SingleThreadSafety = SingleThreadSafety.Synchronized,
+            noinline builder: suspend () -> T
+        ) : SuspendBinding<Any?, Unit, T> = SuspendBindingImpls.Detached(weakSingle<Any?, T>(safety) { builder() })
+
+        /** The `suspend` counterpart of [Binding.Bindings.detachedMultiplex]: the sub-bindings are
+         * given `null` as their module. */
+        public inline fun <reified A, reified T> detachedMultiplex(
+            noinline builder: (A) -> SuspendBinding<Any?, Unit, T>
+        ) : SuspendBinding<Any?, A, T> = SuspendBindingImpls.Detached(multiplex<Any?, A, T>(builder))
     }
 }
 
@@ -137,6 +156,14 @@ public class SuspendBindingImpls {
         override suspend fun get(module: M, arg: A): T = delegate(module, arg)
         override fun copyBinding(): SuspendBinding<M, A, T> = this
         override fun toString(): String = "[delegated to ${cls.simpleName ?: "?"}]"
+    }
+
+    /** The `suspend` counterpart of [BindingImpls.Detached]. */
+    @PublishedApi
+    internal class Detached<in A, out T>(private val binding: SuspendBinding<Any?, A, T>) : SuspendBinding<Any?, A, T> {
+        override suspend fun get(module: Any?, arg: A): T = binding.get(null, arg)
+        override fun copyBinding(): SuspendBinding<Any?, A, T> = this
+        override fun toString(): String = "detached $binding"
     }
 
     /** Wraps a plain [Binding] behind the `suspend` [SuspendBinding.get] signature - backs

@@ -51,4 +51,37 @@ class BindingLifecycleTest {
         assertEquals(3, abc1.id)
         assertEquals(2, de.id)
     }
+
+    @Test
+    fun detachedSingle_isSharedByEveryCopyAndShadow() {
+        val module = CounterModule(
+            next = Binding.provider { 0 },
+            instance = Binding.detachedSingle { Service(id = 0) },
+            keyed = Binding.detachedMultiplex { key -> Binding.detachedSingle { Service(key.length) } },
+        )
+
+        val instance = module.instance
+        val keyed = module.keyed("abc")
+
+        assertSame(instance, module.copy().instance)
+        assertSame(instance, module.copy(next = Binding.provider { 1 }).instance)
+        assertSame(instance, module.shadow(next = Binding.provider { 1 }).instance)
+        assertSame(keyed, module.copy().keyed("abc"))
+        assertSame(keyed, module.shadow(next = Binding.provider { 1 }).keyed("abc"))
+    }
+
+    @Test
+    fun detachedSingle_isBuiltOnlyOnce_evenWhenTheCopyIsAccessedFirst() {
+        var builds = 0
+        val module = CounterModule(
+            next = Binding.provider { 0 },
+            instance = Binding.detachedSingle { Service(id = builds++) },
+            keyed = Binding.multiplex { key -> Binding.provider { Service(key.length) } },
+        )
+
+        val fromCopy = module.copy().instance
+
+        assertSame(fromCopy, module.instance)
+        assertEquals(1, builds)
+    }
 }

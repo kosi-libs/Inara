@@ -37,6 +37,7 @@ SuspendBinding.factory { id -> fetchProfile(id) }
 SuspendBinding.single { fetchToken() }
 SuspendBinding.weakSingle { fetchCache() }
 SuspendBinding.multiplex { region -> SuspendBinding.single { connect(region) } }
+SuspendBinding.detachedSingle { fetchToken() }
 ----
 
 `single` and `weakSingle` take the same xref:guides:thread-safety.adoc[`SingleThreadSafety` mode] as on `Binding`.

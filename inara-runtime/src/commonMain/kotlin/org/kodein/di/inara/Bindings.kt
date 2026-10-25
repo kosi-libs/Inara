@@ -22,7 +22,8 @@ import kotlin.reflect.typeOf
  * implementation.
  *
  * Prefer building one through the factories on the [Bindings] companion ([value], [provider],
- * [factory], [single], [weakSingle], [multiplex]), which cover every lifecycle Inara supports. A
+ * [factory], [single], [weakSingle], [multiplex], and the module-independent [detachedSingle],
+ * [detachedWeakSingle] and [detachedMultiplex]), which cover every lifecycle Inara supports. A
  * custom implementation must also decide how it is [copied][copyBinding].
  *
  * [A] and [T] are likewise declared `in`/`out` for the same reason - neither ever appears in an
@@ -108,6 +109,38 @@ public interface Binding<in M, in A, out T> {
         public inline fun <M, reified A, reified T> multiplex(
             noinline builder: (A) -> Binding<M, Unit, T>
         ) : Binding<M, A, T> = BindingImpls.Multiplex(cls<A>(), cls<T>(), builder)
+
+        /**
+         * Like [single], but the binding never sees the module: [builder] takes no receiver, and
+         * the result is a `Binding<Any?, Unit, T>`, which fits the slot of any module.
+         *
+         * Since nothing it builds can depend on the module, a copy of the module keeps this very
+         * binding: `copy`, `shadow` and a composed child all share its one instance. Use it for a
+         * resource that must exist once in the application, whereas a plain [single] exists once
+         * *per module*.
+         *
+         * [safety] is the same as on [single].
+         */
+        public inline fun <reified T> detachedSingle(
+            safety: SingleThreadSafety = SingleThreadSafety.Synchronized,
+            crossinline builder: () -> T
+        ) : Binding<Any?, Unit, T> = BindingImpls.Detached(single<Any?, T>(safety) { builder() })
+
+        /** Like [weakSingle], but detached from the module in the same way as [detachedSingle]: the
+         * weakly held instance is shared by every copy of the module. */
+        public inline fun <reified T : Any> detachedWeakSingle(
+            safety: SingleThreadSafety = SingleThreadSafety.Synchronized,
+            crossinline builder: () -> T
+        ) : Binding<Any?, Unit, T> = BindingImpls.Detached(weakSingle<Any?, T>(safety) { builder() })
+
+        /**
+         * Like [multiplex], but detached from the module in the same way as [detachedSingle]: the
+         * per-argument cache is shared by every copy of the module. The sub-bindings [builder]
+         * returns are given `null` as their module, since the module must not be reached from here.
+         */
+        public inline fun <reified A, reified T> detachedMultiplex(
+            noinline builder: (A) -> Binding<Any?, Unit, T>
+        ) : Binding<Any?, A, T> = BindingImpls.Detached(multiplex<Any?, A, T>(builder))
     }
 }
 
@@ -163,6 +196,16 @@ public class BindingImpls {
         override fun get(module: M, arg: A): T = delegate(module, arg)
         override fun copyBinding(): Binding<M, A, T> = this
         override fun toString(): String = "[delegated to ${cls.simpleName ?: "?"}]"
+    }
+
+    /** Backs the `detached*` factories: calls [binding] with a `null` module, whatever module it is
+     * read through, so nothing it builds can reach (or depend on) the module. Having no
+     * module-dependent state to rebuild, it is its own [copyBinding]. */
+    @PublishedApi
+    internal class Detached<in A, out T>(private val binding: Binding<Any?, A, T>) : Binding<Any?, A, T> {
+        override fun get(module: Any?, arg: A): T = binding.get(null, arg)
+        override fun copyBinding(): Binding<Any?, A, T> = this
+        override fun toString(): String = "detached $binding"
     }
 
     internal object Uninitialized {

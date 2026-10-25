@@ -1,5 +1,8 @@
 package org.kodein.di.inara
 
+import org.kodein.di.inara.Binding.Bindings.detachedMultiplex
+import org.kodein.di.inara.Binding.Bindings.detachedSingle
+import org.kodein.di.inara.Binding.Bindings.detachedWeakSingle
 import org.kodein.di.inara.Binding.Bindings.factory
 import org.kodein.di.inara.Binding.Bindings.multiplex
 import org.kodein.di.inara.Binding.Bindings.provider
@@ -316,5 +319,61 @@ class BindingsTest {
 
         val none: Binding<TestModule, Unit, String>? = null
         assertNull(BindingImpls.copyOf(none))
+    }
+
+    @OptIn(InternalInaraGeneration::class)
+    @Test
+    fun detachedSingle_buildsOnceAndIsItsOwnCopy() {
+        var builds = 0
+        val binding = detachedSingle { builds++; Any() }
+        val module = TestModule()
+
+        val first = binding.get(module, Unit)
+
+        assertSame(first, binding.get(TestModule(), Unit))
+        assertEquals(1, builds)
+        assertSame(binding, BindingImpls.copyOf(binding))
+        assertSame(first, BindingImpls.copyOf(binding).get(module, Unit))
+    }
+
+    @OptIn(InternalInaraGeneration::class)
+    @Test
+    fun detachedWeakSingle_isItsOwnCopy() {
+        val binding = detachedWeakSingle { Any() }
+
+        assertSame(binding, BindingImpls.copyOf(binding))
+        val held = binding.get(TestModule(), Unit)
+        assertSame(held, binding.get(TestModule(), Unit))
+    }
+
+    @OptIn(InternalInaraGeneration::class)
+    @Test
+    fun detachedMultiplex_isItsOwnCopy_andPassesNullAsTheModule() {
+        val modules = mutableListOf<Any?>()
+        val binding = detachedMultiplex<Int, Any> { _ ->
+            provider<Any?, Any> { modules += this; Any() }
+        }
+
+        binding.get(TestModule(), 1)
+        binding.get(TestModule(), 2)
+
+        assertEquals(listOf<Any?>(null, null), modules)
+        assertSame(binding, BindingImpls.copyOf(binding))
+    }
+
+    @Test
+    fun detachedMultiplex_returnsStableInstancePerKey() {
+        val binding = detachedMultiplex<Int, Any> { _ -> single { Any() } }
+        val module = TestModule()
+
+        assertSame(binding.get(module, 1), binding.get(module, 1))
+        assertNotSame(binding.get(module, 1), binding.get(module, 2))
+    }
+
+    @Test
+    fun detached_toString_prefixesTheWrappedBinding() {
+        assertEquals("detached single(Synchronized) { String }", detachedSingle { "x" }.toString())
+        assertEquals("detached single(Published) { String }", detachedSingle(SingleThreadSafety.Published) { "x" }.toString())
+        assertEquals("detached weakSingle(Synchronized) { String }", detachedWeakSingle { "x" }.toString())
     }
 }

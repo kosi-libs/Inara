@@ -45,6 +45,7 @@ parent.hello // "Hello, John" <2>
 <2> The parent's `single` is untouched, and still reads the parent's `name`.
 
 Bindings that do not keep any state, like `value`, `provider` and `factory`, are not duplicated: they always run against the module they are accessed through.
+xref:bindings.adoc#detached[Detached bindings] are not duplicated either: a copy keeps them, and so shares their instance.
 
 NOTE: A module that implements the interface by hand has no bindings to copy.
 Its members are read through a delegate, so they keep whatever state that module has.
