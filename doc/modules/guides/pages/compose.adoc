@@ -1,0 +1,263 @@
+= Compose Multiplatform
+
+Compose has no dependency injection of its own, but it has a way to hand a value down the composition tree: composition locals.
+A module is just a value, so it travels through a composition local, and `retain` or `remember` gives it a lifetime.
+
+This guide assumes a Compose Multiplatform project in which Inara is set up as described in xref:core:setup.adoc[].
+
+
+[#application-module]
+== The application module
+
+Declare the module that holds everything that lives as long as the application:
+
+[source,kotlin]
+----
+@DIModule
+interface AppModule {
+    fun httpClient(): HttpClient
+    fun database(): Database
+    fun userRepository(): UserRepository
+}
+----
+
+Build the module in the shared `App` composable, and expose it to the whole tree with a composition local:
+
+[source,kotlin]
+----
+val LocalAppModule = staticCompositionLocalOf<AppModule> { // <1>
+    error("No AppModule provided") // <2>
+}
+
+@Composable
+fun App() {
+    val appModule = retain { // <3>
+        AppModule(
+            httpClient = Binding.single { HttpClient() },
+            database = Binding.single { Database.open() },
+            userRepository = Binding.single { UserRepository(httpClient(), database()) },
+        )
+    }
+
+    CompositionLocalProvider(LocalAppModule provides appModule) {
+        AppContent()
+    }
+}
+----
+<1> The application module never changes, so a _static_ local is the right choice: Compose does not track its reads.
+<2> A missing provider fails loudly, instead of silently building a second module with its own `single` instances.
+<3> A composable function runs again on every recomposition: `retain` builds the module once and gives back the same instance each time, so its `single` instances are not lost.
+Unlike `remember`, it also keeps the module when the composition is destroyed and recreated, as Android does on a configuration change.
+
+Any composable can then read the module from the local:
+
+[source,kotlin]
+----
+@Composable
+fun UsersScreen() {
+    val userRepository = LocalAppModule.current.userRepository()
+    // ...
+}
+----
+
+[#view-models]
+== Building ViewModels
+
+A `ViewModel` is the natural home of a screen's state, and it needs dependencies from the application.
+With xref:factory:basics.adoc[`@DIFactory`], the `ViewModel` itself knows nothing about Inara: it is a plain class with a plain constructor.
+
+[source,kotlin]
+----
+class UsersViewModel(
+    private val userRepository: UserRepository, // <1>
+) : ViewModel() {
+    val users: StateFlow<List<User>> = userRepository.users()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+}
+----
+<1> A regular constructor parameter: no annotation, no module, no `inject`.
+
+The factory is declared apart from the class, and generates a function that builds it from the module:
+
+[source,kotlin]
+----
+@DIFactory(builds = UsersViewModel::class, from = AppModule::class) // <1>
+object UsersViewModelFactory
+----
+<1> Each constructor parameter is resolved by its type among the members of `AppModule`: `UserRepository` comes from `userRepository()`.
+
+Hand the generated function to Compose's `viewModel` function, which calls it only when the screen has no `ViewModel` yet:
+
+[source,kotlin]
+----
+@Composable
+fun UsersScreen() {
+    val appModule = LocalAppModule.current // <1>
+    val viewModel = viewModel { UsersViewModelFactory.UsersViewModel(appModule) } // <2>
+
+    val users by viewModel.users.collectAsState()
+    // ...
+}
+----
+<1> `current` can only be read in a composable function, not in the lambda below.
+<2> The lambda runs once for the screen's `ViewModelStoreOwner`: later compositions, and configuration changes, get the same `ViewModel` back.
+
+NOTE: This needs `lifecycle-viewmodel-compose`, which provides `viewModel` on every Compose Multiplatform target.
+
+[#view-model-arguments]
+=== Passing arguments
+
+A value that only exists at the call site, such as the id of the item a screen shows, is not a member of the module.
+Declare its type with xref:factory:with.adoc[`with`], and pass it to the generated function:
+
+[source,kotlin]
+----
+class ProfileViewModel(
+    private val userRepository: UserRepository,
+    private val userId: UserId, // <1>
+) : ViewModel() {
+    // ...
+}
+
+@DIFactory(builds = ProfileViewModel::class, from = AppModule::class, with = UserId::class)
+object ProfileViewModelFactory
+
+@Composable
+fun ProfileScreen(userId: UserId) {
+    val appModule = LocalAppModule.current
+    val viewModel = viewModel(key = userId.value) { // <2>
+        ProfileViewModelFactory.ProfileViewModel(appModule, userId)
+    }
+    // ...
+}
+----
+<1> Still a plain parameter: the factory gives it the `with` value, since its type matches.
+<2> The key gives every user their own `ViewModel`, instead of showing the first one's.
+
+[#view-model-testing]
+=== Testing a ViewModel
+
+Since the `ViewModel` does not depend on Inara, a test builds it with a fake, without any module:
+
+[source,kotlin]
+----
+@Test
+fun exposesTheUsers() = runTest {
+    val viewModel = UsersViewModel(FakeUserRepository(listOf(alice, bob)))
+    // ...
+}
+----
+
+TIP: A `@DIFactory` can also build from a <<scoped-modules,scoped module>>, to give a `ViewModel` the members of a session: read `LocalSessionModule.current` in place of `LocalAppModule.current`.
+
+
+[#scoped-modules]
+== Scoping a module to a composable
+
+A module can also live exactly as long as a composable.
+This is the xref:guides:scopes.adoc[scope] pattern, where the scope is a part of the composition tree: here, everything below a user's session.
+
+Declare a module that xref:core:composition.adoc[composes] the application module:
+
+[source,kotlin]
+----
+@DIModule(composed = true)
+interface SessionModule : AppModule {
+    val user: User
+    val scope: CoroutineScope
+    fun profileRepository(): ProfileRepository
+}
+
+val LocalSessionModule = compositionLocalOf<SessionModule> {
+    error("No SessionModule provided")
+}
+----
+
+Then write a composable that builds the module, and provides it to its content:
+
+[source,kotlin]
+----
+@Composable
+fun SessionScope(user: User, content: @Composable () -> Unit) {
+    val appModule = LocalAppModule.current // <1>
+    val scope = rememberCoroutineScope() // <2>
+
+    val session = remember(appModule, user) { // <3>
+        SessionModule(
+            appModule = appModule,
+            user = Binding.value(user),
+            scope = Binding.value(scope),
+            profileRepository = Binding.single { ProfileRepository(httpClient(), user, scope) }, // <4>
+        )
+    }
+
+    CompositionLocalProvider(LocalSessionModule provides session, content = content)
+}
+----
+<1> The session module reuses the application module: `httpClient()` is the very same instance as everywhere else in the application.
+<2> This scope is cancelled when `SessionScope` leaves the composition, so any work that the module's members launch in it stops with the session.
+<3> The key makes a different user a different session: a new module is built, with new `single` instances.
+<4> One repository per session, which reads members of both modules.
+
+The content reads the session module from its own local:
+
+[source,kotlin]
+----
+@Composable
+fun ProfileScreen() {
+    val profileRepository = LocalSessionModule.current.profileRepository()
+    // ...
+}
+
+@Composable
+fun SignedInApp(user: User) {
+    SessionScope(user) {
+        ProfileScreen()
+    }
+}
+----
+
+When `SessionScope` leaves the composition, `remember` forgets the session module.
+Its own `single` instances are garbage collected with it, while the application module keeps its own.
+
+The same pattern gives a module to a single screen: write a `ScreenScope` that reads `LocalSessionModule.current` instead of `LocalAppModule.current`, and composes a `ScreenModule` over the session module.
+
+[#closing-resources]
+=== Closing resources
+
+Garbage collection is not always enough: a resource that holds a socket or a file must be closed.
+Close it when the composable leaves the composition, with a `DisposableEffect`.
+Here, `SessionModule` gains a `val connection: SessionConnection` member:
+
+[source,kotlin]
+----
+@Composable
+fun SessionScope(user: User, content: @Composable () -> Unit) {
+    val appModule = LocalAppModule.current
+    val connection = remember(user) { SessionConnection.open(user) } // <1>
+
+    DisposableEffect(connection) {
+        onDispose { connection.close() } // <2>
+    }
+
+    val session = remember(appModule, connection) {
+        SessionModule(
+            appModule = appModule,
+            connection = Binding.value(connection),
+            // ...
+        )
+    }
+
+    CompositionLocalProvider(LocalSessionModule provides session, content = content)
+}
+----
+<1> The composable creates the resource itself, and binds it to the module with `Binding.value`.
+<2> Closed when the user changes or when the scope leaves the composition.
+
+CAUTION: Do not close a resource by reading a `single` of the module in `onDispose`: if nothing has used that member yet, reading it builds it only to close it right away.
+
+NOTE: `remember` does not survive an Android configuration change, nor a navigation destination that leaves the composition.
+A module that must outlive them belongs in a lifecycle `ViewModel` instead, which provides it to the composition in the same way.
+
+TIP: A test can provide a test module through the same composition local.
+See xref:testing.adoc[].

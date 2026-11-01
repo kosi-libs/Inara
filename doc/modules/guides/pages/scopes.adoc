@@ -91,3 +91,5 @@ val viewModel = ProfileViewModelFactory.ProfileViewModel(session)
 ----
 
 Values that only exist for one call, like a route or a request, are passed as xref:factory:with.adoc[`with` arguments] rather than stored in a module.
+
+TIP: To use scopes in a Compose Multiplatform application, see xref:compose.adoc[].
