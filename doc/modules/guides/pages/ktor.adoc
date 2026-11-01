@@ -1,0 +1,191 @@
+= Ktor server
+
+Ktor has no dependency injection of its own, but both the application and every call carry typed attributes, which can hold any value.
+A module is just a value, so it is stored in the attributes of the scope it belongs to: the application for a module that lives as long as the server, and the call for a module that lives for one request.
+
+This guide assumes a Ktor server in which Inara is set up as described in xref:core:setup.adoc[].
+
+
+[#application-module]
+== The application module
+
+Declare the module that holds everything that lives as long as the server:
+
+[source,kotlin]
+----
+@DIModule
+interface AppModule {
+    fun database(): Database
+    fun userRepository(): UserRepository
+}
+----
+
+Build it once, when the application starts, and keep it in the application's attributes:
+
+[source,kotlin]
+----
+val AppModuleKey = AttributeKey<AppModule>("AppModule") // <1>
+
+val Application.appModule: AppModule get() = attributes[AppModuleKey] // <2>
+
+fun Application.module() {
+    val appModule = AppModule(
+        database = Binding.single { Database.open() },
+        userRepository = Binding.single { UserRepository(database()) },
+    )
+    attributes.put(AppModuleKey, appModule) // <3>
+
+    routing {
+        // ...
+    }
+}
+----
+<1> The key is the only thing that ties the module to Ktor.
+<2> An extension property keeps the call sites short.
+<3> The module is built in `module()`, so it follows the application's lifecycle, including the reload of a development server, which builds a fresh module with fresh `single` instances.
+
+A resource that must be closed when the server stops is closed in the application's `ApplicationStopped` event:
+
+[source,kotlin]
+----
+monitor.subscribe(ApplicationStopped) {
+    appModule.database().close()
+}
+----
+
+[#controllers]
+=== Building controllers
+
+Keep the handlers' logic in plain classes, which know nothing about Ktor or Inara, and build them with xref:factory:basics.adoc[`@DIFactory`]:
+
+[source,kotlin]
+----
+class UsersController(
+    private val userRepository: UserRepository, // <1>
+) {
+    suspend fun list(): List<User> = userRepository.all()
+    suspend fun find(id: UserId): User? = userRepository.find(id)
+}
+
+@DIFactory(builds = UsersController::class, from = AppModule::class)
+object UsersControllerFactory
+----
+<1> A regular constructor parameter, resolved by its type from `AppModule`.
+
+The routes build the controller once, where they are declared, and delegate to it:
+
+[source,kotlin]
+----
+fun Application.module() {
+    // ...
+
+    routing {
+        val users = UsersControllerFactory.UsersController(appModule) // <1>
+
+        get("/users") {
+            call.respond(users.list())
+        }
+        get("/users/{id}") {
+            val user = users.find(UserId(call.parameters["id"]!!))
+                ?: return@get call.respond(HttpStatusCode.NotFound)
+            call.respond(user)
+        }
+    }
+}
+----
+<1> Built when the routing is declared, not on every call: its dependencies are `single` instances anyway.
+
+Since the controller does not depend on Inara, a test builds it with a fake repository, without any module or server.
+
+
+[#request-module]
+== Scoping a module to a call
+
+A module can also live exactly as long as a call.
+This is the xref:guides:scopes.adoc[scope] pattern, where the scope is one request.
+
+Declare a module that xref:core:composition.adoc[composes] the application module:
+
+[source,kotlin]
+----
+@DIModule(composed = true)
+interface RequestModule : AppModule {
+    val requestId: String
+    fun auditLog(): AuditLog
+}
+
+val RequestModuleKey = AttributeKey<RequestModule>("RequestModule")
+
+val ApplicationCall.requestModule: RequestModule get() = attributes[RequestModuleKey]
+----
+
+Then write a plugin that builds the module for every call, and stores it in the call's attributes:
+
+[source,kotlin]
+----
+val RequestModulePlugin = createApplicationPlugin("RequestModule") {
+    val appModule = application.appModule // <1>
+
+    onCall { call ->
+        val requestId = call.request.headers["X-Request-Id"] ?: "unknown"
+
+        call.attributes.put(
+            RequestModuleKey,
+            RequestModule(
+                appModule = appModule, // <2>
+                requestId = Binding.value(requestId),
+                auditLog = Binding.single { AuditLog(requestId, database()) }, // <3>
+            )
+        )
+    }
+}
+
+fun Application.module() {
+    // ... the application module, as above
+
+    install(RequestModulePlugin) // <4>
+}
+----
+<1> The application module is read once, when the plugin is installed.
+<2> The request module reuses the application module: `database()` is the very same instance in every call.
+<3> One audit log per call, which reads a member of the application module.
+<4> Installed after the application module is stored, since the plugin reads it at installation.
+
+The handlers read the module from the call:
+
+[source,kotlin]
+----
+get("/orders") {
+    val auditLog = call.requestModule.auditLog()
+    auditLog.record("orders listed")
+    // ...
+}
+----
+
+When the call ends, its attributes are dropped, and so is the request module: its own `single` instances are garbage collected with it, while the application module keeps its own.
+
+A `@DIFactory` can build a class from the request module, for a class that needs members of both scopes.
+Build it in the handler, since it needs the call's module:
+
+[source,kotlin]
+----
+class OrdersController(
+    private val userRepository: UserRepository, // <1>
+    private val auditLog: AuditLog, // <2>
+) {
+    // ...
+}
+
+@DIFactory(builds = OrdersController::class, from = RequestModule::class)
+object OrdersControllerFactory
+
+get("/orders") {
+    val orders = OrdersControllerFactory.OrdersController(call.requestModule)
+    // ...
+}
+----
+<1> Comes from the application module, through the request module.
+<2> Comes from the request module: it is a new one for every call.
+
+TIP: A test can store a test module in the application's attributes, before it installs the plugins.
+See xref:testing.adoc[].
