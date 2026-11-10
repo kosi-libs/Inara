@@ -1,0 +1,201 @@
+= Sets of members
+
+A module can gather some of its members into a `Set`, such as every service that has to be started when the application starts.
+You mark the members with an annotation of your own, and the processor generates a function returning all of them.
+
+
+[#declaring-a-set]
+== Declaring a set
+
+A set is an annotation class annotated with `@DISet`, which names the type of its elements:
+
+[source,kotlin]
+.AppModule.kt
+----
+interface Service {
+    fun start()
+}
+
+@DISet(of = Service::class) // <1>
+annotation class Services
+
+@DIModule(sets = [Services::class]) // <2>
+interface AppModule {
+    @Services val database: Database // <3>
+    @Services val server: HttpServer
+    @Services fun scheduler(): Scheduler? = null // <4>
+    val port: Int
+}
+----
+<1> Every member of the `Services` set must be a `Service`.
+<2> The module generates a function for every set it lists in `sets`.
+<3> `Database`, `HttpServer` and `Scheduler` all implement `Service`.
+<4> A member of a set may be nullable: `null` is left out of the set.
+
+The processor generates an extension function named `setOf` followed by the name of the annotation:
+
+[source,kotlin]
+.InaraAppModule.kt
+----
+public fun AppModule.setOfServices(): Set<Service> = kotlin.collections.setOfNotNull(
+    database,
+    server,
+    scheduler(),
+)
+----
+
+It reads each member off the module, so the set always holds what the module's bindings currently provide:
+
+[source,kotlin]
+----
+val app = AppModule(
+    database = Binding.single { Database() },
+    server = Binding.single { HttpServer(port) },
+    port = Binding.value(8080),
+)
+
+app.setOfServices().forEach { it.start() } // <1>
+----
+<1> Starts the database and the server: `scheduler()` keeps its default implementation, which returns `null`.
+
+The function has the visibility of the module: an `internal` module gets an `internal` function.
+
+
+[#what-a-set-holds]
+== What a set holds
+
+A set holds every member of the module that carries its annotation, inherited members included, in the order the module declares them: inherited members first, in the order of the supertypes, then the module's own.
+
+Since the result is a `Set`, two members that provide the same value, or two equal values, appear in it once.
+
+A member also belongs to a set when the annotation is on a declaration it overrides.
+Kotlin does not carry an annotation over to an override, but Inara does:
+
+[source,kotlin]
+----
+interface ServiceHolder {
+    @Services val service: Service
+}
+
+interface ServerHolder : ServiceHolder {
+    override val service: HttpServer // <1>
+}
+----
+<1> Still a member of `Services`, without repeating the annotation.
+
+A function is called without arguments, so all of its parameters must have a default value or be `vararg`.
+A default value declared on an overridden declaration counts, since an override cannot declare one of its own.
+
+A member may belong to several sets, by carrying several set annotations.
+
+
+[#inherited-sets]
+== Inherited sets
+
+A module also gets a function for every set listed by one of its `@DIModule` ancestors, collecting its own members along with the inherited ones:
+
+[source,kotlin]
+----
+@DIModule
+interface ServerAppModule : AppModule {
+    @Services val metrics: MetricsReporter
+}
+
+serverApp.setOfServices() // database, server and metrics, plus scheduler if it is not null
+----
+
+Listing an inherited set again in `sets` is allowed, and changes nothing.
+
+An annotated member does not require its module to list the set: a parent can annotate its members, and leave it to the modules extending it to gather them.
+This is how a xref:composition.adoc[composed module] gathers the members of the modules it is built from:
+
+[source,kotlin]
+----
+@DIModule
+interface DatabaseModule {
+    @Services val database: Database
+}
+
+@DIModule
+interface ServerModule {
+    @Services val server: HttpServer
+}
+
+@DIModule(composed = true, sets = [Services::class])
+interface ApplicationModule : DatabaseModule, ServerModule
+----
+
+NOTE: The function is an extension, so the one called depends on the static type of the module: a `ServerAppModule` that is typed as an `AppModule` returns the set of `AppModule`, without `metrics`.
+
+
+[#asynchronous-members]
+== Asynchronous members
+
+The `suspend` argument of `@DISet` decides whether the generated function is `suspend`:
+
+[cols="1,3"]
+|===
+| `suspend` | Generated function
+
+| `Allow` (default)
+| `suspend` only when at least one member of the set is a xref:suspend.adoc[`suspend` member].
+
+| `Force`
+| Always `suspend`.
+
+| `Forbid`
+| Never `suspend`: a `suspend` member may not carry the annotation.
+|===
+
+[source,kotlin]
+----
+@DISet(of = Service::class, suspend = DIFactory.Suspend.Forbid)
+annotation class StartupServices
+----
+
+With `Allow`, adding a `suspend` member to a set makes its function `suspend`, which breaks the call sites that are not.
+Use `Force` or `Forbid` to keep the signature stable as the module grows.
+
+
+[#generic-element-types]
+== Generic element types
+
+A generic element type is star-projected:
+
+[source,kotlin]
+----
+interface Plugin<C>
+
+@DISet(of = Plugin::class)
+annotation class Plugins // <1>
+----
+<1> `setOfPlugins()` returns a `Set<Plugin<*>>`, which holds a `Plugin<String>` as well as a `Plugin<Int>`.
+
+
+[#restrictions]
+== Restrictions
+
+The processor rejects a set annotation that:
+
+* has a `SOURCE` retention, which would hide it on the members of a module compiled in another Gradle module;
+* declares a `@Target` that includes neither `FUNCTION` nor `PROPERTY`;
+* names an `of` type that is neither `public` nor `internal`, or that is declared inside a declaration that is neither.
+
+It rejects a `sets` argument that:
+
+* lists an annotation that is not annotated with `@DISet`, or lists the same annotation twice;
+* gives the module two sets with the same simple name, since both would generate the same function;
+* gives the module a set whose function would have the name of one of its members, which would hide it;
+* gives a `public` module a set whose `of` type is `internal`, or whose `of` type is `internal` to another Gradle module;
+* lists a set that none of the module's members belongs to.
+
+It rejects a member that carries a set annotation, directly or through a declaration it overrides, when it is:
+
+* xref:ignored-members.adoc[ignored by Inara]: a `var`, an extension member, or a generic function;
+* a function that cannot be called without arguments;
+* of a type that is not a subtype of the set's `of` type, nullability aside;
+* `suspend`, while the set is `@DISet(suspend = Forbid)`.
+
+Finally, a set annotation may only annotate a function or a property declared in an interface, and never a `private` one.
+
+TIP: A set of `AutoCloseable` members closes every resource of a module at once, for instance in the `ApplicationStopped` event of the xref:guides:ktor.adoc[Ktor guide].

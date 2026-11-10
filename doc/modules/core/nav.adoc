@@ -17,6 +17,7 @@
 ** xref:suspend.adoc[]
 ** xref:inheritance.adoc[]
 ** xref:composition.adoc[]
+** xref:sets.adoc[]
 ** xref:supertypes.adoc[]
 ** xref:ignored-members.adoc[]
 ** xref:visibility.adoc[]

@@ -15,6 +15,7 @@ import com.google.devtools.ksp.symbol.Modifier
 import com.google.devtools.ksp.symbol.Visibility
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.ksp.toClassName
+import com.squareup.kotlinpoet.ksp.toTypeName
 
 internal const val DI_MODULE_ANNOTATION = "org.kodein.di.inara.DIModule"
 internal const val DI_FACTORY_ANNOTATION = "org.kodein.di.inara.DIFactory"
@@ -46,6 +47,9 @@ internal data class ParameterModel(
  * [hasDefaultImplementation] is true when the member carries a body in the interface (a default
  * property getter or function body). Its `Binding` parameter is then optional and nullable:
  * `null` means the interface's own default implementation is kept, any other value overrides it.
+ *
+ * [sets] are the qualified names of the set annotations (see `@DISet`) the member carries, directly
+ * or on a declaration it overrides - the sets a `setOf<Annotation>()` function collects it into.
  */
 internal data class MemberModel(
     val name: String,
@@ -54,6 +58,7 @@ internal data class MemberModel(
     val parameters: List<ParameterModel>,
     val returnType: KSType,
     val hasDefaultImplementation: Boolean,
+    val sets: List<String> = emptyList(),
 )
 
 /**
@@ -92,6 +97,9 @@ internal data class ParentModel(
  * [isComposed] is true when the interface is annotated `@DIModule(composed = true)` - it alone decides
  * whether the generator emits the extra parent-instance builder/`copy` overloads on top of the
  * plain full ones; [parents] is populated regardless of its value.
+ *
+ * [sets] holds one entry per set the module generates a `setOf<Annotation>()` function for: every
+ * one listed in its own `@DIModule(sets = ...)` or in any `@DIModule` ancestor's.
  */
 internal data class ModuleModel(
     val declaration: KSClassDeclaration,
@@ -105,6 +113,7 @@ internal data class ModuleModel(
     val parentByMemberName: Map<String, ParentModel>,
     val ancestorDeclarations: List<KSClassDeclaration>,
     val isComposed: Boolean,
+    val sets: List<SetModel>,
 )
 
 /**
@@ -135,6 +144,13 @@ private fun KSClassDeclaration.hasAnnotation(qualifiedName: String): Boolean =
  * argument. */
 internal fun KSClassDeclaration.isDIModule(): Boolean =
     hasAnnotation(DI_MODULE_ANNOTATION)
+
+/** The annotation classes listed in this declaration's `@DIModule(sets = ...)` - empty when it isn't
+ * a `@DIModule`. A `KClass` array argument surfaces as a list of [KSType]s. */
+private fun KSClassDeclaration.diModuleSetTypes(): List<KSType> {
+    val annotation = annotations.firstOrNull { it.isAnnotation(DI_MODULE_ANNOTATION) } ?: return emptyList()
+    return (annotation.argumentValue("sets") as? List<*>).orEmpty().filterIsInstance<KSType>()
+}
 
 /** True only for `@DIModule(composed = true)` - drives whether the extra from-parents builder and
  * parent-swapping `copy` overload are generated. */
@@ -232,13 +248,16 @@ private fun superDeclarationClosure(classDecl: KSClassDeclaration): List<Closure
  * supertype (needs its own binding, [ModuleModel.ownMembers] included) rather than a `@DIModule`
  * parent (pulled off that parent instance in the `@DIModule(composed = true)` builder,
  * [ModuleModel.allMembers] only). [directParent] is that `@DIModule` parent, `null` for a
- * plain-supertype candidate.
+ * plain-supertype candidate. [overridden] is filled by [resolveClosure] on the surviving candidate:
+ * every other declaration of the same name it collapsed, i.e. those the survivor overrides - a set
+ * annotation (see `@DISet`) or a parameter's default value on one of them still counts.
  */
 private data class Candidate(
     val closureDecl: ClosureDecl,
     val node: KSTypeReference,
     val ownFromPlain: Boolean,
     val directParent: ParentModel?,
+    val overridden: List<KSDeclaration> = emptyList(),
 )
 
 /**
@@ -288,7 +307,9 @@ private fun resolveClosure(
             continue
         }
 
-        result += winners.firstOrNull { it.ownFromPlain } ?: winners.first()
+        val survivor = winners.firstOrNull { it.ownFromPlain } ?: winners.first()
+        val overridden = entries.map { it.closureDecl.decl }.distinct().filter { it != survivor.closureDecl.decl }
+        result += survivor.copy(overridden = overridden)
     }
     return result
 }
@@ -349,11 +370,11 @@ internal fun MemberModel.argsClassSimpleName(): String = name.replaceFirstChar(C
 internal fun parseModule(
     classDecl: KSClassDeclaration,
     logger: KSPLogger,
-    cache: MutableMap<String, ModuleModel?>,
+    cache: RoundCache,
 ): ModuleModel? {
-    val key = classDecl.qualifiedName?.asString() ?: return parseModuleUncached(classDecl, logger)
-    if (key in cache) return cache[key]
-    return parseModuleUncached(classDecl, logger).also { cache[key] = it }
+    val key = classDecl.qualifiedName?.asString() ?: return parseModuleUncached(classDecl, logger, cache)
+    if (key in cache.modules) return cache.modules[key]
+    return parseModuleUncached(classDecl, logger, cache).also { cache.modules[key] = it }
 }
 
 /**
@@ -362,8 +383,11 @@ internal fun parseModule(
  * Every violation found is reported through [logger] before returning - so a single compilation
  * surfaces every problem in the interface at once, rather than one error per run. Returns `null`
  * if the interface is invalid.
+ *
+ * The sets (see `@DISet`) the module generates a function for are validated last, once every member
+ * is known - see [parseSets].
  */
-private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger): ModuleModel? {
+private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger, cache: RoundCache): ModuleModel? {
     var hasError = false
     fun reportError(message: String, node: KSNode) {
         logger.error(message, node)
@@ -499,12 +523,26 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
      * A function's parameter count and any vararg parameter are unrestricted - see [ParameterModel]
      * and `ModuleFileGenerator` for how more than one parameter is wrapped into a generated data
      * class.
+     *
+     * A member carrying a set annotation (see `@DISet`) - itself, or one of the [overridden]
+     * declarations it collapsed (see [Candidate.overridden]) - must also be one Inara binds (one it
+     * would otherwise silently exclude is rejected instead), be callable without arguments (every
+     * parameter `vararg` or defaulted, here or on the declaration it overrides), be typed as a
+     * subtype of every such set's `of` type (nullability aside), and not be `suspend` when a set is
+     * `@DISet(suspend = Forbid)`. Checked whether or not the module lists the set: a descendant may.
      */
-    fun parseMember(decl: KSDeclaration, owner: KSClassDeclaration, node: KSNode, isOwn: Boolean): MemberModel? {
+    fun parseMember(
+        decl: KSDeclaration,
+        owner: KSClassDeclaration,
+        node: KSNode,
+        isOwn: Boolean,
+        overridden: List<KSDeclaration> = emptyList(),
+    ): MemberModel? {
         val name = decl.simpleName.asString()
         val prefix = if (isOwn) "" else "Member '$name' inherited from '${owner.simpleName.asString()}': "
         var valid = true
-        var skip = false
+        // Why Inara silently excludes this member from the module's bindable surface - `null` when it doesn't.
+        var skipReason: String? = null
         fun fail(message: String) {
             reportError(prefix + message, node)
             valid = false
@@ -526,36 +564,81 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
                 hasDefault = !decl.isAbstract()
                 when {
                     !decl.isMutable -> Unit
-                    decl.hasFullyDefaultAccessors() -> skip = true
+                    decl.hasFullyDefaultAccessors() -> skipReason = "a 'var'"
                     else -> fail("var properties are not supported: '$name'.")
                 }
-                if (!skip && decl.extensionReceiver != null) {
-                    if (hasDefault) skip = true else fail("Extension members are not supported: '$name'.")
+                if (skipReason == null && decl.extensionReceiver != null) {
+                    if (hasDefault) skipReason = "an extension member" else fail("Extension members are not supported: '$name'.")
                 }
                 // `private` is already filtered upstream (own: parseModule's own-member loop,
                 // inherited: superDeclarationClosure), so this only ever catches `internal`.
-                if (!skip && decl.getVisibility() != Visibility.PUBLIC) {
+                if (skipReason == null && decl.getVisibility() != Visibility.PUBLIC) {
                     fail("Non-public members are not supported: '$name'.")
                 }
             }
             is KSFunctionDeclaration -> {
                 hasDefault = !decl.isAbstract
                 if (decl.extensionReceiver != null) {
-                    if (hasDefault) skip = true else fail("Extension members are not supported: '$name'.")
+                    if (hasDefault) skipReason = "an extension member" else fail("Extension members are not supported: '$name'.")
                 }
-                if (!skip && decl.typeParameters.isNotEmpty()) {
-                    if (hasDefault) skip = true else fail("Generic members are not supported: '$name'.")
+                if (skipReason == null && decl.typeParameters.isNotEmpty()) {
+                    if (hasDefault) skipReason = "a generic function" else fail("Generic members are not supported: '$name'.")
                 }
-                if (!skip && decl.getVisibility() != Visibility.PUBLIC) {
+                if (skipReason == null && decl.getVisibility() != Visibility.PUBLIC) {
                     fail("Non-public members are not supported: '$name'.")
                 }
             }
             else -> return null
         }
 
+        val memberSets = (listOf(decl) + overridden).flatMap { cache.setSpecsOn(it) }.distinctBy { it.qualifiedName }
+        val setNames = memberSets.joinToString(", ") { "@${it.simpleName}" }
+        if (memberSets.isNotEmpty()) {
+            if (skipReason != null) {
+                fail("'$name' is annotated with $setNames, but Inara ignores $skipReason, so it can't belong to a set.")
+            }
+            if (decl is KSFunctionDeclaration) {
+                val overriddenFunctions = overridden.filterIsInstance<KSFunctionDeclaration>()
+                val required = decl.parameters.withIndex().filter { (index, param) ->
+                    !param.isVararg && !param.hasDefault &&
+                        overriddenFunctions.none { it.parameters.getOrNull(index)?.hasDefault == true }
+                }
+                if (required.isNotEmpty()) {
+                    fail(
+                        "'$name' is annotated with $setNames, but can't be called without arguments: " +
+                            required.joinToString(", ") { "'${it.value.name?.asString()}'" } +
+                            " ${if (required.size == 1) "has" else "have"} no default value.",
+                    )
+                }
+                val forbidding = memberSets.filter { it.suspendMode == SuspendMode.FORBID }
+                if (Modifier.SUSPEND in decl.modifiers && forbidding.isNotEmpty()) {
+                    fail(
+                        "'$name' is suspend, but " + forbidding.joinToString(", ") { "@${it.simpleName}" } +
+                            " ${if (forbidding.size == 1) "is" else "are"} @DISet(suspend = Forbid).",
+                    )
+                }
+            }
+        }
+
         if (!valid) return null
-        if (skip) return null
-        return buildMember(decl, moduleType, hasDefault)
+        if (skipReason != null) return null
+        val member = buildMember(decl, moduleType, hasDefault).copy(sets = memberSets.map { it.qualifiedName })
+
+        // Checked against the member's type as seen from the module (see buildMember), since a plain
+        // generic supertype may only fix it there.
+        if (!member.returnType.isError) {
+            val returnType = member.returnType.makeNotNullable()
+            val mismatches = memberSets.filter { it.ofType?.isAssignableFrom(returnType) == false }
+            for (set in mismatches) {
+                fail(
+                    "'$name' is annotated with @${set.simpleName}, but its type " +
+                        "'${member.returnType.toTypeName().simpleString()}' is not a subtype of " +
+                        "'${set.ofType!!.toTypeName().simpleString()}'.",
+                )
+            }
+            if (mismatches.isNotEmpty()) return null
+        }
+        return member
     }
 
     val allMembers = mutableListOf<MemberModel>()
@@ -574,8 +657,8 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
     }
 
     for (candidate in resolveClosure(candidates, classDecl, ::reportError, closureCache)) {
-        val (closureDecl, node, ownFromPlain, directParent) = candidate
-        val member = parseMember(closureDecl.decl, closureDecl.owner, node, isOwn = false) ?: continue
+        val (closureDecl, node, ownFromPlain, directParent, overridden) = candidate
+        val member = parseMember(closureDecl.decl, closureDecl.owner, node, isOwn = false, overridden) ?: continue
         nameOwners[closureDecl.decl.simpleName.asString()] = closureDecl.owner
         allMembers += member
         if (ownFromPlain) ownMembers += member
@@ -639,6 +722,8 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         }
     }
 
+    val sets = parseSets(classDecl, allMembers, cache, closureCache, ::reportError)
+
     if (hasError) return null
 
     val ancestorDeclarations = LinkedHashMap<String, KSClassDeclaration>().apply {
@@ -661,5 +746,119 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         parentByMemberName = parentByMemberName,
         ancestorDeclarations = ancestorDeclarations,
         isComposed = isComposed,
+        sets = sets,
     )
+}
+
+/**
+ * Validates the sets [classDecl] generates a `setOf<Annotation>()` function for - every one listed in
+ * its own `@DIModule(sets = ...)`, then every one listed by any `@DIModule` ancestor (reached
+ * through a `@DIModule` parent or a plain supertype alike), each once - and builds a [SetModel] for
+ * each set that passed, collecting the members of [allMembers] that carry it.
+ *
+ * Every entry of the module's own `sets` must be a set annotation, listed once (listing a set
+ * already inherited is fine). Two sets may not share a simple name (both would generate the same
+ * function), and no non-private member of the module, bound or not, may be named like a generated
+ * function (it would silently shadow the extension). The `of` type of every set must be nameable
+ * from the generated function: never `internal` to another module, and `public` for a `public`
+ * module. A set listed by the module itself must collect at least one member - an inherited one
+ * always does, since the ancestor listing it went through this same rule.
+ */
+private fun parseSets(
+    classDecl: KSClassDeclaration,
+    allMembers: List<MemberModel>,
+    cache: RoundCache,
+    closureCache: ClosureCache,
+    reportError: (String, KSNode) -> Unit,
+): List<SetModel> {
+    val moduleName = classDecl.simpleName.asString()
+    val moduleVisibility = classDecl.getVisibility()
+
+    val ownSets = mutableListOf<SetSpec>()
+    for (type in classDecl.diModuleSetTypes()) {
+        val spec = (type.declaration as? KSClassDeclaration)?.let(cache::setSpecOf)
+        if (spec == null) {
+            reportError(
+                "'${type.declaration.simpleName.asString()}' is listed in 'sets', but it is not annotated with @DISet.",
+                classDecl,
+            )
+            continue
+        }
+        if (ownSets.any { it.qualifiedName == spec.qualifiedName }) {
+            reportError("'@${spec.simpleName}' is listed more than once in 'sets'.", classDecl)
+            continue
+        }
+        ownSets += spec
+    }
+    val ownSetNames = ownSets.mapTo(HashSet()) { it.qualifiedName }
+
+    // A non-@DISet entry of an ancestor's `sets` is that ancestor's own error, reported when it is parsed.
+    val inheritedSets = interfaceClosure(classDecl, closureCache).values
+        .filter { it.qualifiedName?.asString() != classDecl.qualifiedName?.asString() && it.isDIModule() }
+        .flatMap { ancestor -> ancestor.diModuleSetTypes().mapNotNull { (it.declaration as? KSClassDeclaration)?.let(cache::setSpecOf) } }
+    val sets = (ownSets + inheritedSets).distinctBy { it.qualifiedName }
+
+    val invalid = HashSet<String>()
+    fun reportSetError(set: SetSpec, message: String) {
+        reportError(message, classDecl)
+        invalid += set.qualifiedName
+    }
+
+    for ((simpleName, group) in sets.groupBy { it.simpleName }) {
+        if (group.size > 1) {
+            for (set in group) invalid += set.qualifiedName
+            reportError(
+                "Sets " + group.joinToString(", ") { "'${it.qualifiedName}'" } +
+                    " would all generate 'setOf$simpleName' - rename one of them.",
+                classDecl,
+            )
+        }
+    }
+
+    val memberNames = superDeclarationClosure(classDecl).mapTo(HashSet()) { it.decl.simpleName.asString() }
+    for (set in sets) {
+        if (set.functionName in memberNames) {
+            reportSetError(set, "A member named '${set.functionName}' clashes with the function generated for the set '@${set.simpleName}'.")
+        }
+
+        val ofError = set.ofTypeError()
+        if (ofError != null) {
+            reportSetError(set, ofError)
+            continue
+        }
+        val ofDecl = set.ofDeclaration!!
+        val ofName = ofDecl.simpleName.asString()
+        if (ofDecl.effectiveVisibility() == Visibility.INTERNAL) {
+            when {
+                ofDecl.containingFile == null -> reportSetError(
+                    set,
+                    "The 'of' type '$ofName' of the set '@${set.simpleName}' is internal to another module, so '$moduleName' can't name it.",
+                )
+                moduleVisibility == Visibility.PUBLIC -> reportSetError(
+                    set,
+                    "The public module '$moduleName' can't expose the internal 'of' type '$ofName' of the set " +
+                        "'@${set.simpleName}'. Make '$moduleName' internal, or '$ofName' public.",
+                )
+            }
+        }
+    }
+
+    return sets.mapNotNull { set ->
+        val members = allMembers.filter { set.qualifiedName in it.sets }
+        if (members.isEmpty() && set.qualifiedName in ownSetNames) {
+            reportSetError(set, "No member of '$moduleName' is annotated with '@${set.simpleName}', listed in its 'sets'.")
+        }
+        if (set.qualifiedName in invalid) return@mapNotNull null
+        SetModel(
+            functionName = set.functionName,
+            elementTypeName = set.ofType!!.toTypeName(),
+            members = members,
+            isSuspend = when (set.suspendMode) {
+                SuspendMode.FORBID -> false
+                SuspendMode.ALLOW -> members.any { it.isSuspend }
+                SuspendMode.FORCE -> true
+            },
+            originatingFiles = listOfNotNull(set.declaration.containingFile, set.ofDeclaration?.containingFile),
+        )
+    }
 }

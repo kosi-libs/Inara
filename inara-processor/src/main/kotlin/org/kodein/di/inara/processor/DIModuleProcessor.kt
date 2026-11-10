@@ -14,10 +14,15 @@ import com.squareup.kotlinpoet.ksp.writeTo
  * (`SuspendBinding` for `suspend` members) and a builder function named after the
  * interface. A `@DIModule(composed = true)` interface additionally gets a second builder overload
  * taking its `@DIModule` parents as built instances, plus a parent-swapping `copy` overload. Every
- * module also gets `copy` and `shadow` extension functions. The
+ * module also gets `copy` and `shadow` extension functions, plus a `setOf<Annotation>()` extension
+ * per set annotation (see `@DISet`) it or a `@DIModule` ancestor lists in `sets`. The
  * interface may extend any interface, not just other `@DIModule` ones - a plain supertype's members
  * are bound exactly like the module's own. See [parseModule] for the validation rules and
  * [generateModuleFile] for the generated shape(s).
+ *
+ * Every annotation class annotated with `@DISet` is validated on its own (see
+ * [validateSetDeclaration]), and every use of a set annotation this round knows of is checked to
+ * be one a module can reach (see [validateSetUses]).
  *
  * For every `public` or `internal` object annotated with `@DIFactory`, generates - per `@DIFactory`
  * annotation (it is `@Repeatable`) - a builder function for the class it `builds`, an extension on
@@ -33,9 +38,20 @@ public class DIModuleProcessor(
     override fun process(resolver: Resolver): List<KSAnnotated> {
         val deferred = mutableListOf<KSAnnotated>()
         // Round-scoped: KSP invalidates KSNodes between rounds, so this must not outlive process().
-        // Shared between the two loops so a @DIFactory's `from` module is parsed (and its diagnostics
-        // reported) once, not again per factory - see parseModule.
-        val moduleCache = mutableMapOf<String, ModuleModel?>()
+        // Shared between the loops so a @DIFactory's `from` module is parsed (and its diagnostics
+        // reported) once, not again per factory - see parseModule - and so every set annotation
+        // read along the way has its uses checked at the end.
+        val cache = RoundCache()
+
+        for (symbol in resolver.getSymbolsWithAnnotation(DI_SET_ANNOTATION)) {
+            if (!symbol.validate()) {
+                deferred += symbol
+                continue
+            }
+            // @DISet targets ANNOTATION_CLASS only, so the compiler already guarantees the shape.
+            val spec = (symbol as? KSClassDeclaration)?.let(cache::setSpecOf) ?: continue
+            validateSetDeclaration(spec, logger)
+        }
 
         for (symbol in resolver.getSymbolsWithAnnotation(DI_MODULE_ANNOTATION)) {
             if (!symbol.validate()) {
@@ -49,7 +65,7 @@ public class DIModuleProcessor(
                 continue
             }
 
-            val model = parseModule(classDecl, logger, moduleCache) ?: continue
+            val model = parseModule(classDecl, logger, cache) ?: continue
             generateModuleFile(model).writeTo(codeGenerator, aggregating = false)
         }
 
@@ -72,9 +88,11 @@ public class DIModuleProcessor(
             }
             if (!seenFactoryObjects.add(objDecl.qualifiedName?.asString() ?: continue)) continue
 
-            val models = parseFactories(objDecl, logger, moduleCache)
+            val models = parseFactories(objDecl, logger, cache)
             if (models.isNotEmpty()) generateFactoryFile(models).writeTo(codeGenerator, aggregating = false)
         }
+
+        validateSetUses(resolver, cache.knownSets, logger)
 
         return deferred
     }

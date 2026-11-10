@@ -41,6 +41,7 @@ private val FILE_OPT_IN_INTERNAL_INARA_GENERATION: AnnotationSpec = AnnotationSp
     .build()
 
 private val ARRAY = ClassName("kotlin", "Array")
+private val SET = ClassName("kotlin.collections", "Set")
 
 /** Every Kotlin type with a dedicated primitive array type - a non-nullable vararg of one of these
  * uses it (`IntArray`, ...) instead of `Array<out T>`. Also read by `DIFactoryModel.kt` to decide
@@ -353,8 +354,8 @@ private fun parentSwapInheritedCode(
  * module type for every member, inherited or not, so a `Binding` built for one module was never
  * reusable for another regardless - duplicating the small data class alongside it costs nothing.
  *
- * See [buildCopyFunctions] and [buildShadowFunctions] for the `copy` and `shadow` function(s)
- * appended after these.
+ * See [buildCopyFunctions], [buildShadowFunctions] and [buildSetFunctions] for the `copy`, `shadow`
+ * and `setOf<Annotation>` function(s) appended after these.
  */
 internal fun generateModuleFile(model: ModuleModel): FileSpec {
     val moduleClassName = model.moduleClassName
@@ -390,6 +391,10 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
 
     for (shadowFun in buildShadowFunctions(model, argsClassName)) {
         fileBuilder.addFunction(shadowFun)
+    }
+
+    for (setFun in buildSetFunctions(model)) {
+        fileBuilder.addFunction(setFun)
     }
 
     return fileBuilder.build()
@@ -815,6 +820,43 @@ private fun buildMemberShadowFunction(
         .build()
 
     return funBuilder.addCode(callCode).build()
+}
+
+/**
+ * Emits one `fun <Module>.setOf<Annotation>(): Set<Of>` extension per [ModuleModel.sets] entry, as
+ * visible as the module and `suspend` as resolved by [SetModel.isSuspend]: it reads every collected
+ * member off the receiver (a function called without arguments, its parameters all `vararg` or
+ * defaulted) into `setOfNotNull`, so a nullable member's `null` is left out.
+ *
+ * `setOfNotNull` is called fully qualified: a set annotation named `NotNull` generates a
+ * `setOfNotNull()` extension of its own in the same package, which must not capture the call.
+ */
+internal fun buildSetFunctions(model: ModuleModel): List<FunSpec> = model.sets.map { set ->
+    val funBuilder = FunSpec.builder(set.functionName)
+        .receiver(model.moduleClassName)
+        .returns(SET.parameterizedBy(set.elementTypeName))
+    if (model.visibility == Visibility.INTERNAL) {
+        funBuilder.addModifiers(KModifier.INTERNAL)
+    }
+    if (set.isSuspend) {
+        funBuilder.addModifiers(KModifier.SUSPEND)
+    }
+    for (file in set.originatingFiles) {
+        funBuilder.addOriginatingKSFile(file)
+    }
+
+    val body = CodeBlock.builder()
+    if (set.members.isEmpty()) {
+        // Only reachable through an inherited set whose members this compilation can't see.
+        body.addStatement("return kotlin.collections.emptySet()")
+    } else {
+        body.add("return kotlin.collections.setOfNotNull(\n").indent()
+        for (member in set.members) {
+            if (member.isFunction) body.addStatement("%N(),", member.name) else body.addStatement("%N,", member.name)
+        }
+        body.unindent().add(")\n")
+    }
+    funBuilder.addCode(body.build()).build()
 }
 
 /**

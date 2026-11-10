@@ -1,5 +1,6 @@
 package org.kodein.di.inara
 
+import org.kodein.di.inara.DIFactory.Suspend
 import kotlin.reflect.KClass
 
 /**
@@ -16,10 +17,20 @@ import kotlin.reflect.KClass
  *   plus a binding per member declared directly on this interface, and a matching `copy(...)`
  *   overload that swaps a whole parent out at once. Requires the interface to extend at least one
  *   `@DIModule` interface.
+ * @param sets Annotation classes annotated with [DISet], each one generating a
+ *   `fun <Module>.setOf<Annotation>(): Set<Of>` extension that collects every member of the module
+ *   carrying that annotation - see [DISet]. A module also gets that function for every set listed by
+ *   any of its `@DIModule` ancestors, so a child never answers with its parent's partial set. An
+ *   annotation may not be listed twice, two sets may not share a simple name, no member of the
+ *   module may already be named `setOf<Annotation>`, and every set listed here must collect at least
+ *   one member.
  */
 @Retention(AnnotationRetention.BINARY)
 @Target(AnnotationTarget.CLASS)
-public annotation class DIModule(val composed: Boolean = false)
+public annotation class DIModule(
+    val composed: Boolean = false,
+    val sets: Array<KClass<out Annotation>> = [],
+)
 
 /**
  * Marks a `public` or `internal` object for generating a plain constructor-shaped factory function -
@@ -111,7 +122,10 @@ public annotation class DIFactory(
     val suspend: Suspend = Suspend.Allow,
     val constructorIndex: Int = 0,
 ) {
-    /** How [DIFactory] treats a `suspend` provider for one of [builds]'s constructor arguments. */
+    /**
+     * How [DIFactory] treats a `suspend` provider for one of [builds]'s constructor arguments. Also
+     * used by [DISet.suspend], where the providers are the members collected into the set.
+     */
     public enum class Suspend {
         /** No provider - `arg` function or module member - may be `suspend`; the generated
          * function never is. A `suspend`-only candidate is treated as no candidate at all. */
@@ -127,6 +141,46 @@ public annotation class DIFactory(
         Force,
     }
 }
+
+/**
+ * Turns the annotation class it marks into a *set annotation*: a `@DIModule` listing it in
+ * [DIModule.sets] gets a generated `fun <Module>.setOf<Annotation>(): Set<Of>` extension (named
+ * after the annotation's simple name, as visible as the module) returning the value of every member
+ * of the module - inherited included, in declaration order - that carries the annotation, or whose
+ * overridden declaration does. A `null` value is left out of the set.
+ *
+ * ```kotlin
+ * @DISet(of = AppService::class)
+ * annotation class AppServices
+ *
+ * @DIModule(sets = [AppServices::class])
+ * interface AppModule {
+ *     @AppServices val server: Server
+ *     @AppServices fun database(): Database? = null
+ * }
+ *
+ * val services: Set<AppService> = appModule.setOfAppServices()
+ * ```
+ *
+ * The annotation may not have a `SOURCE` retention, and its `@Target`, when declared, must include
+ * `FUNCTION` or `PROPERTY`. It may only annotate a non-private function or property of an
+ * interface, and such a member must be one Inara binds (not a `var`, an extension member or a
+ * generic function), callable without arguments (a `val`, or a function whose every parameter is
+ * `vararg` or has a default value), and typed as a subtype of [of] (nullable or not).
+ *
+ * @param of The element type of the generated `Set`. A generic type is star-projected
+ *   (`Set<Plugin<*>>`). It must be `public` or `internal` - `public` for a `public` module.
+ * @param suspend Whether the generated function is `suspend`: under [DIFactory.Suspend.Forbid] it
+ *   never is, and no `suspend` member may carry the annotation; under [DIFactory.Suspend.Allow] it
+ *   is if and only if at least one collected member is `suspend`; under [DIFactory.Suspend.Force] it
+ *   always is.
+ */
+@Retention(AnnotationRetention.BINARY)
+@Target(AnnotationTarget.ANNOTATION_CLASS)
+public annotation class DISet(
+    val of: KClass<*>,
+    val suspend: Suspend = Suspend.Allow,
+)
 
 /**
  * Opts into the parts of Inara's public API that exist only to support generated code -

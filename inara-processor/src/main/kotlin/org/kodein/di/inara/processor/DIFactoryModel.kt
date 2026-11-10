@@ -25,13 +25,14 @@ import com.squareup.kotlinpoet.ksp.toTypeName
 internal enum class SuspendMode { FORBID, ALLOW, FORCE }
 
 /**
- * Reads `@DIFactory`'s `suspend` argument. Per `KSValueArgument.value`'s documented contract, an
- * enum-typed annotation argument surfaces as a `KSClassDeclaration` (the entry) - reading its
+ * Reads the `suspend` argument of `@DIFactory` or `@DISet` (both are a `DIFactory.Suspend`). Per
+ * `KSValueArgument.value`'s documented contract, an enum-typed annotation argument surfaces as a
+ * `KSClassDeclaration` (the entry) - reading its
  * simple name avoids depending on exactly which `ClassKind` KSP reports for it. Falls back from
  * `arguments` to `defaultArguments` to cover whichever of the two actually carries an unspecified,
  * defaulted argument.
  */
-private fun readSuspendMode(annotation: KSAnnotation): SuspendMode {
+internal fun readSuspendMode(annotation: KSAnnotation): SuspendMode {
     val arg = annotation.arguments.find { it.name?.asString() == "suspend" }
         ?: annotation.defaultArguments.find { it.name?.asString() == "suspend" }
     return when ((arg?.value as? KSClassDeclaration)?.simpleName?.asString()) {
@@ -322,7 +323,7 @@ internal class FactoryContext(
 internal fun parseFactories(
     objDecl: KSClassDeclaration,
     logger: KSPLogger,
-    moduleCache: MutableMap<String, ModuleModel?>,
+    cache: RoundCache,
 ): List<FactoryModel> {
     var hasError = false
     fun reportError(message: String, node: KSNode) {
@@ -350,7 +351,7 @@ internal fun parseFactories(
         }
 
     val contexts: List<FactoryContext> = annotations.mapNotNull {
-        parseFactoryContext(objDecl, it, objVisibility, moduleCache, logger, ::reportError)
+        parseFactoryContext(objDecl, it, objVisibility, cache, logger, ::reportError)
     }
     val argFunctionMaps = validateArgFunctions(objDecl, contexts, objVisibility, ::reportError)
     val models = contexts.zip(argFunctionMaps).map { (context, argFunctions) ->
@@ -390,7 +391,7 @@ private fun parseFactoryContext(
     objDecl: KSClassDeclaration,
     annotation: KSAnnotation,
     objVisibility: Visibility,
-    moduleCache: MutableMap<String, ModuleModel?>,
+    cache: RoundCache,
     logger: KSPLogger,
     reportError: (String, KSNode) -> Unit,
 ): FactoryContext? {
@@ -473,7 +474,7 @@ private fun parseFactoryContext(
         )
         return null
     }
-    val fromModel = parseModule(fromDecl, logger, moduleCache) ?: return null
+    val fromModel = parseModule(fromDecl, logger, cache) ?: return null
 
     val fromName = fromDecl.simpleName.asString()
     val fromType = fromDecl.asStarProjectedType()
