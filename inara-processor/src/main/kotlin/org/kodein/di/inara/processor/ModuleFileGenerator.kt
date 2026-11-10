@@ -182,7 +182,7 @@ private fun argsTypeNameOf(argsClassName: ClassName, member: MemberModel): TypeN
  * The `Binding`/`SuspendBinding` type of [member], parameterized on [moduleClassName].
  *
  * [nullable] defaults to [MemberModel.hasDefaultImplementation] - a parameter (whether on a builder
- * function or on a `copy` function, see [buildMemberOverrideCopyFunction]) is nullable exactly when
+ * function or on a `copy<Module>` function, see [buildMemberOverrideCopyFunction]) is nullable exactly when
  * the member has a default body, `null` meaning "run that default body". A member with no default
  * implementation has no such optional case, so its parameter is never nullable.
  */
@@ -205,7 +205,7 @@ private fun bindingTypeOf(
  * *current* value off [receiver] on every `get`. The fallback for when a real stored binding can't
  * be reached - a hand-written `<Module>` implementation, or an inherited member with 2+ parameters
  * (see [parentBindingCode]) - and, deliberately even for the generated implementation, the default
- * of every `shadow(...)` parameter (see [buildMemberShadowFunction]). [receiver]'s own runtime class is passed through so the delegate's
+ * of every shadow function's parameter (see [buildMemberShadowFunction]). [receiver]'s own runtime class is passed through so the delegate's
  * `toString()` can name it (`[delegated to ManualModule]`) - always a hand-written implementation or
  * such an inherited member, since the generated implementation itself is read straight off its
  * `<member>Binding` property instead of ever reaching this fallback.
@@ -242,11 +242,12 @@ private fun copiedBindingCode(member: MemberModel, bindingCode: CodeBlock): Code
     CodeBlock.of("%T.copyOf(%L)", if (member.isSuspend) SUSPEND_BINDING_IMPLS else BINDING_IMPLS, bindingCode)
 
 /**
- * The binding for [member] read off the `copy` receiver: a copy (see [copiedBindingCode]) of
- * `this@copy.<member>Binding` when the receiver is the [generatedClass] implementation, otherwise a
+ * The binding for [member] read off a copy function's receiver: a copy (see [copiedBindingCode]) of
+ * `<receiver>.<member>Binding` when the receiver is the [generatedClass] implementation, otherwise a
  * current-value delegate (see [delegateBindingCode]) - a hand-written receiver's state is not ours
- * to copy. [receiver] is always `this@copy` here - the receiver's own generated class, so its
- * `<member>Binding` is exactly the right type even for a multi-parameter member.
+ * to copy. [receiver] is always the copy function's labeled receiver (`this@copy<Module>`) - the
+ * receiver's own generated class, so its `<member>Binding` is exactly the right type even for a
+ * multi-parameter member.
  */
 private fun storedBindingOrDelegateCode(
     member: MemberModel,
@@ -270,7 +271,7 @@ private fun storedBindingOrDelegateCode(
  * it by unpacking and forwarding.
  *
  * With [copied], the binding read off the parent is a copy (see [copiedBindingCode]) - the
- * parent-swapping `copy` gives the new module its own state - rather than shared with the parent as
+ * parent-swapping `copy<Module>` gives the new module its own state - rather than shared with the parent as
  * in the composed builder. The delegate fallback is never copied: it holds no state of its own.
  */
 private fun parentBindingCode(
@@ -289,43 +290,45 @@ private fun parentBindingCode(
 }
 
 /**
- * The default value of an inherited [member]'s parameter on the parent-swapping `copy(...)`
+ * The default value of an inherited [member]'s parameter on the parent-swapping `copy<Module>(...)`
  * overload: three cases, since that overload defaults each parent parameter to the receiver itself.
+ * [receiver] is the labeled receiver of that overload (`this@copy<Module>`).
  *
- * - the parent *was* swapped (`<parentParam> !== this@copy`) - take the binding from the new parent
+ * - the parent *was* swapped (`<parentParam> !== <receiver>`) - take the binding from the new parent
  *   instance ([parentBindingCode]);
  * - it wasn't, and the receiver is the generated implementation - carry a copy of
- *   `this@copy.<member>Binding` across, exactly like the member-override `copy`;
- * - it wasn't, and the receiver is hand-written - a current-value delegate over `this@copy`.
+ *   `<receiver>.<member>Binding` across, exactly like the member-override `copy<Module>`;
+ * - it wasn't, and the receiver is hand-written - a current-value delegate over the receiver.
  */
 private fun parentSwapInheritedCode(
     member: MemberModel,
     parentParamName: String,
     parentGeneratedClass: ClassName,
     selfGeneratedClass: ClassName,
+    receiver: CodeBlock,
 ): CodeBlock {
     val bindingPropertyName = "${member.name}Binding"
     return CodeBlock.builder()
         .add("when {\n")
         .indent()
         .add(
-            "%N !== this@copy -> %L\n",
-            parentParamName,
+            "%N !== %L -> %L\n",
+            parentParamName, receiver,
             parentBindingCode(member, parentParamName, parentGeneratedClass, copied = true),
         )
         .add(
-            "this@copy is %T -> %L\n",
-            selfGeneratedClass, copiedBindingCode(member, CodeBlock.of("this@copy.%N", bindingPropertyName)),
+            "%L is %T -> %L\n",
+            receiver, selfGeneratedClass, copiedBindingCode(member, CodeBlock.of("%L.%N", receiver, bindingPropertyName)),
         )
-        .add("else -> %L\n", delegateBindingCode(member, CodeBlock.of("this@copy")))
+        .add("else -> %L\n", delegateBindingCode(member, receiver))
         .unindent()
         .add("}")
         .build()
 }
 
 /**
- * Emits the implementation class, builder function(s), and `copy` function(s) for [model], as
- * described on `@DIModule`.
+ * Emits the implementation class, builder function(s), and `copy<Module>` / `shadow<Module>`
+ * function(s) for [model], as described on `@DIModule`.
  *
  * Every module - `@DIModule(composed = true)` or not - gets exactly one `Inara<Module>`
  * implementation and one `<Module>(...)` builder taking a `Binding` (`SuspendBinding` for a
@@ -354,8 +357,8 @@ private fun parentSwapInheritedCode(
  * module type for every member, inherited or not, so a `Binding` built for one module was never
  * reusable for another regardless - duplicating the small data class alongside it costs nothing.
  *
- * See [buildCopyFunctions], [buildShadowFunctions] and [buildSetFunctions] for the `copy`, `shadow`
- * and `setOf<Annotation>` function(s) appended after these.
+ * See [buildCopyFunctions], [buildShadowFunctions] and [buildSetFunctions] for the
+ * `copy<Module>`, `shadow<Module>` and `setOf<Annotation>` function(s) appended after these.
  */
 internal fun generateModuleFile(model: ModuleModel): FileSpec {
     val moduleClassName = model.moduleClassName
@@ -411,7 +414,7 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
  * caller adds nothing to the file.
  *
  * The container mirrors the module's [visibility], like the implementation class and every builder /
- * `copy` - an `internal` module's data classes wrap the module's own member parameter types, which
+ * copy function - an `internal` module's data classes wrap the module's own member parameter types, which
  * may themselves be `internal`, so a `public` container would fail to compile.
  */
 private fun buildArgsContainerType(argsClassName: ClassName, visibility: Visibility, members: List<MemberModel>, originatingFiles: List<KSFile>): TypeSpec? {
@@ -455,8 +458,8 @@ private fun buildArgsContainerType(argsClassName: ClassName, visibility: Visibil
  * The class mirrors the module interface's own [visibility] (`internal` interface -> `internal`
  * class, so it can't expose a less-visible supertype) and is marked `@InternalInaraGeneration`: a
  * `@RequiresOptIn` signal that it exists only to support generated code - a composed child's
- * generated file, and this file's own `copy(...)` extensions, read its `<member>Binding` properties
- * off a smart-cast instance. Every builder / `copy` function is still typed on the module interface.
+ * generated file, and this file's own copy functions, read its `<member>Binding` properties
+ * off a smart-cast instance. Every builder / copy function is still typed on the module interface.
  */
 private fun buildModuleType(
     generatedClassName: String,
@@ -643,31 +646,87 @@ private fun buildComposedBuilderFunction(
     return builderFun.addCode(callCode).build()
 }
 
+private val DEPRECATED = ClassName("kotlin", "Deprecated")
+private val SUPPRESS = ClassName("kotlin", "Suppress")
+private val REPLACE_WITH = ClassName("kotlin", "ReplaceWith")
+private val DEPRECATION_LEVEL = ClassName("kotlin", "DeprecationLevel")
+
 /**
- * Emits every `copy` extension function for [model]:
- * - a no-argument `copy()` that builds a fresh `Inara<Module>` holding a copy of every binding, with
+ * One name a module's copy or shadow functions are emitted under: [name] itself - its receiver
+ * labeled `this@<name>` in every default value - and, for the former `copy` / `shadow` name only,
+ * [replacedBy]: the `copy<Module>` / `shadow<Module>` name the deprecated function points to.
+ */
+private class FunctionName(val name: String, val replacedBy: String? = null) {
+    val receiver: CodeBlock get() = CodeBlock.of("this@%L", name)
+}
+
+/** `<functionName>(a = a, b = b, ...)`: a call passing each of [parameterNames] through by name. */
+private fun forwardingCall(functionName: String, parameterNames: List<String>): CodeBlock =
+    CodeBlock.of("%L(%L)", functionName, parameterNames.map { CodeBlock.of("%N = %N", it, it) }.joinToCode(", "))
+
+/**
+ * Adds, when [name] is a former name, `@Deprecated(level = ERROR)` pointing to its replacement: the
+ * call to [name]'s `copy<Module>` / `shadow<Module>` counterpart with every one of [parameterNames]
+ * passed through by name, imported from [packageName].
+ *
+ * A module may have a member named `copy` or `shadow`, which then hides the deprecated function -
+ * and, for a member function without parameters, makes Kotlin warn that the generated extension is
+ * shadowed. That warning is suppressed, so that it never fails a build treating warnings as errors.
+ */
+private fun FunSpec.Builder.deprecatedIfRenamed(name: FunctionName, parameterNames: List<String>, packageName: String): FunSpec.Builder {
+    val newName = name.replacedBy ?: return this
+    val import = if (packageName.isEmpty()) newName else "$packageName.$newName"
+    addAnnotation(AnnotationSpec.builder(SUPPRESS).addMember("%S", "EXTENSION_SHADOWED_BY_MEMBER").build())
+    return addAnnotation(
+        AnnotationSpec.builder(DEPRECATED)
+            .addMember(
+                "message = %S",
+                "'${name.name}' is renamed '$newName': unlike '${name.name}', it can never be ambiguous with a parent module's " +
+                    "function. The next version of Inara will no longer generate '${name.name}'.",
+            )
+            .addMember("replaceWith = %T(%S, %S)", REPLACE_WITH, forwardingCall(newName, parameterNames).toString(), import)
+            .addMember("level = %T.ERROR", DEPRECATION_LEVEL)
+            .build()
+    )
+}
+
+/**
+ * Emits every copy function for [model] under its own name, `copy<Module>` (see
+ * [copyFunctionName]), then again under the former name `copy`, each deprecated with an error that
+ * points to its `copy<Module>` counterpart - the next version of Inara no longer generates those.
+ * Every module's copy functions used to share the name `copy`, so a call on a child module naming
+ * only inherited members matched a parent's `copy` as well as the child's own, and could not be
+ * resolved. Each name gets:
+ * - a no-argument overload that builds a fresh `Inara<Module>` holding a copy of every binding, with
  *   the same defaults as the member-override overload. Always emitted - it is also what keeps a bare
- *   `copy()` call from being ambiguous between the overloads.
+ *   `copy<Module>()` call from being ambiguous between the overloads.
  *   (A copy never shares state: every binding it holds is a copy, see [copiedBindingCode].)
- * - a `copy(...)` taking one `Binding`/`SuspendBinding` per member in [ModuleModel.allMembers],
+ * - an overload taking one `Binding`/`SuspendBinding` per member in [ModuleModel.allMembers],
  *   building the `Inara<Module>` class. Only emitted when there is at least one member - with
  *   none, it would take no parameters and collide with the no-arg overload. See
  *   [buildMemberOverrideCopyFunction] and [storedBindingOrDelegateCode] for how each parameter
  *   defaults to the binding the receiver currently holds for that member.
- * - if [ModuleModel.isComposed], an extra `copy(...)` taking one already-built module instance per
+ * - if [ModuleModel.isComposed], an extra overload taking one already-built module instance per
  *   `@DIModule` parent (each defaulting to the receiver itself), also building `Inara<Module>` -
  *   lets a caller swap out a whole parent module at once instead of rebinding its members
  *   individually. See [buildModuleOverrideCopyFunction].
  */
 internal fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName): List<FunSpec> {
+    val name = copyFunctionName(model.simpleName)
+    return buildCopyFunctions(model, argsClassName, FunctionName(name)) +
+        buildCopyFunctions(model, argsClassName, FunctionName("copy", replacedBy = name))
+}
+
+private fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName, name: FunctionName): List<FunSpec> {
     val moduleClassName = model.moduleClassName
     val generatedClassName = inaraName(model.generatedBaseName)
     val selfGeneratedClass = ClassName(moduleClassName.packageName, generatedClassName)
 
-    val noArgCopy = FunSpec.builder("copy")
+    val noArgCopy = FunSpec.builder(name.name)
         .receiver(moduleClassName)
         .returns(moduleClassName)
         .apply { if (model.visibility == Visibility.INTERNAL) addModifiers(KModifier.INTERNAL) }
+        .deprecatedIfRenamed(name, emptyList(), moduleClassName.packageName)
         .addCode(
             CodeBlock.builder()
                 .add("return %N(\n", generatedClassName)
@@ -676,7 +735,7 @@ internal fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName): L
                     for (member in model.allMembers) {
                         addStatement(
                             "%N = %L,", "${member.name}Binding",
-                            storedBindingOrDelegateCode(member, CodeBlock.of("this@copy"), selfGeneratedClass),
+                            storedBindingOrDelegateCode(member, name.receiver, selfGeneratedClass),
                         )
                     }
                 }
@@ -689,26 +748,27 @@ internal fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName): L
     val copyFunctions = mutableListOf(noArgCopy)
 
     if (model.allMembers.isNotEmpty()) {
-        copyFunctions += buildMemberOverrideCopyFunction(moduleClassName, argsClassName, generatedClassName, selfGeneratedClass, model.allMembers, model.visibility)
+        copyFunctions += buildMemberOverrideCopyFunction(moduleClassName, argsClassName, generatedClassName, selfGeneratedClass, model.allMembers, model.visibility, name)
     }
 
     if (model.isComposed) {
-        copyFunctions += buildModuleOverrideCopyFunction(model, generatedClassName, selfGeneratedClass)
+        copyFunctions += buildModuleOverrideCopyFunction(model, generatedClassName, selfGeneratedClass, name)
     }
 
     return copyFunctions
 }
 
 /**
- * The `copy(...)` overload that lets any individual member's binding be overridden.
+ * The copy overload that lets any individual member's binding be overridden, emitted under [name].
  *
  * Every parameter defaults to a copy of the binding the receiver currently holds for that member
- * (see [storedBindingOrDelegateCode]): a copy of `this@copy.<member>Binding` when the receiver is the
+ * (see [storedBindingOrDelegateCode]): a copy of `<receiver>.<member>Binding` when the receiver is the
  * generated implementation, a current-value `BindingImpls.Delegate` otherwise. Omitting a parameter
  * therefore keeps that member's recipe but not its state - a `single`/`multiplex` starts unbuilt in
  * the new module - and a default-body member's `null` stays `null` (its body then re-runs against
- * the *new* module, still observing any sibling overridden in the same call). A default-body member keeps its nullable parameter so a
- * caller can still pass an explicit `null` to force it back to the interface's own body.
+ * the *new* module, still observing any sibling overridden in the same call). A default-body member
+ * keeps its nullable parameter so a caller can still pass an explicit `null` to force it back to the
+ * interface's own body.
  */
 private fun buildMemberOverrideCopyFunction(
     moduleClassName: ClassName,
@@ -717,17 +777,19 @@ private fun buildMemberOverrideCopyFunction(
     selfGeneratedClass: ClassName,
     members: List<MemberModel>,
     visibility: Visibility,
+    name: FunctionName,
 ): FunSpec {
-    val funBuilder = FunSpec.builder("copy")
+    val funBuilder = FunSpec.builder(name.name)
         .receiver(moduleClassName)
         .returns(moduleClassName)
+        .deprecatedIfRenamed(name, members.map { it.name }, moduleClassName.packageName)
     if (visibility == Visibility.INTERNAL) {
         funBuilder.addModifiers(KModifier.INTERNAL)
     }
 
     for (member in members) {
         val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, argsClassName, member))
-        paramBuilder.defaultValue(storedBindingOrDelegateCode(member, CodeBlock.of("this@copy"), selfGeneratedClass))
+        paramBuilder.defaultValue(storedBindingOrDelegateCode(member, name.receiver, selfGeneratedClass))
         funBuilder.addParameter(paramBuilder.build())
     }
 
@@ -747,38 +809,47 @@ private fun buildMemberOverrideCopyFunction(
 }
 
 /**
- * Emits every `shadow` extension function for [model]:
- * - a no-argument `shadow()` that returns the receiver unchanged. Always emitted.
- * - a `shadow(...)` taking one `Binding`/`SuspendBinding` per member in [ModuleModel.allMembers],
+ * Emits every shadow function for [model] under its own name, `shadow<Module>` (see
+ * [shadowFunctionName]), then again under the former name `shadow`, deprecated with an error exactly
+ * like the former `copy` (see [buildCopyFunctions]). Each name gets:
+ * - a no-argument overload that returns the receiver unchanged. Always emitted.
+ * - an overload taking one `Binding`/`SuspendBinding` per member in [ModuleModel.allMembers],
  *   building the `Inara<Module>` class. Only emitted when there is at least one member. See
  *   [buildMemberShadowFunction].
  *
- * Unlike `copy`, an omitted parameter never carries the receiver's stored binding across: it
+ * Unlike a copy, an omitted parameter never carries the receiver's stored binding across: it
  * delegates to the receiver itself, so the receiver keeps evaluating against its own members and
  * never sees what the shadowing module overrides.
  */
 internal fun buildShadowFunctions(model: ModuleModel, argsClassName: ClassName): List<FunSpec> {
+    val name = shadowFunctionName(model.simpleName)
+    return buildShadowFunctions(model, argsClassName, FunctionName(name)) +
+        buildShadowFunctions(model, argsClassName, FunctionName("shadow", replacedBy = name))
+}
+
+private fun buildShadowFunctions(model: ModuleModel, argsClassName: ClassName, name: FunctionName): List<FunSpec> {
     val moduleClassName = model.moduleClassName
     val generatedClassName = inaraName(model.generatedBaseName)
 
-    val noArgShadow = FunSpec.builder("shadow")
+    val noArgShadow = FunSpec.builder(name.name)
         .receiver(moduleClassName)
         .returns(moduleClassName)
         .apply { if (model.visibility == Visibility.INTERNAL) addModifiers(KModifier.INTERNAL) }
+        .deprecatedIfRenamed(name, emptyList(), moduleClassName.packageName)
         .addStatement("return this")
         .build()
 
     val shadowFunctions = mutableListOf(noArgShadow)
 
     if (model.allMembers.isNotEmpty()) {
-        shadowFunctions += buildMemberShadowFunction(moduleClassName, argsClassName, generatedClassName, model.allMembers, model.visibility)
+        shadowFunctions += buildMemberShadowFunction(moduleClassName, argsClassName, generatedClassName, model.allMembers, model.visibility, name)
     }
 
     return shadowFunctions
 }
 
 /**
- * The `shadow(...)` overload that lets any individual member's binding be overridden.
+ * The shadow overload that lets any individual member's binding be overridden, emitted under [name].
  *
  * Every parameter defaults to a current-value delegate over the receiver (see
  * [delegateBindingCode]) - always, even when the receiver is the generated implementation, since
@@ -793,17 +864,19 @@ private fun buildMemberShadowFunction(
     generatedClassName: String,
     members: List<MemberModel>,
     visibility: Visibility,
+    name: FunctionName,
 ): FunSpec {
-    val funBuilder = FunSpec.builder("shadow")
+    val funBuilder = FunSpec.builder(name.name)
         .receiver(moduleClassName)
         .returns(moduleClassName)
+        .deprecatedIfRenamed(name, members.map { it.name }, moduleClassName.packageName)
     if (visibility == Visibility.INTERNAL) {
         funBuilder.addModifiers(KModifier.INTERNAL)
     }
 
     for (member in members) {
         val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, argsClassName, member))
-        paramBuilder.defaultValue(delegateBindingCode(member, CodeBlock.of("this@shadow")))
+        paramBuilder.defaultValue(delegateBindingCode(member, name.receiver))
         funBuilder.addParameter(paramBuilder.build())
     }
 
@@ -860,9 +933,9 @@ internal fun buildSetFunctions(model: ModuleModel): List<FunSpec> = model.sets.m
 }
 
 /**
- * The `copy(...)` overload that lets a whole `@DIModule` parent be swapped out at once: one
- * parameter per parent, each defaulting to the receiver itself, building the same `Inara<Module>`
- * as every other builder/copy.
+ * The copy overload that lets a whole `@DIModule` parent be swapped out at once, emitted under
+ * [name]: one parameter per parent, each defaulting to the receiver itself, building the same
+ * `Inara<Module>` as every other builder/copy.
  *
  * An inherited member's binding comes from its (possibly swapped) parent - see
  * [parentSwapInheritedCode], which carries the receiver's own binding straight across when that
@@ -873,12 +946,14 @@ private fun buildModuleOverrideCopyFunction(
     model: ModuleModel,
     generatedClassName: String,
     selfGeneratedClass: ClassName,
+    name: FunctionName,
 ): FunSpec {
     val ownMemberNames = model.ownMembers.mapTo(mutableSetOf()) { it.name }
 
-    val funBuilder = FunSpec.builder("copy")
+    val funBuilder = FunSpec.builder(name.name)
         .receiver(model.moduleClassName)
         .returns(model.moduleClassName)
+        .deprecatedIfRenamed(name, model.parents.map { it.paramName }, model.moduleClassName.packageName)
     if (model.visibility == Visibility.INTERNAL) {
         funBuilder.addModifiers(KModifier.INTERNAL)
     }
@@ -897,10 +972,10 @@ private fun buildModuleOverrideCopyFunction(
         .apply {
             for (member in model.allMembers) {
                 val valueCode = if (member.name in ownMemberNames) {
-                    storedBindingOrDelegateCode(member, CodeBlock.of("this@copy"), selfGeneratedClass)
+                    storedBindingOrDelegateCode(member, name.receiver, selfGeneratedClass)
                 } else {
                     val parent = model.parentByMemberName.getValue(member.name)
-                    parentSwapInheritedCode(member, parent.paramName, parent.generatedClassName, selfGeneratedClass)
+                    parentSwapInheritedCode(member, parent.paramName, parent.generatedClassName, selfGeneratedClass, name.receiver)
                 }
                 addStatement("%N = %L,", "${member.name}Binding", valueCode)
             }

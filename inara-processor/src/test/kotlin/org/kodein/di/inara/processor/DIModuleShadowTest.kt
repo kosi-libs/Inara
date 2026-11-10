@@ -10,9 +10,10 @@ import kotlin.test.assertTrue
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 
 /**
- * Verifies the `shadow` extension function(s) generated alongside the implementation class(es)/
- * builder(s) - see [buildShadowFunctions]: the exact generated shape, then the runtime behaviour
- * that sets it apart from `copy` (the receiver never sees what the shadowing module overrides).
+ * Verifies the `shadow<Module>` extension function(s) - and their deprecated `shadow` counterparts -
+ * generated alongside the implementation class(es)/builder(s) - see [buildShadowFunctions]: the
+ * exact generated shape, then the runtime behaviour that sets it apart from a copy (the receiver
+ * never sees what the shadowing module overrides).
  */
 class DIModuleShadowTest {
 
@@ -42,20 +43,20 @@ class DIModuleShadowTest {
 
         val generated = compilation.generatedSource("sample/shadow", "InaraNetworkModule.kt")
 
-        assertEquals(2, Regex("""fun NetworkModule\.shadow\(""").findAll(generated).count(), generated)
-        assertTrue("public fun NetworkModule.shadow(): NetworkModule = this" in generated, generated)
+        assertEquals(2, Regex("""fun NetworkModule\.shadowNetworkModule\(""").findAll(generated).count(), generated)
+        assertTrue("public fun NetworkModule.shadowNetworkModule(): NetworkModule = this" in generated, generated)
 
         // Always a delegate to the receiver, never its stored binding.
         assertTrue(
-            "baseUrl: Binding<NetworkModule, Unit, String> = BindingImpls.Delegate(this@shadow::class) { this@shadow.baseUrl }" in generated,
+            "baseUrl: Binding<NetworkModule, Unit, String> = BindingImpls.Delegate(this@shadowNetworkModule::class) { this@shadowNetworkModule.baseUrl }" in generated,
             generated,
         )
         assertTrue(
-            "httpClient: Binding<NetworkModule, Unit, HttpClient> = BindingImpls.Delegate(this@shadow::class) { this@shadow.httpClient() }" in generated,
+            "httpClient: Binding<NetworkModule, Unit, HttpClient> = BindingImpls.Delegate(this@shadowNetworkModule::class) { this@shadowNetworkModule.httpClient() }" in generated,
             generated,
         )
         assertTrue(
-            "context: Binding<NetworkModule, Int, Context> = BindingImpls.Delegate(this@shadow::class) { this@shadow.context(it) }" in generated,
+            "context: Binding<NetworkModule, Int, Context> = BindingImpls.Delegate(this@shadowNetworkModule::class) { this@shadowNetworkModule.context(it) }" in generated,
             generated,
         )
         assertTrue("contextBinding = context" in generated, generated)
@@ -80,8 +81,8 @@ class DIModuleShadowTest {
 
         val generated = compilation.generatedSource("sample/shadow", "InaraEmptyModule.kt")
 
-        assertEquals(1, Regex("""fun EmptyModule\.shadow\(""").findAll(generated).count(), generated)
-        assertTrue("public fun EmptyModule.shadow(): EmptyModule = this" in generated, generated)
+        assertEquals(1, Regex("""fun EmptyModule\.shadowEmptyModule\(""").findAll(generated).count(), generated)
+        assertTrue("public fun EmptyModule.shadowEmptyModule(): EmptyModule = this" in generated, generated)
     }
 
     @Test
@@ -105,7 +106,7 @@ class DIModuleShadowTest {
 
         val generated = compilation.generatedSource("sample/shadow", "InaraHiddenModule.kt")
 
-        assertEquals(2, Regex("""internal fun HiddenModule\.shadow\(""").findAll(generated).count(), generated)
+        assertEquals(2, Regex("""internal fun HiddenModule\.shadowHiddenModule\(""").findAll(generated).count(), generated)
     }
 
     @Test
@@ -130,7 +131,7 @@ class DIModuleShadowTest {
         val generated = compilation.generatedSource("sample/shadow", "InaraAsyncModule.kt")
 
         assertTrue(
-            "load: SuspendBinding<AsyncModule, Unit, String> = SuspendBindingImpls.SuspendDelegate(this@shadow::class) { this@shadow.load() }" in generated,
+            "load: SuspendBinding<AsyncModule, Unit, String> = SuspendBindingImpls.SuspendDelegate(this@shadowAsyncModule::class) { this@shadowAsyncModule.load() }" in generated,
             generated,
         )
     }
@@ -157,7 +158,7 @@ class DIModuleShadowTest {
         val generated = compilation.generatedSource("sample/shadow", "InaraMultiModule.kt")
 
         assertTrue(
-            "BindingImpls.Delegate(this@shadow::class) { this@shadow.join(left = it.left, right = it.right) }" in generated,
+            "BindingImpls.Delegate(this@shadowMultiModule::class) { this@shadowMultiModule.join(left = it.left, right = it.right) }" in generated,
             generated,
         )
     }
@@ -189,11 +190,11 @@ class DIModuleShadowTest {
                         hello = single { "Hello, ${'$'}name" },
                         shout = provider { "${'$'}name!" },
                     )
-                    val child = parent.shadow(
+                    val child = parent.shadowGreetingModule(
                         name = value("Jane"),
                         shout = provider { "${'$'}name!!" },
                     )
-                    val copied = parent.copy(name = value("Jane"))
+                    val copied = parent.copyGreetingModule(name = value("Jane"))
                     return arrayOf(child.name, child.hello, child.shout, parent.name, parent.shout, copied.hello)
                 }
             }
@@ -242,8 +243,8 @@ class DIModuleShadowTest {
                         name = value("a"),
                         service = single { Any() },
                     )
-                    val child = parent.shadow(name = value("b"))
-                    val grandChild = child.shadow(name = value("c"))
+                    val child = parent.shadowCounterModule(name = value("b"))
+                    val grandChild = child.shadowCounterModule(name = value("c"))
                     return arrayOf(grandChild.service === parent.service, grandChild.name, child.name)
                 }
             }
@@ -282,8 +283,8 @@ class DIModuleShadowTest {
                 @JvmStatic
                 fun run(): Array<Any?> {
                     val parent = DefaultsModule(name = value("John"))
-                    val omitted = parent.shadow(name = value("Jane"))
-                    val explicitNull = parent.shadow(name = value("Jane"), greeting = null)
+                    val omitted = parent.shadowDefaultsModule(name = value("Jane"))
+                    val explicitNull = parent.shadowDefaultsModule(name = value("Jane"), greeting = null)
                     return arrayOf(omitted.greeting(), explicitNull.greeting())
                 }
             }
@@ -299,5 +300,36 @@ class DIModuleShadowTest {
 
         assertEquals("Hello, John", results[0])
         assertEquals("Hello, Jane", results[1])
+    }
+
+    @Test
+    fun formerShadow_isStillGeneratedDeprecatedWithAnErrorPointingToShadowModule() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "NetworkModule.kt",
+                """
+                package sample.shadow.deprecated
+
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface NetworkModule {
+                    val baseUrl: String
+                    val timeout: Int
+                }
+                """
+            )
+        )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/shadow/deprecated", "InaraNetworkModule.kt")
+        for (replacement in listOf("shadowNetworkModule()", "shadowNetworkModule(baseUrl = baseUrl, timeout = timeout)")) {
+            assertTrue(
+                "replaceWith = ReplaceWith(\"$replacement\", \"sample.shadow.deprecated.shadowNetworkModule\")" in generated,
+                "$replacement\n$generated",
+            )
+        }
+        assertEquals(2, Regex("""level = DeprecationLevel\.ERROR,\s*\)\s*public fun NetworkModule\.shadow\(""").findAll(generated).count(), generated)
+        assertTrue("'shadow' is renamed 'shadowNetworkModule'" in generated, generated)
     }
 }

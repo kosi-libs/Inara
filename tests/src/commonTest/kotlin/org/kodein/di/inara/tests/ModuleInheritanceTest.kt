@@ -75,7 +75,7 @@ class ModuleInheritanceTest {
         )
 
         val first = module.greeting
-        val copy = module.copy(label = Binding.value("b"))
+        val copy = module.copyComposedModule(label = Binding.value("b"))
 
         assertNotSame(first, copy.greeting)
         assertSame(first, module.greeting)
@@ -91,10 +91,7 @@ class ModuleInheritanceTest {
             label = Binding.value("a"),
         )
 
-        // Explicit type: with three `copy` overloads compiled ahead of time the compiler can't
-        // infer `Binding.value`'s type parameter from a bare named argument (see ModuleCopyTest).
-        val greetingBinding: Binding<ComposedModule, Unit, Greeting> = Binding.value(Greeting("new"))
-        val copy = module.copy(greeting = greetingBinding)
+        val copy = module.copyComposedModule(greeting = Binding.value(Greeting("new")))
 
         assertEquals("new, Ada!", copy.greet("Ada"))
     }

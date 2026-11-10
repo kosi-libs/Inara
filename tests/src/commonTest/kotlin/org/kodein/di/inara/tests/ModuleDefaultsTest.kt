@@ -55,7 +55,7 @@ class ModuleDefaultsTest {
     @Test
     fun ignoredMembers_stillPresentAfterCopy() {
         val module = DefaultsModule(name = Binding.value("World"))
-        val copy = module.copy(greeting = Binding.value("Hi"))
+        val copy = module.copyDefaultsModule(greeting = Binding.value("Hi"))
 
         assertEquals("default-tag", copy.tag)
         assertEquals(4, with(copy) { "abcd".shoutedLength })
@@ -68,7 +68,7 @@ class ModuleDefaultsTest {
             greeting = Binding.value("Hi"),
         )
 
-        val copy = module.copy(name = Binding.value("Kotlin"))
+        val copy = module.copyDefaultsModule(name = Binding.value("Kotlin"))
 
         // `greeting` was explicitly bound and is not named in the copy, so its binding is carried
         // across verbatim rather than reverting to the interface's default body.
@@ -81,7 +81,7 @@ class ModuleDefaultsTest {
     fun unboundDefaultBodyMember_stillReEvaluatesAfterCopy() {
         val module = DefaultsModule(name = Binding.value("World"))
 
-        val copy = module.copy(name = Binding.value("Kotlin"))
+        val copy = module.copyDefaultsModule(name = Binding.value("Kotlin"))
 
         // `greeting` was never bound, so it stays unbound after the copy and its default body
         // re-runs against the new module - observing the overridden `name`.
@@ -96,7 +96,7 @@ class ModuleDefaultsTest {
             greeting = Binding.value("Hi"),
         )
 
-        val copy = module.copy(greeting = null)
+        val copy = module.copyDefaultsModule(greeting = null)
 
         assertEquals("Hello, World", copy.greeting)
         assertEquals("Hello, World!!!", copy.shout())
@@ -110,8 +110,8 @@ class ModuleDefaultsTest {
         )
 
         val copy = module
-            .copy(name = Binding.value("A"))
-            .copy(prefixed = Binding.factory { prefix -> "$prefix!" })
+            .copyDefaultsModule(name = Binding.value("A"))
+            .copyDefaultsModule(prefixed = Binding.factory { prefix -> "$prefix!" })
 
         assertEquals("Hi", copy.greeting)
         assertEquals("Hi!!!", copy.shout())

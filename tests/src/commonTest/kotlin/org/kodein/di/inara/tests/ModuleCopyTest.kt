@@ -17,7 +17,7 @@ class ModuleCopyTest {
             label = Binding.value("abc"),
         )
 
-        assertNotSame(module, module.copy())
+        assertNotSame(module, module.copyComposedModule())
     }
 
     @Test
@@ -30,7 +30,7 @@ class ModuleCopyTest {
         )
 
         val original = module.instance
-        val copy = module.copy()
+        val copy = module.copyCounterModule()
 
         assertNotSame(original, copy.instance)
         assertSame(copy.instance, copy.instance)
@@ -46,7 +46,7 @@ class ModuleCopyTest {
             keyed = Binding.multiplex { key -> Binding.provider { Service(key.length) } },
         )
 
-        val copy = module.copy(next = Binding.provider { 1 })
+        val copy = module.copyCounterModule(next = Binding.provider { 1 })
         val fromCopy = copy.instance
         val fromOriginal = module.instance
 
@@ -63,7 +63,7 @@ class ModuleCopyTest {
             keyed = Binding.multiplex { key -> Binding.provider { Service(key.length) } },
         )
 
-        val copy = module.copy(next = Binding.provider { 2 })
+        val copy = module.copyCounterModule(next = Binding.provider { 2 })
 
         assertEquals(2, copy.instance.id)
         assertEquals(1, module.instance.id)
@@ -78,7 +78,7 @@ class ModuleCopyTest {
         )
 
         val original = module.keyed("abc")
-        val copy = module.copy()
+        val copy = module.copyCounterModule()
 
         assertNotSame(original, copy.keyed("abc"))
         assertSame(copy.keyed("abc"), copy.keyed("abc"))
@@ -95,7 +95,7 @@ class ModuleCopyTest {
         )
 
         val original = module.nextAsync()
-        val copy = module.copy()
+        val copy = module.copyComposedModule()
 
         assertEquals(0, original)
         assertEquals(1, copy.nextAsync())
@@ -111,7 +111,7 @@ class ModuleCopyTest {
             label = Binding.value("abc"),
         )
 
-        val copy = module.copy(label = Binding.value("xyz"))
+        val copy = module.copyComposedModule(label = Binding.value("xyz"))
 
         assertEquals("xyz", copy.label)
         assertEquals("Hi, Ada!", copy.greet("Ada"))
@@ -126,12 +126,9 @@ class ModuleCopyTest {
             label = Binding.value("abc"),
         )
 
-        // Explicit type on the right-hand side: with three `copy` overloads compiled ahead of time
-        // (module inheritance means one has a same-named `Binding.value` parameter type, another
-        // none at all), the compiler can't always infer `Binding.value`'s type parameter from a
-        // bare named argument alone.
-        val greetingBinding: Binding<ComposedModule, Unit, Greeting> = Binding.value(Greeting("Hello"))
-        val copy = module.copy(greeting = greetingBinding)
+        // `greeting` is inherited from GreeterModule: `copyComposedModule` is never ambiguous with
+        // `copyGreeterModule`, so `Binding.value` infers its module type without any help.
+        val copy = module.copyComposedModule(greeting = Binding.value(Greeting("Hello")))
 
         assertEquals("Hello, Ada!", copy.greet("Ada"))
         assertEquals("abc", copy.label)
@@ -147,7 +144,7 @@ class ModuleCopyTest {
         )
 
         val otherGreeter = GreeterModule(greeting = Binding.value(Greeting("Yo")))
-        val copy = module.copy(greeterModule = otherGreeter)
+        val copy = module.copyComposedModule(greeterModule = otherGreeter)
 
         assertEquals("Yo, Ada!", copy.greet("Ada"))
         assertEquals("abc", copy.label)
@@ -158,7 +155,7 @@ class ModuleCopyTest {
     fun copyOfDefaultBodyMember_stillUsesTheInterfaceDefault() {
         val module = DefaultsModule(name = Binding.value("World"))
 
-        val copy = module.copy(name = Binding.value("Kotlin"))
+        val copy = module.copyDefaultsModule(name = Binding.value("Kotlin"))
 
         assertEquals("Hello, Kotlin", copy.greeting)
         assertEquals("Hello, Kotlin!!!", copy.shout())
@@ -169,8 +166,8 @@ class ModuleCopyTest {
         val module = DefaultsModule(name = Binding.value("World"))
 
         val copy = module
-            .copy(name = Binding.value("A"))
-            .copy(greeting = Binding.value("B"))
+            .copyDefaultsModule(name = Binding.value("A"))
+            .copyDefaultsModule(greeting = Binding.value("B"))
 
         assertEquals("B", copy.greeting)
         assertEquals("B!!!", copy.shout())

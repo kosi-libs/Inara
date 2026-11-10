@@ -27,7 +27,7 @@ class ModuleMultiParamTest {
             both = Binding.factory { "fixed-both" },
         )
 
-        val copy = module.copy(va = Binding.factory { parts -> parts.size.toString() })
+        val copy = module.copyMultiParamModule(va = Binding.factory { parts -> parts.size.toString() })
 
         assertEquals("3", copy.va("a", "b", "c"))
         // mult/both are untouched by this copy - their delegates read the *current* (fixed) value.
@@ -50,7 +50,7 @@ class ModuleMultiParamTest {
         assertEquals("[1, 2]:true", composed.both(1, 2, flag = true))
         assertEquals("t", composed.tag)
 
-        val copy = composed.copy(tag = Binding.value("t2"))
+        val copy = composed.copyComposedMultiParamModule(tag = Binding.value("t2"))
         assertEquals(3L, copy.mult(listOf("x", "y"), 1))
         assertEquals("t2", copy.tag)
     }

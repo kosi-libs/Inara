@@ -63,11 +63,11 @@ class BindingLifecycleTest {
         val instance = module.instance
         val keyed = module.keyed("abc")
 
-        assertSame(instance, module.copy().instance)
-        assertSame(instance, module.copy(next = Binding.provider { 1 }).instance)
-        assertSame(instance, module.shadow(next = Binding.provider { 1 }).instance)
-        assertSame(keyed, module.copy().keyed("abc"))
-        assertSame(keyed, module.shadow(next = Binding.provider { 1 }).keyed("abc"))
+        assertSame(instance, module.copyCounterModule().instance)
+        assertSame(instance, module.copyCounterModule(next = Binding.provider { 1 }).instance)
+        assertSame(instance, module.shadowCounterModule(next = Binding.provider { 1 }).instance)
+        assertSame(keyed, module.copyCounterModule().keyed("abc"))
+        assertSame(keyed, module.shadowCounterModule(next = Binding.provider { 1 }).keyed("abc"))
     }
 
     @Test
@@ -79,7 +79,7 @@ class BindingLifecycleTest {
             keyed = Binding.multiplex { key -> Binding.provider { Service(key.length) } },
         )
 
-        val fromCopy = module.copy().instance
+        val fromCopy = module.copyCounterModule().instance
 
         assertSame(fromCopy, module.instance)
         assertEquals(1, builds)

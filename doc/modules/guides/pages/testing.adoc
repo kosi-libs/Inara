@@ -47,21 +47,21 @@ Test doubles from a mocking library plug in the same way: `Binding.value(mockRep
 [#overriding-production-wiring]
 == Overriding production wiring
 
-When the production wiring is mostly what a test needs, use xref:core:copy.adoc[`copy`] to override only what differs:
+When the production wiring is mostly what a test needs, use xref:core:copy.adoc[`copyAppModule`] to override only what differs:
 
 [source,kotlin]
 ----
-val testApp = productionApp.copy(
+val testApp = productionApp.copyAppModule(
     repository = Binding.value(InMemoryRepository()),
 )
 ----
 
-`copy` gives the test module its own copy of every binding it does not override, so a `single`, `weakSingle` or `multiplex` is never shared with the production module.
+`copyAppModule` gives the test module its own copy of every binding it does not override, so a `single`, `weakSingle` or `multiplex` is never shared with the production module.
 A test variant never returns an instance that the production module already built, and never leaves one behind for it.
 
 See xref:core:copy.adoc#copied-bindings-have-their-own-state[Copied bindings have their own state].
 
-When a test must read the production module's own instances, use xref:core:shadow.adoc[`shadow`] instead.
+When a test must read the production module's own instances, use xref:core:shadow.adoc[`shadowAppModule`] instead.
 
 To keep tests isolated, build each test module from scratch, with a function that returns fresh bindings every time it is called:
 
@@ -92,7 +92,7 @@ To supply a fixed value without writing a `suspend` body, lift a regular binding
 
 [source,kotlin]
 ----
-val testSession = session.copy(
+val testSession = session.copySessionModule(
     token = SuspendBinding.value(Token("test-token")),
 )
 ----

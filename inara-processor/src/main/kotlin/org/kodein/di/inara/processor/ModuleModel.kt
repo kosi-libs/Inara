@@ -87,7 +87,7 @@ internal data class ParentModel(
  *
  * [parentByMemberName] maps each [allMembers] member reached *only* through a `@DIModule` parent to
  * that direct parent - the generator reads the member's binding off the parent instance in the
- * `@DIModule(composed = true)` builder and parent-swapping `copy`. Own members and plain-supertype
+ * `@DIModule(composed = true)` builder and parent-swapping `copy<Module>`. Own members and plain-supertype
  * members are absent; the diamond rule (see [parseModule]) guarantees at most one parent per name.
  *
  * [ancestorDeclarations] is every interface transitively reachable through any direct supertype -
@@ -95,7 +95,7 @@ internal data class ParentModel(
  * their source files as an incremental-build dependency of the generated code.
  *
  * [isComposed] is true when the interface is annotated `@DIModule(composed = true)` - it alone decides
- * whether the generator emits the extra parent-instance builder/`copy` overloads on top of the
+ * whether the generator emits the extra parent-instance builder/`copy<Module>` overloads on top of the
  * plain full ones; [parents] is populated regardless of its value.
  *
  * [sets] holds one entry per set the module generates a `setOf<Annotation>()` function for: every
@@ -137,6 +137,13 @@ internal fun KSClassDeclaration.generatedBaseName(): String {
  * [generatedBaseName]) - also used for the `@DIFactory` builder file name. */
 internal fun inaraName(baseName: String): String = "Inara$baseName"
 
+/** The name of the copy functions generated for a module named [moduleSimpleName]: `copy<Module>`.
+ * Named after the module so that a module's copy is never ambiguous with a parent module's. */
+internal fun copyFunctionName(moduleSimpleName: String): String = "copy" + moduleSimpleName.replaceFirstChar(Char::uppercaseChar)
+
+/** The name of the shadow functions generated for a module named [moduleSimpleName]: `shadow<Module>`. */
+internal fun shadowFunctionName(moduleSimpleName: String): String = "shadow" + moduleSimpleName.replaceFirstChar(Char::uppercaseChar)
+
 private fun KSClassDeclaration.hasAnnotation(qualifiedName: String): Boolean =
     annotations.any { it.annotationType.resolve().declaration.qualifiedName?.asString() == qualifiedName }
 
@@ -153,7 +160,7 @@ private fun KSClassDeclaration.diModuleSetTypes(): List<KSType> {
 }
 
 /** True only for `@DIModule(composed = true)` - drives whether the extra from-parents builder and
- * parent-swapping `copy` overload are generated. */
+ * parent-swapping `copy<Module>` overload are generated. */
 private fun KSClassDeclaration.isComposedDIModule(): Boolean {
     val annotation = annotations.firstOrNull {
         it.annotationType.resolve().declaration.qualifiedName?.asString() == DI_MODULE_ANNOTATION
@@ -515,10 +522,11 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
      * the module's bindable surface entirely: no `Binding` parameter, no override, `null` returned
      * without an error. Once a member is excluded this way, the *structural* rule below it
      * (visibility) no longer applies either - Inara never touches the member, so it's irrelevant to
-     * it. The three naming-identity rules above stay unconditional regardless: a `Binding`-suffixed,
-     * `copy`-named, `shadow`-named, or `arg<Argument>`-shaped member could still collide with the generated class's
-     * own naming scheme, or with a `@DIFactory` object's expected extension-function convention,
-     * even while unbound.
+     * it. The naming-identity rules above stay unconditional regardless: a `Binding`-suffixed,
+     * `of`-named or `arg<Argument>`-shaped member could still collide with the generated class's own
+     * naming scheme, with a generated function's parameter, or with a `@DIFactory` object's expected
+     * extension-function convention, even while unbound. A member named `copy` or `shadow` is
+     * allowed: it only hides the deprecated functions of these names, which no call can use anyway.
      *
      * A function's parameter count and any vararg parameter are unrestricted - see [ParameterModel]
      * and `ModuleFileGenerator` for how more than one parameter is wrapped into a generated data
@@ -549,8 +557,10 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         }
 
         if (name.endsWith("Binding")) fail("A @DIModule member name may not end with 'Binding': '$name'.")
-        if (name == "copy") fail("A @DIModule member may not be named 'copy'.")
-        if (name == "shadow") fail("A @DIModule member may not be named 'shadow'.")
+        // Reserved for the `of` parameter of the `Module.copy(of = module, ...)` and
+        // `Module.shadow(of = module, ...)` companion extensions that are to replace `copy<Module>` and
+        // `shadow<Module>` once Kotlin's companion extensions are stable.
+        if (name == "of") fail("A @DIModule member may not be named 'of'.")
         // A member shaped like `argFoo` would silently shadow a same-named @DIFactory extension
         // function (`fun M.argFoo(): T`) - Kotlin always prefers a member over an extension, so the
         // factory's function would never actually be called, with no error to say so.
@@ -722,6 +732,7 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         }
     }
 
+    checkCopyAndShadowNames(classDecl, closureCache, ::reportError)
     val sets = parseSets(classDecl, allMembers, cache, closureCache, ::reportError)
 
     if (hasError) return null
@@ -748,6 +759,50 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         isComposed = isComposed,
         sets = sets,
     )
+}
+
+/**
+ * Keeps every `copy<Module>` / `shadow<Module>` function callable on [classDecl] unambiguous - its
+ * own, and those of each of its `@DIModule` ancestors, which a module's instance can call too.
+ *
+ * The module may not share its simple name with one of its `@DIModule` ancestors: both would
+ * generate the same `copy<Module>` / `shadow<Module>` names, so a call on the module naming only
+ * the ancestor's members would match the ancestor's function as well as its own. (Two *sibling*
+ * ancestors sharing a name are fine: the module's own functions are not affected.) And no
+ * non-private member of the module, bound or not, may be named like one of those functions: Kotlin
+ * always prefers a member over an extension, so the function would silently stop being called.
+ */
+private fun checkCopyAndShadowNames(
+    classDecl: KSClassDeclaration,
+    closureCache: ClosureCache,
+    reportError: (String, KSNode) -> Unit,
+) {
+    val modules = interfaceClosure(classDecl, closureCache).values.filter { it.isDIModule() }
+
+    val simpleName = classDecl.simpleName.asString()
+    for (ancestor in modules) {
+        if (ancestor.simpleName.asString() == simpleName && ancestor.qualifiedName?.asString() != classDecl.qualifiedName?.asString()) {
+            reportError(
+                "'${classDecl.qualifiedName?.asString()}' shares its simple name with its ancestor " +
+                    "'${ancestor.qualifiedName?.asString()}': their '${copyFunctionName(simpleName)}' and " +
+                    "'${shadowFunctionName(simpleName)}' functions would be ambiguous - rename one of them.",
+                classDecl,
+            )
+        }
+    }
+
+    val memberNames = superDeclarationClosure(classDecl).mapTo(HashSet()) { it.decl.simpleName.asString() }
+    for (module in modules) {
+        val moduleName = module.simpleName.asString()
+        for (functionName in listOf(copyFunctionName(moduleName), shadowFunctionName(moduleName))) {
+            if (functionName in memberNames) {
+                reportError(
+                    "A member named '$functionName' clashes with the '$functionName' function generated for '$moduleName'.",
+                    classDecl,
+                )
+            }
+        }
+    }
 }
 
 /**

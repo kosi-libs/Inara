@@ -79,7 +79,7 @@ AppModule(
 <1> `this` is the `AppModule` being built.
 <2> `this` is implicit, as in any Kotlin lambda with a receiver.
 
-Because members are read through the module rather than captured, a body always sees the bindings of the module it runs in, including when that module was built by xref:copy.adoc[`copy`].
+Because members are read through the module rather than captured, a body always sees the bindings of the module it runs in, including when that module was built by xref:copy.adoc[`copy<Module>`].
 
 
 == Properties and functions are equivalent
@@ -103,3 +103,17 @@ AppModule(
 
 TIP: A good convention is to declare as `val` what reads like a configuration value, and as `fun` what reads like a service.
 Inara does not care either way.
+
+
+[#reserved-member-names]
+== Reserved member names
+
+Some member names are reserved for the code Inara generates, and the processor rejects a member that uses one of them:
+
+* a name ending with `Binding`, which the generated implementation uses for its own bindings;
+* `copy<Module>` and `shadow<Module>`, for the module itself and for each of its `@DIModule` ancestors, which would hide the xref:copy.adoc[] and xref:shadow.adoc[] functions;
+* `of`, reserved for the `AppModule.copy(of = appModule, /*...*/)` that is to replace `appModule.copyAppModule(/*...*/)` (see xref:copy.adoc[]);
+* `arg` followed by an uppercase letter, the naming convention of xref:factory:basics.adoc[`@DIFactory`];
+* `setOf<Set>`, for each xref:sets.adoc[set] the module has.
+
+For the same reason, a module may not have the simple name of one of its `@DIModule` ancestors: both would generate the same `copy<Module>` and `shadow<Module>` functions.

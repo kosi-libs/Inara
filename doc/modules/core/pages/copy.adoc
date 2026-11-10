@@ -1,6 +1,6 @@
 = Copying a module
 
-Every module gets a generated `copy` extension function, which builds a new module from an existing one.
+Every module gets a generated `copy<Module>` extension function, named after the module, which builds a new module from an existing one.
 It takes one parameter per member, each defaulting to the binding the module *currently* holds for that member, so you only name what you want to override:
 
 [source,kotlin]
@@ -11,14 +11,50 @@ val app = AppModule(
     user = Binding.factory { id -> repository().findUser(id) },
 )
 
-val debugApp = app.copy(
+val debugApp = app.copyAppModule(
     config = Binding.value(Config(debug = true)),
 )
 ----
 
-The original module is never modified: `copy` returns a new module, and `app` keeps its own bindings.
+The original module is never modified: `copyAppModule` returns a new module, and `app` keeps its own bindings.
 
-Calling `copy()` without any argument still builds a new module, with its own copy of every binding.
+Calling `copyAppModule()` without any argument still builds a new module, with its own copy of every binding.
+
+NOTE: `appModule.copyAppModule(/*...*/)` will be deprecated once companion extensions are stable in Kotlin (they are experimental in Kotlin 2.5).
+It will then be replaced by `AppModule.copy(of = appModule, /*...*/)`, which is why a module member may not be named `of`.
+
+
+[#named-after-the-module]
+== Named after the module
+
+A module can also call the copy function of each of its `@DIModule` ancestors, which builds that ancestor:
+
+[source,kotlin]
+----
+@DIModule
+interface ServerModule {
+    val port: Int
+}
+
+@DIModule
+interface AppModule : ServerModule {
+    val name: String
+}
+
+val copiedApp: AppModule = app.copyAppModule(port = Binding.value(8080)) // <1>
+val copiedServer: ServerModule = app.copyServerModule(port = Binding.value(8080)) // <2>
+----
+<1> Builds an `AppModule`, even though only an inherited member is overridden.
+<2> Builds a `ServerModule`, which has no `name`.
+
+Because each function carries the name of the module it builds, a call always says which one it builds, and never matches the function of another module.
+
+[IMPORTANT]
+====
+These functions used to all be named `copy`, which made a call ambiguous when it named only inherited members: it matched the parent's `copy` as well as the module's own.
+`copy` is still generated, but deprecated with an error that offers its `copy<Module>` replacement.
+The next version of Inara will no longer generate it.
+====
 
 
 [#copied-bindings-have-their-own-state]
@@ -34,7 +70,7 @@ val parent = MyModule(
     hello = Binding.single { "Hello, $name" },
 )
 
-val child = parent.copy(
+val child = parent.copyMyModule(
     name = Binding.value("Jane"),
 )
 
@@ -50,13 +86,13 @@ xref:bindings.adoc#detached[Detached bindings] are not duplicated either: a copy
 NOTE: A module that implements the interface by hand has no bindings to copy.
 Its members are read through a delegate, so they keep whatever state that module has.
 
-TIP: To share the original's state instead, and keep the original from ever seeing your overrides, use xref:shadow.adoc[`shadow`].
+TIP: To share the original's state instead, and keep the original from ever seeing your overrides, use xref:shadow.adoc[`shadow<Module>`].
 
 
 == Default implementations
 
 For a member that has a xref:defaults.adoc[default implementation], an omitted parameter keeps the member as it was.
-If it was unbound, its default body keeps being used, and runs against the *new* module: it therefore observes the members you overrode in the same `copy` call.
+If it was unbound, its default body keeps being used, and runs against the *new* module: it therefore observes the members you overrode in the same call.
 
 Such a member additionally accepts an explicit `null`, which drops its binding and goes back to the interface's own body:
 
@@ -67,7 +103,7 @@ val module = GreetingModule(
     greeting = Binding.provider { "Hi $name" },
 )
 
-val restored = module.copy(greeting = null)
+val restored = module.copyGreetingModule(greeting = null)
 restored.greeting // "Hello, World"
 ----
 
@@ -79,8 +115,8 @@ A copy is a module like any other, so it can be copied in turn:
 [source,kotlin]
 ----
 val variant = app
-    .copy(config = Binding.value(Config(debug = true)))
-    .copy(user = Binding.factory { id -> User.guest(id) })
+    .copyAppModule(config = Binding.value(Config(debug = true)))
+    .copyAppModule(user = Binding.factory { id -> User.guest(id) })
 ----
 
-TIP: xref:guides:testing.adoc[] shows how `copy` is used to build test variants of a module.
+TIP: xref:guides:testing.adoc[] shows how copies are used to build test variants of a module.

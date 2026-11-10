@@ -7,7 +7,7 @@ This page covers where a module interface can be declared, and who can see the c
 
 A module interface must be `public` or `internal`.
 
-An `internal` module gets an `internal` builder, `internal` `copy` functions, and an `internal` arguments container:
+An `internal` module gets an `internal` builder, `internal` `copy<Module>`, `shadow<Module>` and `setOf<Set>` functions, and an `internal` arguments container:
 
 [source,kotlin]
 ----
@@ -17,7 +17,7 @@ internal interface SecretsModule {
 }
 ----
 
-A `private` or `protected` module interface is a compile error, since the generated top-level builder and `copy` functions could not name it.
+A `private` or `protected` module interface is a compile error, since the generated top-level builder and functions could not name it.
 
 TIP: An `internal` module is a good way to keep the wiring of a Gradle module private, while exposing only its public types.
 See xref:guides:multi-module.adoc[].

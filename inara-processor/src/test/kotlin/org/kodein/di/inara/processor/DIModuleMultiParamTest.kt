@@ -75,9 +75,9 @@ class DIModuleMultiParamTest {
         assertTrue("both: Binding<Module, ModuleBindingArguments.Both, String>," in generated, generated)
 
         // copy delegate reconstruction: named args, no spread anywhere.
-        assertTrue("BindingImpls.Delegate(this@copy::class) { this@copy.va(str = it) }" in generated, generated)
-        assertTrue("BindingImpls.Delegate(this@copy::class) { this@copy.mult(s = it.s, i = it.i) }" in generated, generated)
-        assertTrue("BindingImpls.Delegate(this@copy::class) { this@copy.both(ids = it.ids, flag = it.flag) }" in generated, generated)
+        assertTrue("BindingImpls.Delegate(this@copyModule::class) { this@copyModule.va(str = it) }" in generated, generated)
+        assertTrue("BindingImpls.Delegate(this@copyModule::class) { this@copyModule.mult(s = it.s, i = it.i) }" in generated, generated)
+        assertTrue("BindingImpls.Delegate(this@copyModule::class) { this@copyModule.both(ids = it.ids, flag = it.flag) }" in generated, generated)
         assertTrue("*" !in generated, generated)
     }
 

@@ -8,13 +8,13 @@ import kotlin.reflect.KClass
  *
  * An interface annotated with `@DIModule` that extends other `@DIModule` interfaces inherits their
  * members - a `Binding` is generated for every member, inherited included - but gets no delegation
- * API: pass `composed = true` to also generate an implementation/builder/`copy` set that takes
+ * API: pass `composed = true` to also generate an implementation/builder/`copy<Module>` set that takes
  * already-built parent module instances.
  *
- * @param composed Additionally requests a delegated implementation/builder/`copy` set for this
+ * @param composed Additionally requests a delegated implementation/builder/`copy<Module>` set for this
  *   interface's `@DIModule` parents: a builder taking one already-built parent module instance per
  *   direct `@DIModule` supertype (implemented via Kotlin interface delegation, `Parent by parent`)
- *   plus a binding per member declared directly on this interface, and a matching `copy(...)`
+ *   plus a binding per member declared directly on this interface, and a matching `copy<Module>(...)`
  *   overload that swaps a whole parent out at once. Requires the interface to extend at least one
  *   `@DIModule` interface.
  * @param sets Annotation classes annotated with [DISet], each one generating a

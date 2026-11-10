@@ -56,7 +56,7 @@ Mark a member `suspend` and it is bound with a `SuspendBinding` whose bodies can
 Asynchronous construction propagates the way it should, instead of hiding behind `runBlocking`.
 
 Overriding is first-class::
-Every module gets a generated `copy(...)` function, so building a test variant means overriding one member and keeping the rest.
+Every module gets a generated `copy<Module>(...)` function, so building a test variant means overriding one member and keeping the rest.
 
 Multiplatform, without surprises::
 Inara behaves *exactly* the same on every platform it supports.

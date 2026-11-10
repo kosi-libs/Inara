@@ -64,8 +64,8 @@ class ModuleSetTest {
         val other = AppService("other")
         val module = servicesModule()
 
-        assertEquals(listOf(other, AppService("cache16")), module.copy(server = Binding.value<ServicesModule, AppService>(other)).setOfAppServices().toList())
-        assertEquals(listOf(other, AppService("cache16")), module.shadow(server = Binding.value<ServicesModule, AppService>(other)).setOfAppServices().toList())
+        assertEquals(listOf(other, AppService("cache16")), module.copyServicesModule(server = Binding.value(other)).setOfAppServices().toList())
+        assertEquals(listOf(other, AppService("cache16")), module.shadowServicesModule(server = Binding.value(other)).setOfAppServices().toList())
         assertEquals(listOf(server, AppService("cache16")), module.setOfAppServices().toList())
     }
 

@@ -124,74 +124,6 @@ class DIModuleValidationTest {
     }
 
     @Test
-    fun memberNamedCopy_propertyIsRejected() {
-        assertRejected(
-            "may not be named 'copy'",
-            """
-            package sample.validation
-
-            import org.kodein.di.inara.DIModule
-
-            @DIModule
-            interface CopyPropertyModule {
-                val copy: String
-            }
-            """
-        )
-    }
-
-    @Test
-    fun memberNamedCopy_functionIsRejected() {
-        assertRejected(
-            "may not be named 'copy'",
-            """
-            package sample.validation
-
-            import org.kodein.di.inara.DIModule
-
-            @DIModule
-            interface CopyFunctionModule {
-                fun copy(): String
-            }
-            """
-        )
-    }
-
-    @Test
-    fun memberNamedShadow_propertyIsRejected() {
-        assertRejected(
-            "may not be named 'shadow'",
-            """
-            package sample.validation
-
-            import org.kodein.di.inara.DIModule
-
-            @DIModule
-            interface ShadowPropertyModule {
-                val shadow: String
-            }
-            """
-        )
-    }
-
-    @Test
-    fun memberNamedShadow_functionIsRejected() {
-        assertRejected(
-            "may not be named 'shadow'",
-            """
-            package sample.validation
-
-            import org.kodein.di.inara.DIModule
-
-            @DIModule
-            interface ShadowFunctionModule {
-                fun shadow(): String
-            }
-            """
-        )
-    }
-
-    @Test
     fun varProperty_isRejected() {
         assertRejected(
             "var properties are not supported",
@@ -976,6 +908,128 @@ class DIModuleValidationTest {
             interface CollidingArgsModule {
                 fun mult(a: Int, b: Int): Int
                 fun Mult(a: Int, b: Int): Int
+            }
+            """
+        )
+    }
+
+    @Test
+    fun memberNamedOf_isRejected() {
+        // Reserved for the `of` parameter of the future `Module.copy(of = module, ...)`.
+        assertRejected(
+            "may not be named 'of'",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface OfModule {
+                val of: String
+            }
+            """
+        )
+    }
+
+    @Test
+    fun memberNamedLikeTheModulesCopyFunction_isRejected() {
+        assertRejected(
+            "A member named 'copyAppModule' clashes with the 'copyAppModule' function generated for 'AppModule'.",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface AppModule {
+                val name: String
+                fun copyAppModule(): String = name
+            }
+            """
+        )
+    }
+
+    @Test
+    fun memberNamedLikeTheModulesShadowFunction_isRejected() {
+        assertRejected(
+            "A member named 'shadowAppModule' clashes with the 'shadowAppModule' function generated for 'AppModule'.",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface AppModule {
+                val shadowAppModule: String
+            }
+            """
+        )
+    }
+
+    @Test
+    fun memberNamedLikeAParentsCopyFunction_isRejected() {
+        assertRejected(
+            "A member named 'copyServerModule' clashes with the 'copyServerModule' function generated for 'ServerModule'.",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            @DIModule
+            interface ServerModule {
+                val server: String
+            }
+
+            @DIModule
+            interface AppModule : ServerModule {
+                fun copyServerModule(): String = server
+            }
+            """
+        )
+    }
+
+    @Test
+    fun memberNamedLikeAnUnrelatedModulesCopyFunction_isAccepted() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                """
+                package sample.validation
+
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface FileModule {
+                    fun copyFile(): String = "copied"
+                }
+                """
+            )
+        )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+    }
+
+    @Test
+    fun modulesSharingASimpleNameInAHierarchy_areRejected() {
+        assertRejected(
+            "'sample.validation.Child.Module' shares its simple name with its ancestor 'sample.validation.Base.Module': " +
+                "their 'copyModule' and 'shadowModule' functions would be ambiguous",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            object Base {
+                @DIModule
+                interface Module {
+                    val base: String
+                }
+            }
+
+            object Child {
+                @DIModule
+                interface Module : Base.Module {
+                    val child: String
+                }
             }
             """
         )

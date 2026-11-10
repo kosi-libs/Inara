@@ -1,8 +1,8 @@
 = Shadowing a module
 
-Every module gets a generated `shadow` extension function, which builds a new module on top of an existing one.
-Like xref:copy.adoc[`copy`], it takes one parameter per member and you only name what you want to override.
-Unlike `copy`, the original module never sees your overrides:
+Every module gets a generated `shadow<Module>` extension function, named after the module, which builds a new module on top of an existing one.
+Like xref:copy.adoc[`copy<Module>`], it takes one parameter per member and you only name what you want to override.
+Unlike a copy, the original module never sees your overrides:
 
 [source,kotlin]
 ----
@@ -11,7 +11,7 @@ val parent = MyModule(
     hello = Binding.single { "Hello, $name" },
 )
 
-val child = parent.shadow(
+val child = parent.shadowMyModule(
     name = Binding.value("Jane"),
 )
 
@@ -22,13 +22,21 @@ child.hello // "Hello, John" <1>
 
 The name comes from lexical scoping: a name declared in the child hides the parent's one for the child only.
 
-Calling `shadow()` without any argument returns the very same module.
+Calling `shadowMyModule()` without any argument returns the very same module.
+
+As with copies, a module can also call the shadow function of each of its `@DIModule` ancestors, which builds that ancestor (see xref:copy.adoc#named-after-the-module[Named after the module]).
+
+NOTE: `appModule.shadowAppModule(/*...*/)` will be deprecated once companion extensions are stable in Kotlin (they are experimental in Kotlin 2.5).
+It will then be replaced by `AppModule.shadow(of = appModule, /*...*/)`, which is why a module member may not be named `of`.
+
+IMPORTANT: These functions used to all be named `shadow`, which is still generated, but deprecated with an error that offers its `shadow<Module>` replacement.
+The next version of Inara will no longer generate it.
 
 
-== How it differs from `copy`
+== How it differs from a copy
 
-`copy` gives the new module its own copy of every binding, each running against the new module.
-`shadow` instead *delegates to the parent* for every member you omit, which evaluates it against itself:
+A copy gives the new module its own copy of every binding, each running against the new module.
+A shadow instead *delegates to the parent* for every member you omit, which evaluates it against itself:
 
 * a binding you override runs against the child, so it sees the child's other overrides and the parent's values for everything else;
 * a binding you do not override runs against the parent, so it never sees the overrides;
@@ -36,7 +44,7 @@ Calling `shadow()` without any argument returns the very same module.
 
 [source,kotlin]
 ----
-val copied = parent.copy(name = Binding.value("Jane"))
+val copied = parent.copyMyModule(name = Binding.value("Jane"))
 copied.hello // "Hello, Jane": the copy has its own `single`
 ----
 
@@ -48,7 +56,7 @@ An explicit `null` runs the interface's own body against the *child*, so it obse
 
 [source,kotlin]
 ----
-val child = parent.shadow(name = Binding.value("Jane"), greeting = null)
+val child = parent.shadowMyModule(name = Binding.value("Jane"), greeting = null)
 child.greeting() // "Hello, Jane"
 ----
 
@@ -60,7 +68,7 @@ Each level delegates to the one below it:
 
 [source,kotlin]
 ----
-val grandChild = child.shadow(name = Binding.value("Joan"))
+val grandChild = child.shadowMyModule(name = Binding.value("Joan"))
 ----
 
-TIP: Use xref:copy.adoc[`copy`] to build a variant that works as a whole, with its own state, and `shadow` to override a few members while keeping the original in charge of everything else.
+TIP: Use xref:copy.adoc[`copy<Module>`] to build a variant that works as a whole, with its own state, and `shadow<Module>` to override a few members while keeping the original in charge of everything else.

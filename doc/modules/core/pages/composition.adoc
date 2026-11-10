@@ -58,15 +58,15 @@ A parent that implements the interface by hand, or an inherited member that take
 
 == Swapping a parent
 
-A composed module also gets an extra `copy` overload, which replaces a whole parent at once:
+A composed module also gets an extra `copy<Module>` overload, which replaces a whole parent at once:
 
 [source,kotlin]
 ----
-val withOtherGreeter = app.copy(greeterModule = otherGreeter)
+val withOtherGreeter = app.copyAppModule(greeterModule = otherGreeter)
 ----
 
 Each parent parameter defaults to the module being copied, so omitted parents are kept as they are.
-As with any other xref:copy.adoc[`copy`], the new module gets its own copy of every binding, including those it takes from the parent you pass in: that parent keeps its own `single` instances to itself.
+As with any other xref:copy.adoc[copy], the new module gets its own copy of every binding, including those it takes from the parent you pass in: that parent keeps its own `single` instances to itself.
 
 
 == Restrictions
