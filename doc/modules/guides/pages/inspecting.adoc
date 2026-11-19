@@ -54,7 +54,7 @@ Each binding describes itself with its kind and the types it handles:
 Two more markers can appear:
 
 * `[default]`: the member is not bound, and uses its xref:core:defaults.adoc[default implementation];
-* `[delegated to ...]`: the member is read from a xref:core:composition.adoc[parent module] that could not share its binding, such as a member with several parameters.
+* `[delegated to ...]`: the member is read from a xref:core:composition.adoc[parent module] that could not share its binding, because it implements its interface by hand.
 
 `suspend` bindings are described like their non-suspending counterparts: the `suspend` keyword on the member signature tells them apart.
 

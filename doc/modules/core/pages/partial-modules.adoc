@@ -1,0 +1,192 @@
+= Partial modules
+
+A xref:composition.adoc[composed module] reuses parent modules that are already built.
+Some modules, though, need another module that they should not build themselves, such as a data source shared by the whole application.
+A partial module declares that need, and leaves it to the module that composes it.
+
+
+[#requiring]
+== Requiring a module
+
+Mark a `@DIModule` supertype with `@DIModule.Required` to require it rather than provide it:
+
+[source,kotlin]
+----
+@DIModule
+interface DatabaseModule {
+    val dataSource: DataSource
+}
+
+@DIModule
+interface MigrationModule : @DIModule.Required DatabaseModule { // <1>
+    val migrator: Migrator
+}
+
+@DIModule
+interface UsersModule : @DIModule.Required DatabaseModule {
+    fun usersRepository(): UsersRepository
+}
+----
+<1> `MigrationModule` needs a `dataSource`, but does not bind it.
+
+A module with a required supertype is _partial_.
+It is still a `DatabaseModule`, so its bindings can read `dataSource` like any other member.
+
+
+[#parts]
+== Building a part
+
+Next to its usual generated code, a partial module gets a `<Module>Part` class, which holds a binding for each member it provides:
+
+[source,kotlin]
+.InaraMigrationModule.kt
+----
+public class MigrationModulePart {
+    public constructor(migrator: Binding<MigrationModule, Unit, Migrator>)
+}
+----
+
+You build a part like a module, binding only what it provides:
+
+[source,kotlin]
+----
+val migration = MigrationModulePart(
+    migrator = Binding.single { Migrator(dataSource) }, // <1>
+)
+----
+<1> `dataSource` belongs to the required `DatabaseModule`: it is read from the module that composes the part.
+
+A part is not a module: it does not implement `MigrationModule`, since nothing in it could answer for `dataSource`.
+Its properties are reserved to generated code.
+
+
+[#composing]
+== Composing partial modules
+
+A xref:composition.adoc[composed module] takes a part in place of a built module for each partial parent, next to a parent that provides what the parts require:
+
+[source,kotlin]
+----
+@DIModule(composed = true)
+interface AppModule : DatabaseModule, MigrationModule, UsersModule
+
+val app = AppModule(
+    databaseModule = DatabaseModule(dataSource = Binding.single { HikariDataSource(config) }),
+    migrationModule = migration, // <1>
+    usersModule = UsersModulePart(usersRepository = Binding.single { SqlUsersRepository(dataSource) }),
+)
+----
+<1> A `MigrationModulePart`, not a `MigrationModule`.
+
+`MigrationModule` and `UsersModule` both reach `DatabaseModule`, but only `DatabaseModule` itself provides it.
+There is a single `dataSource`, and both `app.migrator` and `app.usersRepository()` use it.
+
+
+[#own-bindings]
+== Each module gets its own bindings
+
+A part is a recipe.
+Every module it is composed into gets its own copy of its bindings, so that each one builds its own `single` instances against its own required members:
+
+[source,kotlin]
+----
+val prod = AppModule(prodDatabase, migration, users)
+val test = AppModule(testDatabase, migration, users)
+
+prod.migrator.dataSource // prodDatabase's data source
+test.migrator.dataSource // testDatabase's data source
+----
+
+The parents that are full modules, such as `prodDatabase`, are shared as with any xref:composition.adoc#shared-bindings[composition].
+
+
+[#providing-parents]
+== Providing parents in a partial module
+
+A partial module may also provide parents of its own:
+
+[source,kotlin]
+----
+@DIModule
+interface CacheModule {
+    val cache: Cache
+}
+
+@DIModule(composed = true)
+interface ProfilesModule : @DIModule.Required DatabaseModule, CacheModule {
+    fun profiles(): ProfileRepository
+}
+----
+
+Its part then binds the members of `CacheModule` too:
+
+[source,kotlin]
+----
+val profiles = ProfilesModulePart(
+    cache = Binding.single { Cache() },
+    profiles = Binding.single { SqlProfileRepository(dataSource, cache) },
+)
+----
+
+With `composed = true`, the part gets a second constructor, which takes the parents it provides as already-built modules:
+
+[source,kotlin]
+----
+val sharedCache = CacheModule(cache = Binding.single { Cache() })
+
+val profiles = ProfilesModulePart(
+    cacheModule = sharedCache, // <1>
+    profiles = Binding.single { SqlProfileRepository(dataSource, cache) },
+)
+----
+<1> Shared, like the parent of any composed module: every module composing `profiles` uses the very same `Cache` as `sharedCache`.
+
+A parent given this way is already built, so its bindings cannot read what the partial module requires: `cache` cannot use `dataSource` here.
+Use the first constructor when they need to.
+
+
+[#swapping]
+== Swapping a part
+
+The parent-swapping `copy<Module>` of a composed module takes a part for each partial parent.
+Each one defaults to `null`, which keeps that parent as it is:
+
+[source,kotlin]
+----
+val withOtherMigrations = app.copyAppModule(migrationModule = otherMigration)
+val onTestDatabase = app.copyAppModule(databaseModule = testDatabase)
+----
+
+Since every binding of a part is read against the module that composes it, swapping the provider is enough: `onTestDatabase.migrator` uses the test data source.
+
+
+[#standalone]
+== Building a partial module on its own
+
+A partial module keeps its full builder, which binds every member, required ones included.
+It builds a complete module, which is handy in tests:
+
+[source,kotlin]
+----
+val migrationModule = MigrationModule(
+    dataSource = Binding.value(inMemoryDataSource),
+    migrator = Binding.single { Migrator(dataSource) },
+)
+----
+
+
+[#rules]
+== Rules
+
+The processor rejects, at compile time:
+
+* `@DIModule.Required` on a supertype that is not a `@DIModule`;
+* a partial module that requires an interface, and also provides it through another of its supertypes;
+* a composed module whose parents require an interface that none of them provides (`'MigrationModule' requires 'DatabaseModule', which no parent of 'AppModule' provides.`);
+* a composed module whose parents provide the same interface more than once (`Interface 'DatabaseModule' is inherited more than once, via 'PostgresModule' and 'SqliteModule'.`).
+
+A plain `@DIModule`, which is not composed, may extend a partial module without providing what it requires: its full builder binds every member, required ones included.
+
+`@DIModule.Required` only has a meaning on a direct supertype of a `@DIModule` interface, and is ignored anywhere else.
+
+TIP: A feature library can ship its wiring as a part: see xref:guides:multi-module.adoc#parts[multi-module projects].

@@ -105,3 +105,21 @@ SearchModule(
 ----
 
 Because the arguments classes are data classes, they can serve as `multiplex` keys, as long as they hold no array (see the warning in xref:bindings.adoc#multiplex[`multiplex`]).
+
+An arguments class belongs to the module that declares the member.
+A module that inherits the member from another `@DIModule` uses that module's class, and generates none of its own:
+
+[source,kotlin]
+----
+@DIModule
+interface AppModule : SearchModule
+
+AppModule(
+    index = Binding.single { SearchIndex() },
+    search = Binding.factory { args: SearchModuleBindingArguments.Search -> index().find(args.query).take(args.limit) }, // <1>
+    tagged = Binding.factory { args -> index().findTagged(args.tags.toSet(), args.strict) },
+)
+----
+<1> `SearchModuleBindingArguments`, not `AppModuleBindingArguments`: a binding built for `SearchModule` therefore fits `AppModule` as it is, which is what lets xref:composition.adoc[composition] reuse it.
+
+A member that comes from an interface that is not a `@DIModule` (see xref:supertypes.adoc[]) gets its class in the first `@DIModule` that extends that interface.

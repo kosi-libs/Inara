@@ -16,7 +16,8 @@ interface AppModule : GreeterModule, CounterModule {
 == Two builders
 
 A composed module gets two builder overloads.
-The first one takes one built module per direct `@DIModule` parent, and only binds the members declared on the child itself:
+The first one takes one built module per direct `@DIModule` parent, and only binds the members declared on the child itself.
+For a xref:partial-modules.adoc[partial] parent, it takes that parent's part instead.
 
 [source,kotlin]
 ----
@@ -46,6 +47,7 @@ val app = AppModule(
 Both overloads build the same implementation.
 
 
+[#shared-bindings]
 == Parent bindings are reused as they are
 
 When a parent was built by Inara, the child reuses each of its bindings as is, rather than calling through the parent.
@@ -53,7 +55,7 @@ The bindings are therefore *shared* between the parent and the child: a `single`
 
 A memoized binding that is shared this way is built by whichever of the two modules accesses it first, with that module as its receiver.
 
-A parent that implements the interface by hand, or an inherited member that takes several parameters, is read through a lightweight delegate to the parent instead.
+A parent that implements the interface by hand is read through a lightweight delegate to the parent instead.
 
 
 == Swapping a parent
@@ -66,15 +68,17 @@ val withOtherGreeter = app.copyAppModule(greeterModule = otherGreeter)
 ----
 
 Each parent parameter defaults to the module being copied, so omitted parents are kept as they are.
+A xref:partial-modules.adoc#swapping[partial] parent's part defaults to `null`, with the same meaning.
 As with any other xref:copy.adoc[copy], the new module gets its own copy of every binding, including those it takes from the parent you pass in: that parent keeps its own `single` instances to itself.
 
 
 == Restrictions
 
 * A composed module must extend at least one `@DIModule` interface.
-* Diamond inheritance is rejected.
-Two parents that both provide the same ancestor's members are ambiguous: the child could not know which parent to read those members from.
+* Two parents may not provide the same ancestor: the child could not know which parent to read its members from.
+Diamond inheritance is therefore rejected, unless all but one of the paths reach the ancestor through a xref:partial-modules.adoc[partial module] that only requires it.
 Plain, non-composed `@DIModule` interfaces have no such restriction.
+* An ancestor that a partial parent requires must be provided by exactly one parent.
 * Members coming from a xref:supertypes.adoc[plain, non-`@DIModule` supertype] cannot be read from a parent module: in the from-parents builder, they are binding parameters, next to the members declared on the child.
 
 TIP: Composition is the building block of xref:guides:scopes.adoc[scopes], and of xref:guides:multi-module.adoc[multi-module projects].

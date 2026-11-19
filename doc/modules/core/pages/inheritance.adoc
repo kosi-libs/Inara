@@ -75,5 +75,6 @@ DiamondModule(
 
 Inheritance flattens parents into the child: every member, inherited or not, gets its own binding parameter.
 When the parent modules are already built, and you want to reuse them as they are rather than rebind their members, use xref:composition.adoc[composition] instead.
+When a module needs a parent that it should not build itself, make it a xref:partial-modules.adoc[partial module].
 
 A parent does not have to be a `@DIModule`: xref:supertypes.adoc[] explains how members of plain interfaces are bound.
