@@ -18,6 +18,8 @@ import com.squareup.kotlinpoet.ksp.toClassName
 import com.squareup.kotlinpoet.ksp.toTypeName
 
 internal const val DI_MODULE_ANNOTATION = "org.kodein.di.inara.DIModule"
+/** The type annotation marking a direct `@DIModule` supertype as required rather than provided. */
+internal const val DI_MODULE_REQUIRED_ANNOTATION = "org.kodein.di.inara.DIModule.Required"
 internal const val DI_FACTORY_ANNOTATION = "org.kodein.di.inara.DIFactory"
 /** JVM synthetic container the compiler wraps repeated `@DIFactory` annotations in - KSP may surface
  * this instead of the individual entries, so [parseFactories] unwraps it. */
@@ -50,6 +52,13 @@ internal data class ParameterModel(
  *
  * [sets] are the qualified names of the set annotations (see `@DISet`) the member carries, directly
  * or on a declaration it overrides - the sets a `setOf<Annotation>()` function collects it into.
+ *
+ * [argsClassName] is, for a member with two or more parameters only, the generated data class its
+ * arguments are wrapped into: `<Owner>BindingArguments.<Name>`, where the owner is the `@DIModule`
+ * that introduces the member - the module itself for an own or plain-supertype member, its source
+ * parent's owner for one pulled from a `@DIModule` parent (see [parseModule]). Every module reaching
+ * the member therefore shares one arguments class, so a parent's (or a `Part`'s) binding fits a
+ * child's slot as it is.
  */
 internal data class MemberModel(
     val name: String,
@@ -59,6 +68,7 @@ internal data class MemberModel(
     val returnType: KSType,
     val hasDefaultImplementation: Boolean,
     val sets: List<String> = emptyList(),
+    val argsClassName: ClassName? = null,
 )
 
 /**
@@ -67,16 +77,27 @@ internal data class MemberModel(
  *
  * [generatedClassName] is the parent's own `Inara<Parent>` implementation class. It is `public`
  * (behind `@InternalInaraGeneration`), so a `@DIModule(composed = true)` builder always reads each
- * inherited member's binding straight off it - whichever compilation the parent came from. A member
- * with 2+ parameters still falls back to a `BindingImpls.Delegate` (its per-module arguments data
- * class makes the `Binding`'s `A` invariant).
+ * inherited member's binding straight off it - whichever compilation the parent came from - falling
+ * back to a `BindingImpls.Delegate` only for a hand-written parent.
+ *
+ * [isRequired] is true when the module marks this supertype `@DIModule.Required`. [partClassName]
+ * is the parent's `<Parent>Part` class when the parent is itself partial (see
+ * [ModuleModel.isPartial]): a builder then takes that `Part` in place of a parent instance.
+ * [model] is the parent's own parsed model (`null` only if it failed to parse), read to share its
+ * arguments classes and to generate the reads off its `Part`.
  */
-internal data class ParentModel(
+internal class ParentModel(
     val declaration: KSClassDeclaration,
     val moduleClassName: ClassName,
     val generatedClassName: ClassName,
     val paramName: String,
-)
+    val isRequired: Boolean,
+    val partClassName: ClassName?,
+    val model: ModuleModel?,
+) {
+    /** The type a builder or copy function takes for this parent: its `Part`, or the module itself. */
+    val parameterClassName: ClassName get() = partClassName ?: moduleClassName
+}
 
 /**
  * [ownMembers] are the members declared directly on this interface plus every member reachable
@@ -100,6 +121,10 @@ internal data class ParentModel(
  *
  * [sets] holds one entry per set the module generates a `setOf<Annotation>()` function for: every
  * one listed in its own `@DIModule(sets = ...)` or in any `@DIModule` ancestor's.
+ *
+ * [isPartial] is true when at least one of [parents] is `@DIModule.Required`: the module then also
+ * gets a [partClassName] class holding a binding for each of [partMembers] - every member of
+ * [allMembers] but those pulled from a required parent.
  */
 internal data class ModuleModel(
     val declaration: KSClassDeclaration,
@@ -114,7 +139,24 @@ internal data class ModuleModel(
     val ancestorDeclarations: List<KSClassDeclaration>,
     val isComposed: Boolean,
     val sets: List<SetModel>,
-)
+    val isPartial: Boolean = false,
+    val partClassName: ClassName? = null,
+    val partMembers: List<MemberModel> = emptyList(),
+) {
+    /** Whether the [partClassName] class has a second constructor, taking the already-built parents
+     * the module provides: only for a `@DIModule(composed = true)` partial module providing at least
+     * one `@DIModule` parent - with none, it would clash with the flattened constructor. */
+    val hasPartFromParents: Boolean get() = isPartial && isComposed && parents.any { !it.isRequired }
+}
+
+/** The `<Module>Part` class name of a partial module whose flattened base name is [baseName] (see
+ * [generatedBaseName]), in [packageName]. */
+internal fun partClassNameOf(packageName: String, baseName: String): ClassName = ClassName(packageName, "${baseName}Part")
+
+/** The `<Module>BindingArguments` container class name of a module whose flattened base name is
+ * [baseName] (see [generatedBaseName]), in [packageName]. */
+internal fun argsContainerClassNameOf(packageName: String, baseName: String): ClassName =
+    ClassName(packageName, "${baseName}BindingArguments")
 
 /**
  * The declaration's simple name prefixed with every enclosing class/interface/object's simple name,
@@ -222,6 +264,56 @@ private fun interfaceClosure(classDecl: KSClassDeclaration, cache: ClosureCache)
 private fun isSubtypeOf(sub: KSClassDeclaration, sup: KSClassDeclaration, cache: ClosureCache): Boolean =
     sup.qualifiedName?.asString() in interfaceClosure(sub, cache).keys
 
+/** True when this supertype reference carries the `@DIModule.Required` type annotation. KSP reads it
+ * off a compiled library's declarations too, from the Kotlin metadata. */
+private fun KSTypeReference.isMarkedRequired(): Boolean =
+    annotations.any { it.annotationType.resolve().declaration.qualifiedName?.asString() == DI_MODULE_REQUIRED_ANNOTATION }
+
+/** The direct supertypes of a `@DIModule` marked `@DIModule.Required` - none for any other interface,
+ * on which the annotation means nothing. */
+private fun KSClassDeclaration.requiredSuperInterfaces(): List<KSClassDeclaration> {
+    if (!isDIModule()) return emptyList()
+    return superTypes
+        .filter { it.isMarkedRequired() }
+        .mapNotNull { it.resolve().declaration as? KSClassDeclaration }
+        .toList()
+}
+
+/** True for a partial `@DIModule`: one with at least one `@DIModule.Required` direct supertype. */
+private fun KSClassDeclaration.isPartialDIModule(): Boolean =
+    isDIModule() && superTypes.any { it.isMarkedRequired() }
+
+/**
+ * Every interface [decl] requires rather than provides, keyed by qualified name: the closure of each
+ * of its `@DIModule.Required` direct supertypes. Requirements of a parent it provides are not
+ * included: [decl]'s own builders bind them (flattened), or a composing check rejects them (see
+ * [checkComposedProviders]).
+ */
+private fun requiredClosure(decl: KSClassDeclaration, cache: ClosureCache): Map<String, KSClassDeclaration> {
+    val result = LinkedHashMap<String, KSClassDeclaration>()
+    for (required in decl.requiredSuperInterfaces()) {
+        for ((name, ancestor) in interfaceClosure(required, cache)) result.putIfAbsent(name, ancestor)
+    }
+    return result
+}
+
+/** Every interface [decl] provides - itself and its whole closure, minus what it requires (see
+ * [requiredClosure]) - keyed by qualified name. A plain interface provides its whole closure. */
+private fun providedClosure(decl: KSClassDeclaration, cache: ClosureCache): Map<String, KSClassDeclaration> {
+    val required = requiredClosure(decl, cache)
+    return interfaceClosure(decl, cache).filterKeys { it !in required }
+}
+
+/** The members of [decls] that no other member of [decls] derives from: when `Base : Root` are both
+ * involved in one mistake, naming `Root` too would just describe it twice. Two incomparable ones are
+ * two genuine problems, so both are kept. */
+private fun mostDerived(decls: Collection<KSClassDeclaration>, cache: ClosureCache): List<KSClassDeclaration> =
+    decls.filter { c ->
+        decls.none { o ->
+            o.qualifiedName?.asString() != c.qualifiedName?.asString() && isSubtypeOf(o, c, cache)
+        }
+    }
+
 /** A property or function declaration paired with the interface that actually declares it. */
 private data class ClosureDecl(val decl: KSDeclaration, val owner: KSClassDeclaration)
 
@@ -275,9 +367,11 @@ private data class Candidate(
  * same declaration reached twice, e.g. diamond inheritance) or a subtype of the other's (an
  * `override` in a more derived interface shadowing what it overrides, however many levels apart) -
  * the most derived entry survives, preferring one reached through a plain supertype over one
- * reached through a `@DIModule` parent when both reach the same winning owner. Anything else - two
- * unrelated owners, or two distinct declarations on the very same owner (an overload) - is
- * rejected.
+ * reached through a `@DIModule` parent when both reach the same winning owner, then one reached
+ * through a parent that provides that owner (see [providedClosure]) over one reached through a
+ * parent that only requires it - a member always comes from the parent able to supply it. Anything
+ * else - two unrelated owners, or two distinct declarations on the very same owner (an overload) -
+ * is rejected.
  */
 private fun resolveClosure(
     candidates: List<Candidate>,
@@ -285,6 +379,10 @@ private fun resolveClosure(
     reportError: (String, KSNode) -> Unit,
     closureCache: ClosureCache,
 ): List<Candidate> {
+    fun providesOwner(candidate: Candidate): Boolean {
+        val parent = candidate.directParent ?: return false
+        return candidate.closureDecl.owner.qualifiedName?.asString() in providedClosure(parent.declaration, closureCache)
+    }
     val result = mutableListOf<Candidate>()
     for ((name, entries) in candidates.groupBy { it.closureDecl.decl.simpleName.asString() }) {
         val mostDerivedOwners = entries
@@ -314,7 +412,7 @@ private fun resolveClosure(
             continue
         }
 
-        val survivor = winners.firstOrNull { it.ownFromPlain } ?: winners.first()
+        val survivor = winners.firstOrNull { it.ownFromPlain } ?: winners.firstOrNull(::providesOwner) ?: winners.first()
         val overridden = entries.map { it.closureDecl.decl }.distinct().filter { it != survivor.closureDecl.decl }
         result += survivor.copy(overridden = overridden)
     }
@@ -430,6 +528,7 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
     var supertypesValid = true
     val parentEntries = mutableListOf<Pair<KSTypeReference, KSClassDeclaration>>()
     val plainEntries = mutableListOf<Pair<KSTypeReference, KSClassDeclaration>>()
+    val requiredParentNames = HashSet<String>()
     for (superType in classDecl.superTypes) {
         val resolved = superType.resolve().declaration
         if (resolved.qualifiedName?.asString() == "kotlin.Any") continue
@@ -439,11 +538,24 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
             supertypesValid = false
             continue
         }
-        if (superDecl.isDIModule()) parentEntries += superType to superDecl else plainEntries += superType to superDecl
+        val isRequired = superType.isMarkedRequired()
+        if (superDecl.isDIModule()) {
+            parentEntries += superType to superDecl
+            if (isRequired) superDecl.qualifiedName?.asString()?.let(requiredParentNames::add)
+        } else {
+            plainEntries += superType to superDecl
+            if (isRequired) {
+                reportError(
+                    "Only a @DIModule supertype can be @DIModule.Required: '${superDecl.simpleName.asString()}' is not a @DIModule.",
+                    superType,
+                )
+            }
+        }
     }
     if (!supertypesValid) return null
 
     val parentDecls = parentEntries.map { it.second }
+    fun KSClassDeclaration.isRequiredParent(): Boolean = qualifiedName?.asString() in requiredParentNames
 
     if (isComposed && parentDecls.isEmpty()) {
         reportError(
@@ -452,38 +564,32 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         )
     }
 
-    // Diamond inheritance: two direct @DIModule parents that both reach the same ancestor
-    // interface (annotated or not - a plain shared ancestor is just as ambiguous). The from-parents
-    // builder would have no way to decide which parent instance to read that ancestor's members
-    // from, so this is rejected for a @DIModule(composed = true) interface outright. A plain
-    // @DIModule interface has no from-parents builder to trip over this, so a shared ancestor's
-    // members are simply folded in once (see [resolveClosure]).
-    if (isComposed && parentDecls.size > 1) {
-        val closures = parentDecls.map { it to interfaceClosure(it, closureCache) }
-        for (i in closures.indices) {
-            for (j in i + 1 until closures.size) {
-                val (parentA, closureA) = closures[i]
-                val (parentB, closureB) = closures[j]
-                val shared = (closureA.keys intersect closureB.keys).map { closureA.getValue(it) }
-                // Report only the most-derived shared ancestor(s): if the pair shares `Base : Root`,
-                // naming `Root` too just describes one mistake twice. Two _incomparable_ shared
-                // ancestors are two genuine ambiguities, so both are still reported.
-                val mostDerived = shared.filter { c ->
-                    shared.none { o ->
-                        o.qualifiedName?.asString() != c.qualifiedName?.asString() &&
-                            isSubtypeOf(o, c, closureCache)
-                    }
+    // A required supertype must stay required all the way down: no interface it reaches may also be
+    // reached through a supertype this module provides - that one would bind it (or override one of
+    // its members), so whoever composes this module would have it provided twice.
+    val requiredDecls = parentDecls.filter { it.isRequiredParent() }
+    val providingDecls = parentDecls.filterNot { it.isRequiredParent() } + plainEntries.map { it.second }
+    for (required in requiredDecls) {
+        val requiredClosure = interfaceClosure(required, closureCache)
+        for (providing in providingDecls) {
+            val provided = providedClosure(providing, closureCache)
+            val shared = requiredClosure.filterKeys { it in provided }.values
+            for (ancestor in mostDerived(shared, closureCache)) {
+                val through = if (ancestor.qualifiedName?.asString() == required.qualifiedName?.asString()) {
+                    ""
+                } else {
+                    " through '${required.simpleName.asString()}'"
                 }
-                for (ancestor in mostDerived) {
-                    reportError(
-                        "Interface '${ancestor.simpleName.asString()}' is inherited more than once, " +
-                            "via '${parentA.simpleName.asString()}' and '${parentB.simpleName.asString()}'.",
-                        classDecl,
-                    )
-                }
+                reportError(
+                    "Interface '${ancestor.simpleName.asString()}' is required$through, " +
+                        "but '${providing.simpleName.asString()}' provides it.",
+                    classDecl,
+                )
             }
         }
     }
+
+    if (isComposed) checkComposedProviders(classDecl, parentDecls, { it.isRequiredParent() }, closureCache, ::reportError)
 
     val nameOwners = mutableMapOf<String, KSClassDeclaration>()
     val parentModels = mutableListOf<ParentModel>()
@@ -499,10 +605,30 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
                 )
             }
         }
+        // The parent's own model shares its arguments classes with this module, and describes its
+        // Part. It is parsed (once per round) wherever it comes from - a library's compiled parent
+        // included. A parent from this compilation that fails to parse has already reported why.
+        val parentModel = parseModule(parent, logger, cache)
+        if (parentModel == null) {
+            if (parent.containingFile == null) {
+                reportError("The @DIModule parent '${parent.simpleName.asString()}' could not be read.", classDecl)
+            } else {
+                hasError = true
+            }
+        }
         // The parent's own Inara<Parent> class is public (behind @InternalInaraGeneration), so it's
         // always referenceable - whichever compilation the parent came from.
-        val parentGeneratedClassName = ClassName(parent.packageName.asString(), inaraName(parent.generatedBaseName()))
-        parentModels += ParentModel(parent, parent.toClassName(), parentGeneratedClassName, paramName)
+        val parentPackage = parent.packageName.asString()
+        val parentBaseName = parent.generatedBaseName()
+        parentModels += ParentModel(
+            declaration = parent,
+            moduleClassName = parent.toClassName(),
+            generatedClassName = ClassName(parentPackage, inaraName(parentBaseName)),
+            paramName = paramName,
+            isRequired = parent.isRequiredParent(),
+            partClassName = if (parent.isPartialDIModule()) partClassNameOf(parentPackage, parentBaseName) else null,
+            model = parentModel,
+        )
     }
     val parentModelByDecl: Map<KSClassDeclaration, ParentModel> =
         parentDecls.zip(parentModels).toMap()
@@ -666,10 +792,23 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         superDeclarationClosure(plain).map { Candidate(it, node, ownFromPlain = true, directParent = null) }
     }
 
+    val ownArgsContainer = argsContainerClassNameOf(classDecl.packageName.asString(), classDecl.generatedBaseName())
+    /** [member]'s own arguments class, owned by this module - for a member it introduces. */
+    fun ownArgs(member: MemberModel): MemberModel =
+        if (member.parameters.size > 1) member.copy(argsClassName = ownArgsContainer.nestedClass(member.argsClassSimpleName())) else member
+
     for (candidate in resolveClosure(candidates, classDecl, ::reportError, closureCache)) {
         val (closureDecl, node, ownFromPlain, directParent, overridden) = candidate
-        val member = parseMember(closureDecl.decl, closureDecl.owner, node, isOwn = false, overridden) ?: continue
+        val parsed = parseMember(closureDecl.decl, closureDecl.owner, node, isOwn = false, overridden) ?: continue
         nameOwners[closureDecl.decl.simpleName.asString()] = closureDecl.owner
+        // A member pulled from a @DIModule parent shares that parent's arguments class, so the
+        // parent's binding fits this module's slot as it is.
+        val member = if (ownFromPlain || directParent == null) {
+            ownArgs(parsed)
+        } else {
+            val parentArgs = directParent.model?.allMembers?.firstOrNull { it.name == parsed.name }?.argsClassName
+            if (parentArgs != null) parsed.copy(argsClassName = parentArgs) else ownArgs(parsed)
+        }
         allMembers += member
         if (ownFromPlain) ownMembers += member
         else directParent?.let { parentByMemberName[member.name] = it }
@@ -698,7 +837,7 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         // implement, exactly as superDeclarationClosure treats an inherited one.
         if (decl.getVisibility() == Visibility.PRIVATE) continue
         val claimOk = claimName(decl.simpleName.asString(), decl)
-        val member = parseMember(decl, classDecl, decl, isOwn = true)
+        val member = parseMember(decl, classDecl, decl, isOwn = true)?.let(::ownArgs)
         if (claimOk && member != null) {
             ownMembers += member
             allMembers += member
@@ -721,8 +860,10 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
     }
 
     // Two multi-parameter members whose names capitalize to the same arguments-class name would
-    // generate the same nested data class twice.
-    for ((capitalized, group) in allMembers.filter { it.parameters.size > 1 }.groupBy { it.argsClassSimpleName() }) {
+    // generate the same nested data class twice. Only the classes this module generates itself
+    // matter: an inherited member's lives in the container of the module introducing it.
+    val ownedArgsMembers = allMembers.filter { it.argsClassName?.enclosingClassName() == ownArgsContainer }
+    for ((capitalized, group) in ownedArgsMembers.groupBy { it.argsClassSimpleName() }) {
         if (group.size > 1) {
             reportError(
                 "Members " + group.map { it.name }.distinct().sorted().joinToString(", ") { "'$it'" } +
@@ -736,6 +877,8 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
     val sets = parseSets(classDecl, allMembers, cache, closureCache, ::reportError)
 
     if (hasError) return null
+
+    val isPartial = parentModels.any { it.isRequired }
 
     val ancestorDeclarations = LinkedHashMap<String, KSClassDeclaration>().apply {
         for (supertype in parentDecls + plainEntries.map { it.second }) {
@@ -758,7 +901,61 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         ancestorDeclarations = ancestorDeclarations,
         isComposed = isComposed,
         sets = sets,
+        isPartial = isPartial,
+        partClassName = if (isPartial) partClassNameOf(classDecl.packageName.asString(), classDecl.generatedBaseName()) else null,
+        partMembers = if (isPartial) allMembers.filter { parentByMemberName[it.name]?.isRequired != true } else emptyList(),
     )
+}
+
+/**
+ * The rule that replaces the outright diamond rejection for a `@DIModule(composed = true)` module:
+ * its from-parents builder reads every inherited member off exactly one parent, so every interface
+ * reachable through [parents] must be *provided* (see [providedClosure]) by at most one of them -
+ * two would be ambiguous - and by exactly one whenever some parent *requires* it (see
+ * [requiredClosure]). A parent this module itself marks `@DIModule.Required` counts as a provider:
+ * the from-parents builder takes it too. A required parent overlapping a provided one is already
+ * reported by [parseModule]'s required-supertype rule, so such a pair is skipped here.
+ */
+private fun checkComposedProviders(
+    classDecl: KSClassDeclaration,
+    parents: List<KSClassDeclaration>,
+    isRequired: (KSClassDeclaration) -> Boolean,
+    closureCache: ClosureCache,
+    reportError: (String, KSNode) -> Unit,
+) {
+    val provided = parents.map { it to providedClosure(it, closureCache) }
+    for (i in provided.indices) {
+        for (j in i + 1 until provided.size) {
+            val (parentA, closureA) = provided[i]
+            val (parentB, closureB) = provided[j]
+            if (isRequired(parentA) != isRequired(parentB)) continue
+            val shared = closureA.filterKeys { it in closureB }.values
+            for (ancestor in mostDerived(shared, closureCache)) {
+                reportError(
+                    "Interface '${ancestor.simpleName.asString()}' is inherited more than once, " +
+                        "via '${parentA.simpleName.asString()}' and '${parentB.simpleName.asString()}'.",
+                    classDecl,
+                )
+            }
+        }
+    }
+
+    val providedNames = provided.flatMapTo(HashSet()) { it.second.keys }
+    val unmet = LinkedHashMap<String, KSClassDeclaration>()
+    for (parent in parents) {
+        for ((name, decl) in requiredClosure(parent, closureCache)) {
+            if (name !in providedNames) unmet.putIfAbsent(name, decl)
+        }
+    }
+    for (ancestor in mostDerived(unmet.values, closureCache)) {
+        val ancestorName = ancestor.qualifiedName?.asString()
+        val requirers = parents.filter { ancestorName in requiredClosure(it, closureCache) }.map { "'${it.simpleName.asString()}'" }
+        reportError(
+            requirers.joinToString(" and ") + " require${if (requirers.size == 1) "s" else ""} " +
+                "'${ancestor.simpleName.asString()}', which no parent of '${classDecl.simpleName.asString()}' provides.",
+            classDecl,
+        )
+    }
 }
 
 /**

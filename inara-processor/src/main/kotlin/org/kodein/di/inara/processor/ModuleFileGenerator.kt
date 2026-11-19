@@ -168,14 +168,15 @@ private fun buildToStringFunction(builderName: String, members: List<MemberModel
 /**
  * The `Binding`/`SuspendBinding` argument type (`A`) of [member]: `Unit` for no parameters, a
  * single parameter's own type (the vararg array type if it's a vararg), or - for two or more
- * parameters, vararg included - the generated `<argsClassName>.<Name>` data class.
+ * parameters, vararg included - its generated arguments data class (see
+ * [MemberModel.argsClassName]), shared by every module reaching the member.
  */
-private fun argsTypeNameOf(argsClassName: ClassName, member: MemberModel): TypeName = when {
+private fun argsTypeNameOf(member: MemberModel): TypeName = when {
     member.parameters.isEmpty() -> UNIT
     member.parameters.size == 1 -> member.parameters[0].let { p ->
         if (p.isVararg) varargArrayTypeName(p.type) else p.type.toTypeName()
     }
-    else -> argsClassName.nestedClass(member.argsClassSimpleName())
+    else -> checkNotNull(member.argsClassName) { "No arguments class for '${member.name}'" }
 }
 
 /**
@@ -188,11 +189,10 @@ private fun argsTypeNameOf(argsClassName: ClassName, member: MemberModel): TypeN
  */
 private fun bindingTypeOf(
     moduleClassName: ClassName,
-    argsClassName: ClassName,
     member: MemberModel,
     nullable: Boolean = member.hasDefaultImplementation,
 ): TypeName {
-    val argTypeName = argsTypeNameOf(argsClassName, member)
+    val argTypeName = argsTypeNameOf(member)
     val returnTypeName = member.returnType.toTypeName()
     val bindingClass = if (member.isSuspend) SUSPEND_BINDING else BINDING
     val bindingType = bindingClass.parameterizedBy(moduleClassName, argTypeName, returnTypeName)
@@ -263,12 +263,9 @@ private fun storedBindingOrDelegateCode(
 /**
  * The binding for an inherited [member] sourced from its parent instance [parentParam]: the
  * `<member>Binding` property read off [parentGeneratedClass] when the instance is that
- * implementation, otherwise a delegate that forwards to `parentParam.<member>(...)`.
- *
- * A member with 2+ parameters always takes the delegate: its arguments are wrapped in a *per-module*
- * `<Module>BindingArguments` data class, so the parent's `Binding<Parent, ParentArgs.X, T>` can't
- * fill the child's `Binding<Child, ChildArgs.X, T>` slot (`A` is invariant) - the delegate sidesteps
- * it by unpacking and forwarding.
+ * implementation, otherwise a delegate that forwards to `parentParam.<member>(...)`. A member with
+ * 2+ parameters needs no special case: its arguments class is the one of the module introducing it
+ * (see [MemberModel.argsClassName]), shared by the parent and the child alike.
  *
  * With [copied], the binding read off the parent is a copy (see [copiedBindingCode]) - the
  * parent-swapping `copy<Module>` gives the new module its own state - rather than shared with the parent as
@@ -281,7 +278,6 @@ private fun parentBindingCode(
     copied: Boolean = false,
 ): CodeBlock {
     val delegate = delegateBindingCode(member, CodeBlock.of("%N", parentParam))
-    if (member.parameters.size > 1) return delegate
     val stored = CodeBlock.of("%N.%N", parentParam, "${member.name}Binding")
     return CodeBlock.of(
         "if (%N is %T) %L else %L",
@@ -291,31 +287,39 @@ private fun parentBindingCode(
 
 /**
  * The default value of an inherited [member]'s parameter on the parent-swapping `copy<Module>(...)`
- * overload: three cases, since that overload defaults each parent parameter to the receiver itself.
- * [receiver] is the labeled receiver of that overload (`this@copy<Module>`).
+ * overload: three cases, since that overload defaults each parent parameter to the receiver itself
+ * (to `null` for a partial parent's `Part`). [receiver] is the labeled receiver of that overload
+ * (`this@copy<Module>`).
  *
- * - the parent *was* swapped (`<parentParam> !== <receiver>`) - take the binding from the new parent
- *   instance ([parentBindingCode]);
+ * - the parent *was* swapped (`<parentParam> !== <receiver>`, or a non-`null` `Part`) - take a copy
+ *   of the binding from the new parent instance ([parentBindingCode]) or `Part` ([partBindingCode]);
  * - it wasn't, and the receiver is the generated implementation - carry a copy of
  *   `<receiver>.<member>Binding` across, exactly like the member-override `copy<Module>`;
  * - it wasn't, and the receiver is hand-written - a current-value delegate over the receiver.
  */
 private fun parentSwapInheritedCode(
     member: MemberModel,
-    parentParamName: String,
-    parentGeneratedClass: ClassName,
+    parent: ParentModel,
     selfGeneratedClass: ClassName,
     receiver: CodeBlock,
 ): CodeBlock {
     val bindingPropertyName = "${member.name}Binding"
+    val swapped = if (parent.partClassName != null) {
+        CodeBlock.of(
+            "%N != null -> %L\n",
+            parent.paramName, partBindingCode(member, CodeBlock.of("%N", parent.paramName), parent, copied = true),
+        )
+    } else {
+        CodeBlock.of(
+            "%N !== %L -> %L\n",
+            parent.paramName, receiver,
+            parentBindingCode(member, parent.paramName, parent.generatedClassName, copied = true),
+        )
+    }
     return CodeBlock.builder()
         .add("when {\n")
         .indent()
-        .add(
-            "%N !== %L -> %L\n",
-            parentParamName, receiver,
-            parentBindingCode(member, parentParamName, parentGeneratedClass, copied = true),
-        )
+        .add(swapped)
         .add(
             "%L is %T -> %L\n",
             receiver, selfGeneratedClass, copiedBindingCode(member, CodeBlock.of("%L.%N", receiver, bindingPropertyName)),
@@ -342,20 +346,21 @@ private fun parentSwapInheritedCode(
  * `Inara<Module>`, reading each inherited member's binding straight off the parent instance
  * (`Binding<M, A, T>` is contravariant in `M`, so a `Binding<Parent, …>` fits a `Binding<Child, …>`
  * slot). A parent that isn't the generated implementation - a hand-written one - falls back to a
- * `BindingImpls.Delegate` over the instance, as does an inherited member with 2+ parameters (its
- * `Binding` argument type is the *per-module* `<Module>BindingArguments` data class, and `A` is
- * invariant - see [parentBindingCode]).
+ * `BindingImpls.Delegate` over the instance (see [parentBindingCode]). A partial parent is taken as
+ * its `<Parent>Part` instead, whose bindings are copied rather than shared (see [partBindingCode]).
  *
  * A member with a default implementation (see [MemberModel.hasDefaultImplementation]) gets a
  * nullable `Binding`/`SuspendBinding` that defaults to `null` in the builder function: `null` keeps
  * the interface's own default body, any other value overrides it.
  *
  * A function with more than one parameter (vararg included) has its arguments wrapped into a
- * generated `<Module>BindingArguments.<Name>` data class - see [buildArgsContainerType]. A member
- * inherited from a `@DIModule` parent or a plain supertype gets its own entry regenerated here too,
- * rather than referencing the ancestor's: `Binding<M, A, T>` is already parameterized on this (leaf)
- * module type for every member, inherited or not, so a `Binding` built for one module was never
- * reusable for another regardless - duplicating the small data class alongside it costs nothing.
+ * generated `<Module>BindingArguments.<Name>` data class - see [buildArgsContainerType]. Only the
+ * module introducing the member generates it - itself for an own or plain-supertype member - and
+ * every module inheriting it from a `@DIModule` parent reuses it (see [MemberModel.argsClassName]),
+ * so the parent's binding fits the child's slot as it is.
+ *
+ * A partial module (see [ModuleModel.isPartial]) additionally gets its `<Module>Part` class - see
+ * [buildPartType].
  *
  * See [buildCopyFunctions], [buildShadowFunctions] and [buildSetFunctions] for the
  * `copy<Module>`, `shadow<Module>` and `setOf<Annotation>` function(s) appended after these.
@@ -363,7 +368,7 @@ private fun parentSwapInheritedCode(
 internal fun generateModuleFile(model: ModuleModel): FileSpec {
     val moduleClassName = model.moduleClassName
     val generatedClassName = inaraName(model.generatedBaseName)
-    val argsClassName = ClassName(moduleClassName.packageName, "${model.generatedBaseName}BindingArguments")
+    val argsClassName = argsContainerClassNameOf(moduleClassName.packageName, model.generatedBaseName)
 
     val originatingFiles: List<KSFile> =
         listOfNotNull(model.declaration.containingFile) + model.ancestorDeclarations.mapNotNull { it.containingFile }
@@ -377,7 +382,6 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
         generatedClassName = generatedClassName,
         builderName = model.simpleName,
         moduleClassName = moduleClassName,
-        argsClassName = argsClassName,
         visibility = model.visibility,
         members = model.allMembers,
         originatingFiles = originatingFiles,
@@ -385,14 +389,18 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
     fileBuilder.addType(typeSpec).addFunction(builderFun)
 
     if (model.isComposed) {
-        fileBuilder.addFunction(buildComposedBuilderFunction(model, generatedClassName, argsClassName))
+        fileBuilder.addFunction(buildComposedBuilderFunction(model, generatedClassName))
     }
 
-    for (copyFun in buildCopyFunctions(model, argsClassName)) {
+    if (model.isPartial) {
+        fileBuilder.addType(buildPartType(model, originatingFiles))
+    }
+
+    for (copyFun in buildCopyFunctions(model)) {
         fileBuilder.addFunction(copyFun)
     }
 
-    for (shadowFun in buildShadowFunctions(model, argsClassName)) {
+    for (shadowFun in buildShadowFunctions(model)) {
         fileBuilder.addFunction(shadowFun)
     }
 
@@ -418,7 +426,7 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
  * may themselves be `internal`, so a `public` container would fail to compile.
  */
 private fun buildArgsContainerType(argsClassName: ClassName, visibility: Visibility, members: List<MemberModel>, originatingFiles: List<KSFile>): TypeSpec? {
-    val multiParamMembers = members.filter { it.parameters.size > 1 }
+    val multiParamMembers = members.filter { it.argsClassName?.enclosingClassName() == argsClassName }
     if (multiParamMembers.isEmpty()) return null
 
     val containerBuilder = TypeSpec.classBuilder(argsClassName)
@@ -465,12 +473,11 @@ private fun buildModuleType(
     generatedClassName: String,
     builderName: String,
     moduleClassName: ClassName,
-    argsClassName: ClassName,
     visibility: Visibility,
     members: List<MemberModel>,
     originatingFiles: List<KSFile>,
 ): Pair<TypeSpec, FunSpec> {
-    fun bindingTypeOf(member: MemberModel): TypeName = bindingTypeOf(moduleClassName, argsClassName, member)
+    fun bindingTypeOf(member: MemberModel): TypeName = bindingTypeOf(moduleClassName, member)
 
     val classBuilder = TypeSpec.classBuilder(generatedClassName)
         .apply { if (visibility == Visibility.INTERNAL) addModifiers(KModifier.INTERNAL) }
@@ -510,7 +517,7 @@ private fun buildModuleType(
                 member.parameters.size == 1 -> CodeBlock.of("%N", member.parameters[0].name)
                 else -> CodeBlock.of(
                     "%T(%L)",
-                    argsClassName.nestedClass(member.argsClassSimpleName()),
+                    argsTypeNameOf(member),
                     member.parameters.map { CodeBlock.of("%N", it.name) }.joinToCode(", "),
                 )
             }
@@ -594,17 +601,17 @@ private fun buildModuleType(
 
 /**
  * The second `<Module>(...)` builder overload for a `@DIModule(composed = true)` interface: one
- * already-built parent module instance per `@DIModule` parent, then one binding per own /
- * plain-supertype member (a default-impl member's defaults to `null`). It constructs the same
- * `Inara<Module>` as the full builder - each inherited member's binding pulled off its parent
- * instance via [parentBindingCode] (contravariant `Binding<in M>` lets a `Binding<Parent, …>` fill
- * a `Binding<Child, …>` slot; a hand-written parent, or a 2+ parameter member, falls back to a
- * `BindingImpls.Delegate`).
+ * already-built parent per `@DIModule` parent - its `<Parent>Part` for a partial one, the module
+ * instance otherwise - then one binding per own / plain-supertype member (a default-impl member's
+ * defaults to `null`). It constructs the same `Inara<Module>` as the full builder - each inherited
+ * member's binding pulled off its parent instance via [parentBindingCode] (contravariant
+ * `Binding<in M>` lets a `Binding<Parent, …>` fill a `Binding<Child, …>` slot; a hand-written parent
+ * falls back to a `BindingImpls.Delegate`), or copied out of its parent's `Part` via
+ * [partBindingCode].
  */
 private fun buildComposedBuilderFunction(
     model: ModuleModel,
     generatedClassName: String,
-    argsClassName: ClassName,
 ): FunSpec {
     val moduleClassName = model.moduleClassName
     val ownMemberNames = model.ownMembers.mapTo(mutableSetOf()) { it.name }
@@ -615,10 +622,10 @@ private fun buildComposedBuilderFunction(
     }
 
     for (parent in model.parents) {
-        builderFun.addParameter(parent.paramName, parent.moduleClassName)
+        builderFun.addParameter(parent.paramName, parent.parameterClassName)
     }
     for (member in model.ownMembers) {
-        val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, argsClassName, member))
+        val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, member))
         if (member.hasDefaultImplementation) {
             paramBuilder.defaultValue("null")
         }
@@ -634,7 +641,11 @@ private fun buildComposedBuilderFunction(
                     CodeBlock.of("%N", member.name)
                 } else {
                     val parent = model.parentByMemberName.getValue(member.name)
-                    parentBindingCode(member, parent.paramName, parent.generatedClassName)
+                    if (parent.partClassName != null) {
+                        partBindingCode(member, CodeBlock.of("%N", parent.paramName), parent, copied = false)
+                    } else {
+                        parentBindingCode(member, parent.paramName, parent.generatedClassName)
+                    }
                 }
                 addStatement("%N = %L,", "${member.name}Binding", valueCode)
             }
@@ -711,13 +722,13 @@ private fun FunSpec.Builder.deprecatedIfRenamed(name: FunctionName, parameterNam
  *   lets a caller swap out a whole parent module at once instead of rebinding its members
  *   individually. See [buildModuleOverrideCopyFunction].
  */
-internal fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName): List<FunSpec> {
+internal fun buildCopyFunctions(model: ModuleModel): List<FunSpec> {
     val name = copyFunctionName(model.simpleName)
-    return buildCopyFunctions(model, argsClassName, FunctionName(name)) +
-        buildCopyFunctions(model, argsClassName, FunctionName("copy", replacedBy = name))
+    return buildCopyFunctions(model, FunctionName(name)) +
+        buildCopyFunctions(model, FunctionName("copy", replacedBy = name))
 }
 
-private fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName, name: FunctionName): List<FunSpec> {
+private fun buildCopyFunctions(model: ModuleModel, name: FunctionName): List<FunSpec> {
     val moduleClassName = model.moduleClassName
     val generatedClassName = inaraName(model.generatedBaseName)
     val selfGeneratedClass = ClassName(moduleClassName.packageName, generatedClassName)
@@ -748,7 +759,7 @@ private fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName, nam
     val copyFunctions = mutableListOf(noArgCopy)
 
     if (model.allMembers.isNotEmpty()) {
-        copyFunctions += buildMemberOverrideCopyFunction(moduleClassName, argsClassName, generatedClassName, selfGeneratedClass, model.allMembers, model.visibility, name)
+        copyFunctions += buildMemberOverrideCopyFunction(moduleClassName, generatedClassName, selfGeneratedClass, model.allMembers, model.visibility, name)
     }
 
     if (model.isComposed) {
@@ -772,7 +783,6 @@ private fun buildCopyFunctions(model: ModuleModel, argsClassName: ClassName, nam
  */
 private fun buildMemberOverrideCopyFunction(
     moduleClassName: ClassName,
-    argsClassName: ClassName,
     generatedClassName: String,
     selfGeneratedClass: ClassName,
     members: List<MemberModel>,
@@ -788,7 +798,7 @@ private fun buildMemberOverrideCopyFunction(
     }
 
     for (member in members) {
-        val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, argsClassName, member))
+        val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, member))
         paramBuilder.defaultValue(storedBindingOrDelegateCode(member, name.receiver, selfGeneratedClass))
         funBuilder.addParameter(paramBuilder.build())
     }
@@ -821,13 +831,13 @@ private fun buildMemberOverrideCopyFunction(
  * delegates to the receiver itself, so the receiver keeps evaluating against its own members and
  * never sees what the shadowing module overrides.
  */
-internal fun buildShadowFunctions(model: ModuleModel, argsClassName: ClassName): List<FunSpec> {
+internal fun buildShadowFunctions(model: ModuleModel): List<FunSpec> {
     val name = shadowFunctionName(model.simpleName)
-    return buildShadowFunctions(model, argsClassName, FunctionName(name)) +
-        buildShadowFunctions(model, argsClassName, FunctionName("shadow", replacedBy = name))
+    return buildShadowFunctions(model, FunctionName(name)) +
+        buildShadowFunctions(model, FunctionName("shadow", replacedBy = name))
 }
 
-private fun buildShadowFunctions(model: ModuleModel, argsClassName: ClassName, name: FunctionName): List<FunSpec> {
+private fun buildShadowFunctions(model: ModuleModel, name: FunctionName): List<FunSpec> {
     val moduleClassName = model.moduleClassName
     val generatedClassName = inaraName(model.generatedBaseName)
 
@@ -842,7 +852,7 @@ private fun buildShadowFunctions(model: ModuleModel, argsClassName: ClassName, n
     val shadowFunctions = mutableListOf(noArgShadow)
 
     if (model.allMembers.isNotEmpty()) {
-        shadowFunctions += buildMemberShadowFunction(moduleClassName, argsClassName, generatedClassName, model.allMembers, model.visibility, name)
+        shadowFunctions += buildMemberShadowFunction(moduleClassName, generatedClassName, model.allMembers, model.visibility, name)
     }
 
     return shadowFunctions
@@ -860,7 +870,6 @@ private fun buildShadowFunctions(model: ModuleModel, argsClassName: ClassName, n
  */
 private fun buildMemberShadowFunction(
     moduleClassName: ClassName,
-    argsClassName: ClassName,
     generatedClassName: String,
     members: List<MemberModel>,
     visibility: Visibility,
@@ -875,7 +884,7 @@ private fun buildMemberShadowFunction(
     }
 
     for (member in members) {
-        val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, argsClassName, member))
+        val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, member))
         paramBuilder.defaultValue(delegateBindingCode(member, name.receiver))
         funBuilder.addParameter(paramBuilder.build())
     }
@@ -959,11 +968,13 @@ private fun buildModuleOverrideCopyFunction(
     }
 
     for (parent in model.parents) {
-        funBuilder.addParameter(
-            ParameterSpec.builder(parent.paramName, parent.moduleClassName)
-                .defaultValue("this")
-                .build()
-        )
+        // A Part can't default to the receiver, which is not one: `null` keeps that parent as it is.
+        val param = if (parent.partClassName != null) {
+            ParameterSpec.builder(parent.paramName, parent.partClassName.copy(nullable = true)).defaultValue("null")
+        } else {
+            ParameterSpec.builder(parent.paramName, parent.moduleClassName).defaultValue("this")
+        }
+        funBuilder.addParameter(param.build())
     }
 
     val callCode = CodeBlock.builder()
@@ -975,7 +986,7 @@ private fun buildModuleOverrideCopyFunction(
                     storedBindingOrDelegateCode(member, name.receiver, selfGeneratedClass)
                 } else {
                     val parent = model.parentByMemberName.getValue(member.name)
-                    parentSwapInheritedCode(member, parent.paramName, parent.generatedClassName, selfGeneratedClass, name.receiver)
+                    parentSwapInheritedCode(member, parent, selfGeneratedClass, name.receiver)
                 }
                 addStatement("%N = %L,", "${member.name}Binding", valueCode)
             }
@@ -985,4 +996,168 @@ private fun buildModuleOverrideCopyFunction(
         .build()
 
     return funBuilder.addCode(callCode).build()
+}
+
+/**
+ * The binding for [member] read out of the `<Parent>Part` [partExpr] of the partial parent
+ * [partParent], for a module composing it.
+ *
+ * A binding the `Part` holds itself is always copied (see [copiedBindingCode]): its body may read a
+ * member the `Part` requires, which only the composing module supplies, so two modules composing the
+ * same `Part` must never share its state. A member the `Part` took from one of its own parents - only
+ * possible when it was built by its from-parents constructor (see [ModuleModel.hasPartFromParents]) -
+ * is read off that parent exactly as a direct parent's would be: shared with a parent module instance
+ * (copied when [copied]), see [parentBindingCode], or read out of a nested `Part` recursively.
+ * [depth] keeps the lambda parameter names of nested reads apart.
+ */
+private fun partBindingCode(
+    member: MemberModel,
+    partExpr: CodeBlock,
+    partParent: ParentModel,
+    copied: Boolean,
+    depth: Int = 0,
+): CodeBlock {
+    val partModel = checkNotNull(partParent.model) { "No model for the partial parent '${partParent.paramName}'" }
+    val field = CodeBlock.of("%L.%N", partExpr, "${member.name}Binding")
+    val source = partModel.parentByMemberName[member.name]
+    if (source == null || !partModel.hasPartFromParents) return copiedBindingCode(member, field)
+
+    val local = "parent$depth"
+    val fromSource = if (source.partClassName != null) {
+        partBindingCode(member, CodeBlock.of("%N", local), source, copied, depth + 1)
+    } else {
+        parentBindingCode(member, local, source.generatedClassName, copied)
+    }
+    // Built by the flattened constructor: the Part holds the binding itself, nullable only because
+    // the from-parents constructor leaves it unset.
+    val flattened = copiedBindingCode(member, if (member.hasDefaultImplementation) field else CodeBlock.of("%L!!", field))
+    return CodeBlock.of(
+        "%L.%N.let { %N -> if (%N != null) %L else %L }",
+        partExpr, source.paramName, local, local, fromSource, flattened,
+    )
+}
+
+/**
+ * The `<Module>Part` class of a partial module (see [ModuleModel.isPartial]): what a
+ * `@DIModule(composed = true)` module takes in place of a built instance of it. It holds one binding
+ * per [ModuleModel.partMembers] entry - every member but those of its `@DIModule.Required` parents -
+ * typed on the module itself, so a body may read a required member through its receiver. It does
+ * not implement the module: nothing could answer for the required members.
+ *
+ * Its constructors are its builders. It has no primary constructor, so that both secondary ones can
+ * fill its properties their own way:
+ * - the flattened one takes a binding per part member, named after it (`null` by default for a
+ *   default-body member);
+ * - with [ModuleModel.hasPartFromParents], a second one takes one already-built parent per provided
+ *   `@DIModule` parent - its `Part` for a partial one - plus a binding per own / plain-supertype
+ *   member. The parents are stored as they are and the bindings they provide are left `null`: a
+ *   composing module reads them off the parent itself (see [partBindingCode]), sharing them.
+ *
+ * Its properties are `public`, for a composing module generated in another compilation, but behind
+ * `@InternalInaraGeneration`.
+ */
+private fun buildPartType(model: ModuleModel, originatingFiles: List<KSFile>): TypeSpec {
+    val partClassName = checkNotNull(model.partClassName)
+    val moduleClassName = model.moduleClassName
+    val fromParents = model.hasPartFromParents
+    val providedParents = model.parents.filter { !it.isRequired }
+    fun isParentSourced(member: MemberModel): Boolean = model.parentByMemberName[member.name] != null
+    fun fieldType(member: MemberModel): TypeName =
+        bindingTypeOf(moduleClassName, member, nullable = member.hasDefaultImplementation || (fromParents && isParentSourced(member)))
+    val optIn = AnnotationSpec.builder(INTERNAL_INARA_GENERATION).build()
+
+    val classBuilder = TypeSpec.classBuilder(partClassName)
+        .apply { if (model.visibility == Visibility.INTERNAL) addModifiers(KModifier.INTERNAL) }
+        .addKdoc(
+            "The bindings of every member [%T] provides, to compose it into a module that provides what it requires.\n",
+            moduleClassName,
+        )
+    for (file in originatingFiles) {
+        classBuilder.addOriginatingKSFile(file)
+    }
+
+    if (fromParents) {
+        for (parent in providedParents) {
+            classBuilder.addProperty(
+                PropertySpec.builder(parent.paramName, parent.parameterClassName.copy(nullable = true)).addAnnotation(optIn).build()
+            )
+        }
+    }
+    for (member in model.partMembers) {
+        classBuilder.addProperty(PropertySpec.builder("${member.name}Binding", fieldType(member)).addAnnotation(optIn).build())
+    }
+
+    val flattened = FunSpec.constructorBuilder()
+    for (member in model.partMembers) {
+        val param = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, member))
+        if (member.hasDefaultImplementation) param.defaultValue("null")
+        flattened.addParameter(param.build())
+    }
+    if (fromParents) {
+        for (parent in providedParents) flattened.addStatement("this.%N = null", parent.paramName)
+    }
+    for (member in model.partMembers) {
+        flattened.addStatement("this.%N = %N", "${member.name}Binding", member.name)
+    }
+    classBuilder.addFunction(flattened.build())
+
+    if (fromParents) {
+        val byParents = FunSpec.constructorBuilder()
+        for (parent in providedParents) {
+            byParents.addParameter(parent.paramName, parent.parameterClassName)
+        }
+        for (member in model.partMembers.filterNot(::isParentSourced)) {
+            val param = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, member))
+            if (member.hasDefaultImplementation) param.defaultValue("null")
+            byParents.addParameter(param.build())
+        }
+        for (parent in providedParents) byParents.addStatement("this.%N = %N", parent.paramName, parent.paramName)
+        for (member in model.partMembers) {
+            if (isParentSourced(member)) {
+                byParents.addStatement("this.%N = null", "${member.name}Binding")
+            } else {
+                byParents.addStatement("this.%N = %N", "${member.name}Binding", member.name)
+            }
+        }
+        classBuilder.addFunction(byParents.build())
+    }
+
+    classBuilder.addFunction(buildPartToStringFunction(model))
+    return classBuilder.build()
+}
+
+/**
+ * The debug `toString()` of a `<Module>Part` class, in the style of [buildToStringFunction]: a
+ * `part <Module> (requires <Required>, ...)` header, then one line per part member - `[default]` for a
+ * default-body member left unbound, `[from <parent>]` for one read off a parent the `Part` was built
+ * from.
+ */
+private fun buildPartToStringFunction(model: ModuleModel): FunSpec {
+    val required = model.parents.filter { it.isRequired }.joinToString(", ") { it.declaration.simpleName.asString() }
+    val header = "part ${model.simpleName} (requires $required) {"
+    val expression = if (model.partMembers.isEmpty()) {
+        CodeBlock.of("%S", "$header}")
+    } else {
+        val body = CodeBlock.builder().add("%S", "$header\n")
+        for (member in model.partMembers) {
+            val bindingPropertyName = "${member.name}Binding"
+            val source = model.parentByMemberName[member.name]
+            val bindingText = when {
+                source != null && model.hasPartFromParents -> CodeBlock.of(
+                    "(if (%N != null) %S else (%N ?: %S))",
+                    source.paramName, "[from ${source.paramName}]", bindingPropertyName, "[default]",
+                )
+                member.hasDefaultImplementation -> CodeBlock.of("(%N ?: %S)", bindingPropertyName, "[default]")
+                else -> CodeBlock.of("%N", bindingPropertyName)
+            }
+            body.add(" +\n    %S + %L + %S", "    ${memberSignature(member)} => ", bindingText, "\n")
+        }
+        body.add(" +\n    %S", "}")
+        body.build()
+    }
+    return FunSpec.builder("toString")
+        .addModifiers(KModifier.OVERRIDE)
+        .returns(STRING)
+        .addStatement("return %L", expression)
+        .build()
 }

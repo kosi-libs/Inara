@@ -72,11 +72,10 @@ class ModuleToStringTest {
 
     @Test
     fun composedModule_listsInheritedMembersUnmarkedAlongsideItsOwn() {
-        // Built through the from-parents overload: the real InaraMultiParamModule instance lets a
-        // single-parameter member's binding (`va`) carry across as-is, while a multi-parameter one
-        // (`mult`, `both`) always falls back to a delegate naming that same instance's class - see
-        // `parentBindingCode`. Both cases are listed the same way, unmarked, alongside the module's
-        // own `tag`.
+        // Built through the from-parents overload: the real InaraMultiParamModule instance lets every
+        // member's binding carry across as-is - a multi-parameter one (`mult`, `both`) too, since its
+        // arguments class is the parent's own - see `parentBindingCode`. They are listed unmarked,
+        // alongside the module's own `tag`.
         val parent = MultiParamModule(
             va = Binding.factory { it.joinToString() },
             mult = Binding.factory { it.i.toLong() },
@@ -87,8 +86,8 @@ class ModuleToStringTest {
         assertEquals(
             "module ComposedMultiParamModule {\n" +
                 "    fun va(vararg str: String): String => factory { Array -> String }\n" +
-                "    fun mult(s: List<String>, i: Int): Long => [delegated to InaraMultiParamModule]\n" +
-                "    fun both(vararg ids: Int, flag: Boolean): String => [delegated to InaraMultiParamModule]\n" +
+                "    fun mult(s: List<String>, i: Int): Long => factory { Mult -> Long }\n" +
+                "    fun both(vararg ids: Int, flag: Boolean): String => factory { Both -> String }\n" +
                 "    val tag: String => value ( String )\n" +
                 "}",
             composed.toString(),

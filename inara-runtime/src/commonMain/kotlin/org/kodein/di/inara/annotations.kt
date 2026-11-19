@@ -11,12 +11,20 @@ import kotlin.reflect.KClass
  * API: pass `composed = true` to also generate an implementation/builder/`copy<Module>` set that takes
  * already-built parent module instances.
  *
- * @param composed Additionally requests a delegated implementation/builder/`copy<Module>` set for this
- *   interface's `@DIModule` parents: a builder taking one already-built parent module instance per
- *   direct `@DIModule` supertype (implemented via Kotlin interface delegation, `Parent by parent`)
- *   plus a binding per member declared directly on this interface, and a matching `copy<Module>(...)`
- *   overload that swaps a whole parent out at once. Requires the interface to extend at least one
- *   `@DIModule` interface.
+ * A direct `@DIModule` supertype marked [Required] is one the module needs but does not provide: the
+ * module is then *partial*, and additionally gets a generated `<Module>Part` class - the bindings of
+ * every member it does provide, without the interface's own implementation - that a
+ * `@DIModule(composed = true)` module takes in place of a built instance of it, next to a parent that
+ * provides what it requires. See [Required].
+ *
+ * @param composed Additionally requests a builder/`copy<Module>` set for this interface's `@DIModule`
+ *   parents: a builder taking one already-built parent per direct `@DIModule` supertype - a module
+ *   instance, or the `<Parent>Part` of a partial parent - plus a binding per member declared directly
+ *   on this interface, and a matching `copy<Module>(...)` overload that swaps a whole parent out at
+ *   once. Every interface reachable through the parents must be provided by exactly one of them,
+ *   whenever a partial parent requires it or more than one parent reaches it. Requires the interface
+ *   to extend at least one `@DIModule` interface. On a partial module, it also adds a `<Module>Part`
+ *   constructor taking the already-built parents the module provides.
  * @param sets Annotation classes annotated with [DISet], each one generating a
  *   `fun <Module>.setOf<Annotation>(): Set<Of>` extension that collects every member of the module
  *   carrying that annotation - see [DISet]. A module also gets that function for every set listed by
@@ -30,7 +38,41 @@ import kotlin.reflect.KClass
 public annotation class DIModule(
     val composed: Boolean = false,
     val sets: Array<KClass<out Annotation>> = [],
-)
+) {
+    /**
+     * Marks a direct `@DIModule` supertype of a `@DIModule` interface as *required* rather than
+     * provided: the module needs that supertype's members - its bindings may read them through their
+     * receiver - but leaves binding them to whichever `@DIModule(composed = true)` module composes it.
+     *
+     * ```kotlin
+     * @DIModule
+     * interface FlywayModule : @DIModule.Required JdbcModule {
+     *     val flyway: Flyway
+     * }
+     *
+     * @DIModule(composed = true)
+     * interface AppModule : JdbcModule, FlywayModule
+     *
+     * val app = AppModule(
+     *     jdbcModule = JdbcModule(dataSource = Binding.single { HikariDataSource() }),
+     *     flywayModule = FlywayModulePart(flyway = Binding.single { Flyway(dataSource) }),
+     * )
+     * ```
+     *
+     * A module with a required supertype gets a `<Module>Part` class next to its usual generated
+     * code: built from a binding per member it provides, it is what a composed module takes for it.
+     * Its bindings are copied into every module it is composed into, so that each one builds its own
+     * `single`s against its own required members. The module keeps its full builder, binding every
+     * member - required ones included - which builds a complete, standalone module.
+     *
+     * Only meaningful on a direct supertype of a `@DIModule` interface, which must itself be a
+     * `@DIModule`; it is ignored anywhere else. No interface reachable through a required supertype
+     * may also be reachable through a supertype the module provides.
+     */
+    @Target(AnnotationTarget.TYPE)
+    @Retention(AnnotationRetention.BINARY)
+    public annotation class Required
+}
 
 /**
  * Marks a `public` or `internal` object for generating a plain constructor-shaped factory function -
@@ -184,10 +226,11 @@ public annotation class DISet(
 
 /**
  * Opts into the parts of Inara's public API that exist only to support generated code -
- * [BindingImpls], [SuspendBindingImpls] and their public members, and the `Inara<...>` module
- * implementation classes the processor emits - and are not meant to be used directly.
+ * [BindingImpls], [SuspendBindingImpls] and their public members, the `Inara<...>` module
+ * implementation classes the processor emits, and the binding-holding properties of the
+ * `<Module>Part` classes it emits for partial modules - and are not meant to be used directly.
  */
 @RequiresOptIn
 @Retention(AnnotationRetention.BINARY)
-@Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION)
+@Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 public annotation class InternalInaraGeneration

@@ -36,7 +36,7 @@ class ModuleMultiParamTest {
     }
 
     @Test
-    fun composedModule_inheritedMultiParamMember_forwardsThroughDelegate() {
+    fun composedModule_inheritedMultiParamMember_sharesTheParentsBinding() {
         val base = MultiParamModule(
             va = Binding.factory { parts -> parts.joinToString("-") },
             mult = Binding.factory { args -> args.s.size.toLong() + args.i },

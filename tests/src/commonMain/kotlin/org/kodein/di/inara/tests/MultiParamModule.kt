@@ -18,10 +18,9 @@ interface MultiParamModule {
 
 /**
  * A `@DIModule(composed = true)` whose parent has multi-parameter members. Their `Binding`'s
- * argument type is a *per-module* `<Module>BindingArguments.<Name>` data class, so the parent's
- * binding can't be handed to the composed implementation's slot - the from-parents builder forwards
- * through a delegate instead. `va` (a lone vararg) has a module-independent array argument type and
- * is carried across like any single-parameter member.
+ * argument type is the `MultiParamModuleBindingArguments.<Name>` data class of [MultiParamModule],
+ * which introduces them - shared by this module, so the from-parents builder carries the parent's
+ * binding across as it is, exactly like `va` (a lone vararg, whose argument type is the array type).
  */
 @DIModule(composed = true)
 interface ComposedMultiParamModule : MultiParamModule {

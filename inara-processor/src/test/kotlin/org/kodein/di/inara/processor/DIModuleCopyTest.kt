@@ -406,6 +406,62 @@ class DIModuleCopyTest {
         assertEquals(false, results[2])
     }
 
+    /**
+     * An inherited 2+-parameter member shares its arguments class with the parent introducing it, so
+     * a composed child holds the parent's own binding for it - not a delegate over the parent, whose
+     * `copyBinding()` would return itself. Copying the child must give it its own `multiplex` cache,
+     * exactly as for a 1-parameter member, and so must swapping the parent in.
+     */
+    @Test
+    fun copyOfComposedModule_givesInheritedMultiParameterMembersTheirOwnState() {
+        val results = runHarness(
+            SourceFile.kotlin(
+                "CopyComposedMultiParam.kt",
+                """
+                package sample.copycomposedmulti
+
+                import org.kodein.di.inara.DIModule
+                import org.kodein.di.inara.Binding.Bindings.multiplex
+                import org.kodein.di.inara.Binding.Bindings.single
+                import org.kodein.di.inara.Binding.Bindings.value
+
+                @DIModule
+                interface Tagger {
+                    fun one(id: Int): Any
+                    fun two(id: Int, label: String): Any
+                }
+
+                @DIModule(composed = true)
+                interface App : Tagger { val other: Any }
+
+                object Harness {
+                    @JvmStatic
+                    fun run(): Array<Any?> {
+                        val tagger = Tagger(
+                            one = multiplex { _: Int -> single { Any() } },
+                            two = multiplex { _: TaggerBindingArguments.Two -> single { Any() } },
+                        )
+                        val app = App(tagger, other = value(Any()))
+                        val copy = app.copyApp()
+                        val swapped = app.copyApp(tagger = tagger)
+                        return arrayOf(
+                            copy.one(1) === app.one(1),
+                            copy.two(1, "a") === app.two(1, "a"),
+                            swapped.two(1, "a") === tagger.two(1, "a"),
+                        )
+                    }
+                }
+                """
+            ),
+            "sample.copycomposedmulti",
+        )
+
+        // [0] 1-parameter member: the copy has its own multiplex cache
+        // [1] 2-parameter member: the copy has its own multiplex cache
+        // [2] 2-parameter member: the swapped-in parent keeps its multiplex cache to itself
+        assertEquals(listOf<Any?>(false, false, false), results.toList())
+    }
+
     @Test
     fun formerCopy_isStillGeneratedDeprecatedWithAnErrorPointingToCopyModule() {
         val compilation = compile(

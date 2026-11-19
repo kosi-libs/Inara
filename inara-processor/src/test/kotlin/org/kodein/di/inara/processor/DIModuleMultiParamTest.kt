@@ -172,7 +172,7 @@ class DIModuleMultiParamTest {
     }
 
     @Test
-    fun multiParamMember_inheritedFromDIModuleParent_regeneratesOwnArgsClass() {
+    fun multiParamMember_inheritedFromDIModuleParent_reusesTheParentsArgsClass() {
         val source = SourceFile.kotlin(
             "InheritedMultiParam.kt",
             """
@@ -189,6 +189,11 @@ class DIModuleMultiParamTest {
             interface ChildModule : BaseModule {
                 val extra: Int
             }
+
+            @DIModule
+            interface GrandChildModule : ChildModule {
+                fun pair(a: Int, b: Int): Int
+            }
             """
         )
 
@@ -198,17 +203,25 @@ class DIModuleMultiParamTest {
         val generatedBase = compilation.generatedSource("sample/multiparam", "InaraBaseModule.kt")
         assertTrue("public class BaseModuleBindingArguments private constructor()" in generatedBase, generatedBase)
 
+        // The module introducing `mult` owns its arguments class: the child generates none of its own.
         val generatedChild = compilation.generatedSource("sample/multiparam", "InaraChildModule.kt")
-        assertTrue("public class ChildModuleBindingArguments private constructor()" in generatedChild, generatedChild)
-        assertTrue("public data class Mult(" in generatedChild, generatedChild)
+        assertTrue("BindingArguments private constructor()" !in generatedChild, generatedChild)
         assertTrue(
-            "public val multBinding: Binding<ChildModule, ChildModuleBindingArguments.Mult, Long>," in generatedChild,
+            "public val multBinding: Binding<ChildModule, BaseModuleBindingArguments.Mult, Long>," in generatedChild,
             generatedChild,
         )
+        assertTrue("this.multBinding.get(this, BaseModuleBindingArguments.Mult(s, i))" in generatedChild, generatedChild)
+
+        // Two levels down, still the introducing module's - next to the grandchild's own `pair`.
+        val generatedGrandChild = compilation.generatedSource("sample/multiparam", "InaraGrandChildModule.kt")
+        assertTrue("public class GrandChildModuleBindingArguments private constructor()" in generatedGrandChild, generatedGrandChild)
+        assertTrue("public data class Mult(" !in generatedGrandChild, generatedGrandChild)
+        assertTrue("Binding<GrandChildModule, BaseModuleBindingArguments.Mult, Long>" in generatedGrandChild, generatedGrandChild)
+        assertTrue("Binding<GrandChildModule, GrandChildModuleBindingArguments.Pair, Int>" in generatedGrandChild, generatedGrandChild)
     }
 
     @Test
-    fun composedModule_inheritedMultiParamMember_alwaysForwardsThroughDelegate() {
+    fun composedModule_inheritedMultiParamMember_isReadOffTheParentLikeAnyOther() {
         val source = SourceFile.kotlin(
             "ComposedMultiParam.kt",
             """
@@ -239,13 +252,12 @@ class DIModuleMultiParamTest {
             "singleBinding = if (baseModule is InaraBaseModule) baseModule.singleBinding else BindingImpls.Delegate(baseModule::class) { baseModule.single(it) }" in generated,
             generated,
         )
-        // `mult` (2+ parameters -> a per-module ChildModuleBindingArguments.Mult) can't be handed
-        // across at all - the from-parents builder always forwards through a delegate.
+        // `mult` (2+ parameters) shares BaseModuleBindingArguments.Mult with its parent, so it is
+        // carried across the same way - a delegate only for a hand-written parent.
         assertTrue(
-            "multBinding = BindingImpls.Delegate(baseModule::class) { baseModule.mult(s = it.s, i = it.i) }" in generated,
+            "multBinding = if (baseModule is InaraBaseModule) baseModule.multBinding else BindingImpls.Delegate(baseModule::class) { baseModule.mult(s = it.s, i = it.i) }" in generated,
             generated,
         )
-        assertTrue("if (baseModule is InaraBaseModule) baseModule.multBinding" !in generated, generated)
     }
 
     @Test

@@ -318,6 +318,193 @@ class DIModuleValidationTest {
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
     }
 
+    private val jdbcAndFlyway = """
+        package sample.validation
+
+        import org.kodein.di.inara.DIModule
+
+        @DIModule
+        interface JdbcModule {
+            val dataSource: String
+        }
+
+        @DIModule
+        interface FlywayModule : @DIModule.Required JdbcModule {
+            val flyway: String
+        }
+    """
+
+    @Test
+    fun diamondThroughARequiredParent_isAcceptedWhenProvidedOnce() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                jdbcAndFlyway + """
+                @DIModule
+                interface ExposedModule : @DIModule.Required JdbcModule {
+                    val database: String
+                }
+
+                @DIModule
+                interface PostgresModule : JdbcModule
+
+                @DIModule(composed = true)
+                interface AppModule : JdbcModule, FlywayModule, ExposedModule
+
+                @DIModule(composed = true)
+                interface PostgresAppModule : PostgresModule, FlywayModule, ExposedModule
+                """
+            )
+        )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+    }
+
+    @Test
+    fun requiredPlainSupertype_isRejected() {
+        assertRejected(
+            "Only a @DIModule supertype can be @DIModule.Required: 'Plain' is not a @DIModule.",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            interface Plain {
+                val value: String
+            }
+
+            @DIModule
+            interface PartialModule : @DIModule.Required Plain
+            """
+        )
+    }
+
+    @Test
+    fun requiredSupertype_alsoProvidedByAnotherSupertype_isRejected() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                jdbcAndFlyway + """
+                @DIModule
+                interface PoolModule : JdbcModule
+
+                interface PlainOverride : JdbcModule {
+                    override val dataSource: String get() = "plain"
+                }
+
+                @DIModule
+                interface ByModule : @DIModule.Required JdbcModule, PoolModule
+
+                @DIModule
+                interface ByPlain : @DIModule.Required JdbcModule, PlainOverride
+
+                @DIModule
+                interface MigrationsModule : JdbcModule
+
+                @DIModule
+                interface ByAncestor : @DIModule.Required MigrationsModule, PoolModule
+                """
+            )
+        )
+        assertEquals(ExitCode.COMPILATION_ERROR, compilation.exitCode, compilation.messages)
+        assertTrue(
+            "Interface 'JdbcModule' is required, but 'PoolModule' provides it." in compilation.messages,
+            compilation.messages,
+        )
+        assertTrue(
+            "Interface 'JdbcModule' is required, but 'PlainOverride' provides it." in compilation.messages,
+            compilation.messages,
+        )
+        assertTrue(
+            "Interface 'JdbcModule' is required through 'MigrationsModule', but 'PoolModule' provides it." in compilation.messages,
+            compilation.messages,
+        )
+    }
+
+    @Test
+    fun composedModule_unmetRequirement_isRejected() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                jdbcAndFlyway + """
+                @DIModule
+                interface ExposedModule : @DIModule.Required JdbcModule {
+                    val database: String
+                }
+
+                @DIModule(composed = true)
+                interface OneModule : FlywayModule
+
+                @DIModule(composed = true)
+                interface TwoModule : FlywayModule, ExposedModule
+                """
+            )
+        )
+        assertEquals(ExitCode.COMPILATION_ERROR, compilation.exitCode, compilation.messages)
+        assertTrue("'FlywayModule' requires 'JdbcModule', which no parent of 'OneModule' provides." in compilation.messages, compilation.messages)
+        assertTrue(
+            "'FlywayModule' and 'ExposedModule' require 'JdbcModule', which no parent of 'TwoModule' provides." in compilation.messages,
+            compilation.messages,
+        )
+    }
+
+    @Test
+    fun plainModule_unmetRequirement_isBoundByItsFullBuilder() {
+        val compilation = compile(SourceFile.kotlin("Module.kt", jdbcAndFlyway + "\n@DIModule\ninterface AppModule : FlywayModule\n"))
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+        val generated = compilation.generatedSource("sample/validation", "InaraAppModule.kt")
+        assertTrue("dataSource: Binding<AppModule, Unit, String>" in generated, generated)
+        assertTrue("class AppModulePart" !in generated, generated)
+    }
+
+    @Test
+    fun composedModule_requirementProvidedTwice_isRejected() {
+        assertRejected(
+            "Interface 'JdbcModule' is inherited more than once, via 'PoolModule' and 'OtherPoolModule'.",
+            jdbcAndFlyway + """
+            @DIModule
+            interface PoolModule : JdbcModule
+
+            @DIModule
+            interface OtherPoolModule : JdbcModule
+
+            @DIModule(composed = true)
+            interface AppModule : PoolModule, OtherPoolModule, FlywayModule
+            """
+        )
+    }
+
+    @Test
+    fun composedPartialModule_withOnlyRequiredParents_getsASinglePartConstructor() {
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                jdbcAndFlyway + """
+                @DIModule(composed = true)
+                interface MigrationsModule : @DIModule.Required JdbcModule {
+                    val migrations: String
+                }
+                """
+            )
+        )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+        val generated = compilation.generatedSource("sample/validation", "InaraMigrationsModule.kt")
+        val part = generated.substringAfter("public class MigrationsModulePart").substringBefore("\n}\n")
+        assertEquals(1, Regex("""public constructor\(""").findAll(part).count(), part)
+    }
+
+    @Test
+    fun partParentParameterName_collidingWithAMember_isRejected() {
+        assertRejected(
+            "Parent module 'FlywayModule' binds to the parameter name 'flywayModule', which collides with a member name.",
+            jdbcAndFlyway + """
+            @DIModule(composed = true)
+            interface AppModule : JdbcModule, FlywayModule {
+                val flywayModule: String
+            }
+            """
+        )
+    }
+
     @Test
     fun composedModuleWithoutParents_isRejected() {
         assertRejected(
