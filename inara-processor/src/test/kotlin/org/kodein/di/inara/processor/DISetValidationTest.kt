@@ -25,7 +25,6 @@ class DISetValidationTest {
     private fun source(body: String) = """
         package sample.validation
 
-        import org.kodein.di.inara.DIFactory.Suspend
         import org.kodein.di.inara.DIModule
         import org.kodein.di.inara.DISet
 
@@ -286,21 +285,25 @@ class DISetValidationTest {
     }
 
     @Test
-    fun listedSetWithoutMember_isRejected() {
-        assertRejected(
-            "No member of 'M' is annotated with '@Services', listed in its 'sets'.",
-            source(
-                """
-                @DISet(Svc::class)
-                annotation class Services
+    fun listedSetWithoutMember_isAccepted() {
+        // A module may list a set none of its own members belongs to: its descendants contribute.
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Module.kt",
+                source(
+                    """
+                    @DISet(Svc::class)
+                    annotation class Services
 
-                @DIModule(sets = [Services::class])
-                interface M {
-                    val svc: Svc
-                }
-                """
-            ),
+                    @DIModule(sets = [Services::class])
+                    interface M {
+                        val svc: Svc
+                    }
+                    """
+                ),
+            )
         )
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
     }
 
     // ----- Members carrying a set annotation -----
@@ -418,17 +421,32 @@ class DISetValidationTest {
     }
 
     @Test
-    fun suspendMemberOfForbiddingSet_isRejected() {
+    fun suspendMemberOfNonSuspendSet_isRejected() {
         assertRejected(
-            "'svc' is suspend, but @Services is @DISet(suspend = Forbid).",
+            "'svc' is suspend, but @Services is not a @DISet(suspend = true).",
             source(
                 """
-                @DISet(Svc::class, suspend = Suspend.Forbid)
+                @DISet(Svc::class)
                 annotation class Services
 
                 @DIModule
                 interface M {
                     @Services suspend fun svc(): Svc
+                }
+                """
+            ),
+        )
+    }
+
+    @Test
+    fun memberNamedLikeTheSetLookup_isRejected() {
+        assertRejected(
+            "A @DIModule member may not be named 'inaraSetOf'.",
+            source(
+                """
+                @DIModule
+                interface M {
+                    fun inaraSetOf(set: String): Set<*>?
                 }
                 """
             ),

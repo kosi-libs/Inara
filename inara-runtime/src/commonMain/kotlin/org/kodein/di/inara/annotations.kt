@@ -26,12 +26,12 @@ import kotlin.reflect.KClass
  *   to extend at least one `@DIModule` interface. On a partial module, it also adds a `<Module>Part`
  *   constructor taking the already-built parents the module provides.
  * @param sets Annotation classes annotated with [DISet], each one generating a
- *   `fun <Module>.setOf<Annotation>(): Set<Of>` extension that collects every member of the module
- *   carrying that annotation - see [DISet]. A module also gets that function for every set listed by
- *   any of its `@DIModule` ancestors, so a child never answers with its parent's partial set. An
- *   annotation may not be listed twice, two sets may not share a simple name, no member of the
- *   module may already be named `setOf<Annotation>`, and every set listed here must collect at least
- *   one member.
+ *   `fun <Module>.setOf<Annotation>(): Set<Of>` extension that collects every member carrying that
+ *   annotation - see [DISet]. Called on any module extending this one, it answers with *that*
+ *   module's members, so a module may list a set none of its own members belongs to, as the place
+ *   its descendants' contributions are gathered from. An annotation may not be listed twice, two
+ *   sets may not share a simple name, and no member of the module may already be named
+ *   `setOf<Annotation>`.
  */
 @Retention(AnnotationRetention.BINARY)
 @Target(AnnotationTarget.CLASS)
@@ -165,8 +165,7 @@ public annotation class DIFactory(
     val constructorIndex: Int = 0,
 ) {
     /**
-     * How [DIFactory] treats a `suspend` provider for one of [builds]'s constructor arguments. Also
-     * used by [DISet.suspend], where the providers are the members collected into the set.
+     * How [DIFactory] treats a `suspend` provider for one of [builds]'s constructor arguments.
      */
     public enum class Suspend {
         /** No provider - `arg` function or module member - may be `suspend`; the generated
@@ -188,8 +187,13 @@ public annotation class DIFactory(
  * Turns the annotation class it marks into a *set annotation*: a `@DIModule` listing it in
  * [DIModule.sets] gets a generated `fun <Module>.setOf<Annotation>(): Set<Of>` extension (named
  * after the annotation's simple name, as visible as the module) returning the value of every member
- * of the module - inherited included, in declaration order - that carries the annotation, or whose
- * overridden declaration does. A `null` value is left out of the set.
+ * that carries the annotation, or whose overridden declaration does - inherited members included,
+ * in declaration order. A `null` value is left out of the set.
+ *
+ * The function answers for the module it is actually called on: called on a module extending the
+ * one listing the set - typed as the latter or not - it collects the members of the actual module,
+ * own and inherited alike, whichever library they come from. A hand-written implementation of the
+ * module only answers with the members of the module listing the set.
  *
  * ```kotlin
  * @DISet(of = AppService::class)
@@ -212,16 +216,16 @@ public annotation class DIFactory(
  *
  * @param of The element type of the generated `Set`. A generic type is star-projected
  *   (`Set<Plugin<*>>`). It must be `public` or `internal` - `public` for a `public` module.
- * @param suspend Whether the generated function is `suspend`: under [DIFactory.Suspend.Forbid] it
- *   never is, and no `suspend` member may carry the annotation; under [DIFactory.Suspend.Allow] it
- *   is if and only if at least one collected member is `suspend`; under [DIFactory.Suspend.Force] it
- *   always is.
+ * @param suspend Whether the generated function is `suspend`. When `false`, the default, no
+ *   `suspend` member may carry the annotation. It is decided by the set alone, never by the members
+ *   it collects: the function is declared once, where the set is listed, but answers with members
+ *   that only the modules extending it know.
  */
 @Retention(AnnotationRetention.BINARY)
 @Target(AnnotationTarget.ANNOTATION_CLASS)
 public annotation class DISet(
     val of: KClass<*>,
-    val suspend: Suspend = Suspend.Allow,
+    val suspend: Boolean = false,
 )
 
 /**

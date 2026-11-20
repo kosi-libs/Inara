@@ -12,8 +12,9 @@ import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 
 /**
  * Verifies the `setOf<Annotation>()` extension function(s) generated for `@DIModule(sets = ...)` -
- * see [buildSetFunctions]: the exact generated shape, which members land in the set, and what the
- * set holds at runtime.
+ * see [buildSetFunctions] - and the `InaraSets` lookups that make them answer for the module they are
+ * actually called on: the generated shape, which members land in the set, and what the set holds at
+ * runtime.
  */
 class DISetGenerationTest {
 
@@ -80,18 +81,34 @@ class DISetGenerationTest {
         )
 
         val generated = compilation.generatedSource("sample/sets", "InaraAppModule.kt")
+        // The function asks its receiver, falling back to this module's members for a hand-written one.
         assertTrue(
             """
-            |public fun AppModule.setOfAppServices(): Set<AppService> = kotlin.collections.setOfNotNull(
-            |  database(),
-            |  server,
+            |@Suppress("UNCHECKED_CAST")
+            |public fun AppModule.setOfAppServices(): Set<AppService> = (this as? InaraSets)?.inaraSetOf("sample.sets.AppServices") as Set<AppService>?
+            |    ?: kotlin.collections.setOfNotNull(
+            |  this.database(),
+            |  this.server,
             |)
             """.trimMargin() in generated,
             generated,
         )
-        // Only a module listing the set gets the function.
+        assertTrue("public class InaraAppModule(" in generated && ") : AppModule,\n    InaraSets {" in generated, generated)
+        assertTrue(
+            """
+            |  override fun inaraSetOf(`set`: String): Set<*>? = when (set) {
+            |    "sample.sets.AppServices" -> kotlin.collections.setOfNotNull(
+            |      this.database(),
+            |      this.server,
+            |    )
+            |    else -> null
+            |  }
+            """.trimMargin() in generated,
+            generated,
+        )
+        // A module neither listing the set nor extending one that does can never be asked for it.
         assertFalse("setOf" in compilation.generatedSource("sample/sets", "InaraDbModule.kt"))
-        assertFalse("setOf" in compilation.generatedSource("sample/sets", "InaraServerModule.kt"))
+        assertFalse("InaraSets" in compilation.generatedSource("sample/sets", "InaraServerModule.kt"))
 
         val results = compilation.runHarness("sample.sets.Harness")
         val harness = compilation.classLoader.loadClass("sample.sets.Harness")
@@ -131,38 +148,41 @@ class DISetGenerationTest {
     }
 
     @Test
-    fun suspendMode_decidesWhetherTheFunctionIsSuspend() {
+    fun suspendArgument_aloneDecidesWhetherTheFunctionIsSuspend() {
         val compilation = compileOk(
             SourceFile.kotlin(
                 "Suspend.kt",
                 """
                 package sample.sets
 
-                import org.kodein.di.inara.DIFactory.Suspend
                 import org.kodein.di.inara.DIModule
                 import org.kodein.di.inara.DISet
 
                 interface Svc
 
-                @DISet(Svc::class) annotation class AllowSync
-                @DISet(Svc::class) annotation class AllowAsync
-                @DISet(Svc::class, suspend = Suspend.Force) annotation class Forced
-                @DISet(Svc::class, suspend = Suspend.Forbid) annotation class Forbidden
+                @DISet(Svc::class) annotation class Sync
+                @DISet(Svc::class, suspend = true) annotation class Async
 
-                @DIModule(sets = [AllowSync::class, AllowAsync::class, Forced::class, Forbidden::class])
+                @DIModule(sets = [Sync::class, Async::class])
                 interface SuspendModule {
-                    @AllowSync @Forced @Forbidden val sync: Svc
-                    @AllowAsync suspend fun async(): Svc
+                    @Sync @Async val sync: Svc
+                    @Async suspend fun async(): Svc
                 }
                 """
             )
         )
 
         val generated = compilation.generatedSource("sample/sets", "InaraSuspendModule.kt")
-        assertTrue("public fun SuspendModule.setOfAllowSync(): Set<Svc>" in generated, generated)
-        assertTrue("public suspend fun SuspendModule.setOfAllowAsync(): Set<Svc>" in generated, generated)
-        assertTrue("public suspend fun SuspendModule.setOfForced(): Set<Svc>" in generated, generated)
-        assertTrue("public fun SuspendModule.setOfForbidden(): Set<Svc>" in generated, generated)
+        assertTrue("public fun SuspendModule.setOfSync(): Set<Svc> = (this as? InaraSets)?.inaraSetOf(\"sample.sets.Sync\")" in generated, generated)
+        assertTrue(
+            "public suspend fun SuspendModule.setOfAsync(): Set<Svc> = (this as? InaraSets)?.inaraSuspendSetOf(\"sample.sets.Async\")" in generated,
+            generated,
+        )
+        assertTrue("override fun inaraSetOf(`set`: String): Set<*>? = when (set) {\n    \"sample.sets.Sync\" ->" in generated, generated)
+        assertTrue(
+            "override suspend fun inaraSuspendSetOf(`set`: String): Set<*>? = when (set) {\n    \"sample.sets.Async\" ->" in generated,
+            generated,
+        )
     }
 
     @Test
@@ -261,14 +281,14 @@ class DISetGenerationTest {
         )
 
         val generated = compilation.generatedSource("sample/sets", "InaraDefaultsModule.kt")
-        assertTrue("defaulted(),\n  varargs(),\n" in generated, generated)
+        assertTrue("this.defaulted(),\n  this.varargs(),\n" in generated, generated)
 
         val tag = compilation.classLoader.loadClass("sample.sets.Tag").getConstructor(String::class.java)
         assertEquals(setOf(tag.newInstance("default"), tag.newInstance("0")), compilation.runHarness("sample.sets.Harness")[0])
     }
 
     @Test
-    fun sets_areInheritedByEveryDescendant() {
+    fun setFunction_answersForTheModuleItIsCalledOn() {
         val compilation = compileOk(
             SourceFile.kotlin(
                 "Inherited.kt",
@@ -293,7 +313,7 @@ class DISetGenerationTest {
                     @AppServices val database: Database
                 }
 
-                // Listing an inherited set again is allowed, and still generates it once.
+                // Listing an inherited set again is allowed, and generates its own function.
                 @DIModule(sets = [AppServices::class])
                 interface RelistingModule : ParentModule
 
@@ -305,15 +325,24 @@ class DISetGenerationTest {
                     fun run(): Array<Any?> {
                         val child = ChildModule(server = value(theServer), database = value(theDatabase))
                         val asParent: ParentModule = child
-                        return arrayOf(child.setOfAppServices().toList(), asParent.setOfAppServices().toList())
+                        val handWritten = object : ChildModule {
+                            override val server: Server = theServer
+                            override val database: Database = theDatabase
+                        }
+                        return arrayOf(
+                            child.setOfAppServices().toList(), asParent.setOfAppServices().toList(),
+                            handWritten.setOfAppServices().toList(),
+                        )
                     }
                 }
                 """
             )
         )
 
+        // The child reuses its ancestor's function, and only answers for the set.
         val child = compilation.generatedSource("sample/sets", "InaraChildModule.kt")
-        assertTrue("public fun ChildModule.setOfAppServices(): Set<AppService>" in child, child)
+        assertTrue("setOfAppServices" !in child, child)
+        assertTrue("\"sample.sets.AppServices\" -> kotlin.collections.setOfNotNull(\n      this.server,\n      this.database,\n    )" in child, child)
         val relisting = compilation.generatedSource("sample/sets", "InaraRelistingModule.kt")
         assertEquals(1, Regex("""fun RelistingModule\.setOfAppServices\(""").findAll(relisting).count(), relisting)
 
@@ -323,8 +352,10 @@ class DISetGenerationTest {
         val database = harness.getMethod("getTheDatabase").invoke(instance)
         val results = compilation.runHarness("sample.sets.Harness")
         assertEquals(listOf(server, database), results[0])
-        // Statically typed as the parent, the parent's own function is called.
-        assertEquals(listOf(server), results[1])
+        // Statically typed as the parent, still the members of the actual module.
+        assertEquals(listOf(server, database), results[1])
+        // A hand-written implementation only gets the members of the module listing the set.
+        assertEquals(listOf(server), results[2])
     }
 
     @Test
@@ -358,7 +389,7 @@ class DISetGenerationTest {
         )
 
         val generated = compilation.generatedSource("sample/sets", "InaraOverrideModule.kt")
-        assertTrue("server,\n  database(),\n" in generated, generated)
+        assertTrue("this.server,\n  this.database(),\n" in generated, generated)
     }
 
     @Test
@@ -387,8 +418,8 @@ class DISetGenerationTest {
         )
 
         val generated = compilation.generatedSource("sample/sets", "InaraSeveralModule.kt")
-        assertTrue("public fun SeveralModule.setOfFirst(): Set<Svc> = kotlin.collections.setOfNotNull(\n  both,\n)" in generated, generated)
-        assertTrue("public fun SeveralModule.setOfSecond(): Set<Any> = kotlin.collections.setOfNotNull(\n  both,\n  label,\n)" in generated, generated)
+        assertTrue("\"sample.sets.First\" -> kotlin.collections.setOfNotNull(\n      this.both,\n    )" in generated, generated)
+        assertTrue("\"sample.sets.Second\" -> kotlin.collections.setOfNotNull(\n      this.both,\n      this.label,\n    )" in generated, generated)
     }
 
     @Test
@@ -456,14 +487,24 @@ class DISetGenerationTest {
                     """
                     package sample.app
 
+                    import org.kodein.di.inara.Binding.Bindings.value
                     import org.kodein.di.inara.DIModule
-                    import sample.lib.AppService
-                    import sample.lib.AppServices
-                    import sample.lib.LibraryModule
+                    import sample.lib.*
 
                     @DIModule
                     interface AppModule : LibraryModule {
                         @AppServices val other: AppService
+                    }
+
+                    object Harness {
+                        val theServer = object : Server {}
+                        val theOther = object : AppService {}
+
+                        @JvmStatic
+                        fun run(): Array<Any?> {
+                            val library: LibraryModule = AppModule(server = value(theServer), other = value(theOther))
+                            return arrayOf(library.setOfAppServices().toList() == listOf(theServer, theOther))
+                        }
                     }
                     """
                 )
@@ -473,9 +514,69 @@ class DISetGenerationTest {
         assertEquals(ExitCode.OK, app.exitCode, app.messages)
 
         val generated = app.generatedSource("sample/app", "InaraAppModule.kt")
-        assertTrue(
-            "public fun AppModule.setOfAppServices(): Set<AppService> = kotlin.collections.setOfNotNull(\n  server,\n  other,\n)" in generated,
-            generated,
+        assertTrue("\"sample.lib.AppServices\" -> kotlin.collections.setOfNotNull(\n      this.server,\n      this.other,\n    )" in generated, generated)
+        // The library's own function, called on the app's module, answers with the app's members.
+        assertEquals(true, app.runHarness("sample.app.Harness")[0])
+    }
+
+    @Test
+    fun aModuleListingASetWithoutMembers_gathersItsDescendantsContributions() {
+        val compilation = compileOk(
+            SourceFile.kotlin(
+                "Gathering.kt",
+                """
+                package sample.sets
+
+                import org.kodein.di.inara.Binding.Bindings.single
+                import org.kodein.di.inara.Binding.Bindings.value
+                import org.kodein.di.inara.DIModule
+                import org.kodein.di.inara.DISet
+
+                $services
+
+                @DIModule(sets = [AppServices::class])
+                interface FrameworkModule {
+                    val name: String
+                }
+
+                @DIModule
+                interface DbModule {
+                    @AppServices val database: Database
+                }
+
+                @DIModule
+                interface ServerModule : @DIModule.Required DbModule {
+                    @AppServices val server: Server
+                }
+
+                @DIModule(composed = true)
+                interface AppModule : FrameworkModule, DbModule, ServerModule
+
+                fun boot(module: FrameworkModule): List<AppService> = module.setOfAppServices().toList()
+
+                object Harness {
+                    val theServer = object : Server {}
+                    val theDatabase = object : Database {}
+
+                    @JvmStatic
+                    fun run(): Array<Any?> {
+                        val app = AppModule(
+                            FrameworkModule(name = value("app")),
+                            DbModule(database = value(theDatabase)),
+                            ServerModulePart(server = single { theServer }),
+                        )
+                        return arrayOf(boot(app) == listOf(theDatabase, theServer), boot(FrameworkModule(name = value("alone"))))
+                    }
+                }
+                """
+            )
         )
+
+        val framework = compilation.generatedSource("sample/sets", "InaraFrameworkModule.kt")
+        assertTrue("?: kotlin.collections.emptySet<AppService>()" in framework, framework)
+
+        val results = compilation.runHarness("sample.sets.Harness")
+        assertEquals(true, results[0]) // a Part's member is the composing module's like any other
+        assertEquals(emptyList<Any>(), results[1])
     }
 }

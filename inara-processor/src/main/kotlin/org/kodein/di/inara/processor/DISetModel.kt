@@ -28,7 +28,7 @@ internal class SetSpec(
     val qualifiedName: String,
     val ofDeclaration: KSClassDeclaration?,
     val ofType: KSType?,
-    val suspendMode: SuspendMode,
+    val isSuspend: Boolean,
 ) {
     val simpleName: String get() = declaration.simpleName.asString()
 
@@ -37,16 +37,22 @@ internal class SetSpec(
 }
 
 /**
- * One set a module generates a `setOf<Annotation>()` function for: every member of
- * [ModuleModel.allMembers] carrying the set annotation, in that order. [elementTypeName] is the
- * star-projected `of` type. [originatingFiles] are the set annotation's and its `of` type's own
- * files, on top of the module's (the generated function depends on both).
+ * One set a module answers for - listed by the module itself or by one of its `@DIModule` ancestors:
+ * its `Inara<Module>` class returns [members] (every member of [ModuleModel.allMembers] carrying the
+ * set annotation, in that order) for it, from `InaraSets`. Only when [isListed] - by the module
+ * itself - does the module also get the `setOf<Annotation>()` extension, which asks its receiver for
+ * the set: a descendant reuses its ancestor's. [qualifiedName] is the set annotation's, the key the
+ * set is asked for with. [elementTypeName] is the star-projected `of` type. [originatingFiles] are
+ * the set annotation's and its `of` type's own files, on top of the module's (the generated code
+ * depends on both).
  */
 internal data class SetModel(
+    val qualifiedName: String,
     val functionName: String,
     val elementTypeName: TypeName,
     val members: List<MemberModel>,
     val isSuspend: Boolean,
+    val isListed: Boolean,
     val originatingFiles: List<KSFile>,
 )
 
@@ -114,7 +120,7 @@ private fun readSetSpec(annotationDecl: KSClassDeclaration, qualifiedName: Strin
         qualifiedName = qualifiedName,
         ofDeclaration = ofDecl,
         ofType = ofDecl?.asStarProjectedType(),
-        suspendMode = readSuspendMode(diSet),
+        isSuspend = diSet.argumentValue("suspend") as? Boolean ?: false,
     )
 }
 

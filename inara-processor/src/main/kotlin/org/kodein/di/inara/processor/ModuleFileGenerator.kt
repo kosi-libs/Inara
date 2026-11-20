@@ -3,6 +3,7 @@ package org.kodein.di.inara.processor
 import com.google.devtools.ksp.symbol.KSFile
 import com.google.devtools.ksp.symbol.KSType
 import com.google.devtools.ksp.symbol.Visibility
+import com.squareup.kotlinpoet.ANY
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -32,6 +33,7 @@ private val SUSPEND_BINDING_IMPLS = ClassName("org.kodein.di.inara", "SuspendBin
 private val BINDING_IMPLS_DELEGATE = ClassName("org.kodein.di.inara", "BindingImpls").nestedClass("Delegate")
 private val SUSPEND_BINDING_IMPLS_DELEGATE = ClassName("org.kodein.di.inara", "SuspendBindingImpls").nestedClass("SuspendDelegate")
 private val INTERNAL_INARA_GENERATION = ClassName("org.kodein.di.inara", "InternalInaraGeneration")
+private val INARA_SETS = ClassName("org.kodein.di.inara", "InaraSets")
 
 /** `@file:OptIn(InternalInaraGeneration::class)` - added to every generated file so its `Inara<Module>`
  * class, and every `BindingImpls.Delegate` it builds, need no further opt-in. */
@@ -384,6 +386,7 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
         moduleClassName = moduleClassName,
         visibility = model.visibility,
         members = model.allMembers,
+        sets = model.sets,
         originatingFiles = originatingFiles,
     )
     fileBuilder.addType(typeSpec).addFunction(builderFun)
@@ -475,6 +478,7 @@ private fun buildModuleType(
     moduleClassName: ClassName,
     visibility: Visibility,
     members: List<MemberModel>,
+    sets: List<SetModel>,
     originatingFiles: List<KSFile>,
 ): Pair<TypeSpec, FunSpec> {
     fun bindingTypeOf(member: MemberModel): TypeName = bindingTypeOf(moduleClassName, member)
@@ -561,6 +565,15 @@ private fun buildModuleType(
     }
     classBuilder.primaryConstructor(constructorBuilder.build())
     classBuilder.addSuperinterface(moduleClassName)
+
+    if (sets.isNotEmpty()) {
+        classBuilder.addSuperinterface(INARA_SETS)
+        for (file in sets.flatMap { it.originatingFiles }.distinct()) {
+            classBuilder.addOriginatingKSFile(file)
+        }
+        sets.filterNot { it.isSuspend }.takeIf { it.isNotEmpty() }?.let { classBuilder.addFunction(buildSetLookupFunction("inaraSetOf", it)) }
+        sets.filter { it.isSuspend }.takeIf { it.isNotEmpty() }?.let { classBuilder.addFunction(buildSetLookupFunction("inaraSuspendSetOf", it)) }
+    }
 
     // A @DIModule interface may itself declare a zero-arg `toString(): String` (abstract or
     // defaulted) - the loop above already generated an override backed by a `toStringBinding` for
@@ -905,18 +918,56 @@ private fun buildMemberShadowFunction(
 }
 
 /**
- * Emits one `fun <Module>.setOf<Annotation>(): Set<Of>` extension per [ModuleModel.sets] entry, as
- * visible as the module and `suspend` as resolved by [SetModel.isSuspend]: it reads every collected
- * member off the receiver (a function called without arguments, its parameters all `vararg` or
- * defaulted) into `setOfNotNull`, so a nullable member's `null` is left out.
+ * `kotlin.collections.setOfNotNull(<a>, <b>(), ...)` over [members], each read off [receiver] (a
+ * function called without arguments, its parameters all `vararg` or defaulted), so that a nullable
+ * member's `null` is left out - or an empty set when there is no member.
  *
  * `setOfNotNull` is called fully qualified: a set annotation named `NotNull` generates a
  * `setOfNotNull()` extension of its own in the same package, which must not capture the call.
  */
-internal fun buildSetFunctions(model: ModuleModel): List<FunSpec> = model.sets.map { set ->
+private fun setOfMembersCode(members: List<MemberModel>, receiver: String, elementType: TypeName): CodeBlock {
+    if (members.isEmpty()) return CodeBlock.of("kotlin.collections.emptySet<%T>()", elementType)
+    val body = CodeBlock.builder().add("kotlin.collections.setOfNotNull(\n").indent()
+    for (member in members) {
+        if (member.isFunction) body.add("%L.%N(),\n", receiver, member.name) else body.add("%L.%N,\n", receiver, member.name)
+    }
+    return body.unindent().add(")").build()
+}
+
+/**
+ * The `InaraSets` lookup [name] (`inaraSetOf`, or `inaraSuspendSetOf` for `suspend` sets) of an
+ * `Inara<Module>` class: for each of [sets] - keyed by the set annotation's qualified name - the
+ * members of *this* module carrying it. This is what makes a `setOf<Annotation>()` function, declared
+ * on an ancestor, answer with the members of the module it is actually called on.
+ */
+private fun buildSetLookupFunction(name: String, sets: List<SetModel>): FunSpec {
+    val body = CodeBlock.builder().add("return when (set) {\n").indent()
+    for (set in sets) {
+        body.add("%S -> %L\n", set.qualifiedName, setOfMembersCode(set.members, "this", ANY.copy(nullable = true)))
+    }
+    body.add("else -> null\n").unindent().add("}\n")
+    return FunSpec.builder(name)
+        .addModifiers(KModifier.OVERRIDE)
+        .apply { if (sets.first().isSuspend) addModifiers(KModifier.SUSPEND) }
+        .addParameter("set", STRING)
+        .returns(SET.parameterizedBy(STAR).copy(nullable = true))
+        .addCode(body.build())
+        .build()
+}
+
+/**
+ * Emits one `fun <Module>.setOf<Annotation>(): Set<Of>` extension per set the module lists itself
+ * (see [SetModel.isListed]), as visible as the module and `suspend` when the set is: it asks its
+ * receiver for the set through `InaraSets`, so that it answers with the members of the module it is
+ * actually called on - which may extend this one. A receiver that isn't a generated class (a
+ * hand-written implementation) only gets this module's own members.
+ */
+internal fun buildSetFunctions(model: ModuleModel): List<FunSpec> = model.sets.filter { it.isListed }.map { set ->
+    val setType = SET.parameterizedBy(set.elementTypeName)
     val funBuilder = FunSpec.builder(set.functionName)
         .receiver(model.moduleClassName)
-        .returns(SET.parameterizedBy(set.elementTypeName))
+        .returns(setType)
+        .addAnnotation(AnnotationSpec.builder(SUPPRESS).addMember("%S", "UNCHECKED_CAST").build())
     if (model.visibility == Visibility.INTERNAL) {
         funBuilder.addModifiers(KModifier.INTERNAL)
     }
@@ -927,18 +978,13 @@ internal fun buildSetFunctions(model: ModuleModel): List<FunSpec> = model.sets.m
         funBuilder.addOriginatingKSFile(file)
     }
 
-    val body = CodeBlock.builder()
-    if (set.members.isEmpty()) {
-        // Only reachable through an inherited set whose members this compilation can't see.
-        body.addStatement("return kotlin.collections.emptySet()")
-    } else {
-        body.add("return kotlin.collections.setOfNotNull(\n").indent()
-        for (member in set.members) {
-            if (member.isFunction) body.addStatement("%N(),", member.name) else body.addStatement("%N,", member.name)
-        }
-        body.unindent().add(")\n")
-    }
-    funBuilder.addCode(body.build()).build()
+    val lookup = if (set.isSuspend) "inaraSuspendSetOf" else "inaraSetOf"
+    funBuilder.addCode(
+        "return (this as? %T)?.%N(%S) as %T\n    ?: %L\n",
+        INARA_SETS, lookup, set.qualifiedName, setType.copy(nullable = true),
+        setOfMembersCode(set.members, "this", set.elementTypeName),
+    )
+    funBuilder.build()
 }
 
 /**

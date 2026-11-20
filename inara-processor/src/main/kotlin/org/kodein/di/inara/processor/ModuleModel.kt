@@ -687,6 +687,8 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         // `Module.shadow(of = module, ...)` companion extensions that are to replace `copy<Module>` and
         // `shadow<Module>` once Kotlin's companion extensions are stable.
         if (name == "of") fail("A @DIModule member may not be named 'of'.")
+        // Implemented by the generated class to answer for its sets (see InaraSets).
+        if (name == "inaraSetOf" || name == "inaraSuspendSetOf") fail("A @DIModule member may not be named '$name'.")
         // A member shaped like `argFoo` would silently shadow a same-named @DIFactory extension
         // function (`fun M.argFoo(): T`) - Kotlin always prefers a member over an extension, so the
         // factory's function would never actually be called, with no error to say so.
@@ -746,11 +748,11 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
                             " ${if (required.size == 1) "has" else "have"} no default value.",
                     )
                 }
-                val forbidding = memberSets.filter { it.suspendMode == SuspendMode.FORBID }
+                val forbidding = memberSets.filter { !it.isSuspend }
                 if (Modifier.SUSPEND in decl.modifiers && forbidding.isNotEmpty()) {
                     fail(
                         "'$name' is suspend, but " + forbidding.joinToString(", ") { "@${it.simpleName}" } +
-                            " ${if (forbidding.size == 1) "is" else "are"} @DISet(suspend = Forbid).",
+                            " ${if (forbidding.size == 1) "is not a" else "are not"} @DISet(suspend = true).",
                     )
                 }
             }
@@ -1003,18 +1005,19 @@ private fun checkCopyAndShadowNames(
 }
 
 /**
- * Validates the sets [classDecl] generates a `setOf<Annotation>()` function for - every one listed in
- * its own `@DIModule(sets = ...)`, then every one listed by any `@DIModule` ancestor (reached
- * through a `@DIModule` parent or a plain supertype alike), each once - and builds a [SetModel] for
- * each set that passed, collecting the members of [allMembers] that carry it.
+ * Validates the sets [classDecl] answers for - every one listed in its own `@DIModule(sets = ...)`,
+ * then every one listed by any `@DIModule` ancestor (reached through a `@DIModule` parent or a plain
+ * supertype alike), each once - and builds a [SetModel] for each set that passed, collecting the
+ * members of [allMembers] that carry it. Only the sets it lists itself get a `setOf<Annotation>()`
+ * function on this module (see [SetModel.isListed]); an inherited one's function is its ancestor's.
  *
  * Every entry of the module's own `sets` must be a set annotation, listed once (listing a set
- * already inherited is fine). Two sets may not share a simple name (both would generate the same
- * function), and no non-private member of the module, bound or not, may be named like a generated
- * function (it would silently shadow the extension). The `of` type of every set must be nameable
- * from the generated function: never `internal` to another module, and `public` for a `public`
- * module. A set listed by the module itself must collect at least one member - an inherited one
- * always does, since the ancestor listing it went through this same rule.
+ * already inherited is fine). Two sets may not share a simple name (their functions would be
+ * ambiguous on this module), and no non-private member of the module, bound or not, may be named
+ * like one of their functions (it would silently shadow the extension). The `of` type of every set
+ * the module lists must be nameable from its generated function: never `internal` to another
+ * module, and `public` for a `public` module. A set may collect no member at all: a module listing
+ * it is then the place its descendants' members are gathered from.
  */
 private fun parseSets(
     classDecl: KSClassDeclaration,
@@ -1073,6 +1076,9 @@ private fun parseSets(
             reportSetError(set, "A member named '${set.functionName}' clashes with the function generated for the set '@${set.simpleName}'.")
         }
 
+        // Only a set listed here names its `of` type, in the function this module generates. An
+        // inherited one was checked on the ancestor listing it.
+        if (set.qualifiedName !in ownSetNames) continue
         val ofError = set.ofTypeError()
         if (ofError != null) {
             reportSetError(set, ofError)
@@ -1096,20 +1102,17 @@ private fun parseSets(
     }
 
     return sets.mapNotNull { set ->
-        val members = allMembers.filter { set.qualifiedName in it.sets }
-        if (members.isEmpty() && set.qualifiedName in ownSetNames) {
-            reportSetError(set, "No member of '$moduleName' is annotated with '@${set.simpleName}', listed in its 'sets'.")
-        }
         if (set.qualifiedName in invalid) return@mapNotNull null
+        // An inherited set's `of` type is only named by its ancestor's function: if it doesn't
+        // resolve, that ancestor reports it.
+        val ofType = set.ofType ?: return@mapNotNull null
         SetModel(
+            qualifiedName = set.qualifiedName,
             functionName = set.functionName,
-            elementTypeName = set.ofType!!.toTypeName(),
-            members = members,
-            isSuspend = when (set.suspendMode) {
-                SuspendMode.FORBID -> false
-                SuspendMode.ALLOW -> members.any { it.isSuspend }
-                SuspendMode.FORCE -> true
-            },
+            elementTypeName = ofType.toTypeName(),
+            members = allMembers.filter { set.qualifiedName in it.sets },
+            isSuspend = set.isSuspend,
+            isListed = set.qualifiedName in ownSetNames,
             originatingFiles = listOfNotNull(set.declaration.containingFile, set.ofDeclaration?.containingFile),
         )
     }

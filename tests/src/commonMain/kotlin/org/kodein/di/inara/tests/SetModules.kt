@@ -1,6 +1,5 @@
 package org.kodein.di.inara.tests
 
-import org.kodein.di.inara.DIFactory.Suspend
 import org.kodein.di.inara.DIModule
 import org.kodein.di.inara.DISet
 
@@ -35,14 +34,17 @@ interface ServicesModule : DatabaseModule, ServerModule {
     @AppServices fun cache(size: Int = 16): AppService
 }
 
-/** Doesn't list [AppServices] itself, but still gets `setOfAppServices()` from [ServicesModule]. */
+/**
+ * Doesn't list [AppServices] itself: [ServicesModule]'s `setOfAppServices()` answers for it, with its
+ * own [metrics] too - even when it is typed as a [ServicesModule].
+ */
 @DIModule
 interface ExtendedServicesModule : ServicesModule {
     @AppServices val metrics: AppService
 }
 
-/** A set whose generated function is `suspend`, since one of its members is. */
-@DISet(of = AppService::class, suspend = Suspend.Allow)
+/** A `suspend` set: its generated function is `suspend`, so its members may be. */
+@DISet(of = AppService::class, suspend = true)
 annotation class AsyncServices
 
 @DIModule(sets = [AsyncServices::class])

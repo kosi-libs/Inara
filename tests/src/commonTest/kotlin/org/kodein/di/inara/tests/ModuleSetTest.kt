@@ -44,7 +44,7 @@ class ModuleSetTest {
     }
 
     @Test
-    fun set_isInheritedByDescendant() {
+    fun set_answersForTheActualModule() {
         val metrics = AppService("metrics")
         val module = ExtendedServicesModule(
             server = Binding.value(server),
@@ -56,6 +56,11 @@ class ModuleSetTest {
         assertEquals(
             listOf(server, AppService("cache16"), metrics),
             module.setOfAppServices().toList(),
+        )
+        val asParent: ServicesModule = module
+        assertEquals(
+            listOf(server, AppService("cache16"), metrics),
+            asParent.setOfAppServices().toList(),
         )
     }
 
