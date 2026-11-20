@@ -37,11 +37,7 @@ The processor generates an extension function named `setOf` followed by the name
 [source,kotlin]
 .InaraAppModule.kt
 ----
-public fun AppModule.setOfServices(): Set<Service> = kotlin.collections.setOfNotNull(
-    database,
-    server,
-    scheduler(),
-)
+public fun AppModule.setOfServices(): Set<Service>
 ----
 
 It reads each member off the module, so the set always holds what the module's bindings currently provide:
@@ -89,10 +85,11 @@ A default value declared on an overridden declaration counts, since an override 
 A member may belong to several sets, by carrying several set annotations.
 
 
-[#inherited-sets]
-== Inherited sets
+[#gathering]
+== Gathering the members of descendants
 
-A module also gets a function for every set listed by one of its `@DIModule` ancestors, collecting its own members along with the inherited ones:
+The function always answers for the module it is called on.
+Called on a module that extends the one listing the set, it collects the members of that module too, even when the module is typed as its ancestor:
 
 [source,kotlin]
 ----
@@ -101,13 +98,30 @@ interface ServerAppModule : AppModule {
     @Services val metrics: MetricsReporter
 }
 
-serverApp.setOfServices() // database, server and metrics, plus scheduler if it is not null
+val asAppModule: AppModule = serverApp
+asAppModule.setOfServices() // database, server and metrics, plus scheduler if it is not null
 ----
+
+A module may therefore list a set that none of its own members belongs to, as the place where the members of its descendants are gathered.
+A framework can list the set on the module its code receives, and let every module of the application contribute:
+
+[source,kotlin]
+----
+@DIModule(sets = [Services::class])
+interface FrameworkModule {
+    val config: FrameworkConfig
+}
+
+fun boot(module: FrameworkModule) {
+    module.setOfServices().forEach { it.start() } // <1>
+}
+----
+<1> Every `@Services` member of the module given to `boot`, whichever library it comes from.
 
 Listing an inherited set again in `sets` is allowed, and changes nothing.
 
 An annotated member does not require its module to list the set: a parent can annotate its members, and leave it to the modules extending it to gather them.
-This is how a xref:composition.adoc[composed module] gathers the members of the modules it is built from:
+This is how a xref:composition.adoc[composed module] gathers the members of the modules it is built from, xref:partial-modules.adoc[partial modules] included:
 
 [source,kotlin]
 ----
@@ -125,36 +139,22 @@ interface ServerModule {
 interface ApplicationModule : DatabaseModule, ServerModule
 ----
 
-NOTE: The function is an extension, so the one called depends on the static type of the module: a `ServerAppModule` that is typed as an `AppModule` returns the set of `AppModule`, without `metrics`.
+NOTE: A module that you implement by hand, rather than build with its generated builder, only answers with the members of the module listing the set.
 
 
 [#asynchronous-members]
 == Asynchronous members
 
-The `suspend` argument of `@DISet` decides whether the generated function is `suspend`:
-
-[cols="1,3"]
-|===
-| `suspend` | Generated function
-
-| `Allow` (default)
-| `suspend` only when at least one member of the set is a xref:suspend.adoc[`suspend` member].
-
-| `Force`
-| Always `suspend`.
-
-| `Forbid`
-| Never `suspend`: a `suspend` member may not carry the annotation.
-|===
+By default, the generated function is not `suspend`, and no xref:suspend.adoc[`suspend` member] may belong to the set.
+Pass `suspend = true` to `@DISet` to make it `suspend`, and allow `suspend` members:
 
 [source,kotlin]
 ----
-@DISet(of = Service::class, suspend = DIFactory.Suspend.Forbid)
-annotation class StartupServices
+@DISet(of = Service::class, suspend = true)
+annotation class RemoteServices
 ----
 
-With `Allow`, adding a `suspend` member to a set makes its function `suspend`, which breaks the call sites that are not.
-Use `Force` or `Forbid` to keep the signature stable as the module grows.
+The set decides, never its members: the function is declared on the module listing the set, while the members it collects may come from modules extending it, compiled later.
 
 
 [#generic-element-types]
@@ -186,16 +186,24 @@ It rejects a `sets` argument that:
 * lists an annotation that is not annotated with `@DISet`, or lists the same annotation twice;
 * gives the module two sets with the same simple name, since both would generate the same function;
 * gives the module a set whose function would have the name of one of its members, which would hide it;
-* gives a `public` module a set whose `of` type is `internal`, or whose `of` type is `internal` to another Gradle module;
-* lists a set that none of the module's members belongs to.
+* gives a `public` module a set whose `of` type is `internal`, or whose `of` type is `internal` to another Gradle module.
 
 It rejects a member that carries a set annotation, directly or through a declaration it overrides, when it is:
 
 * xref:ignored-members.adoc[ignored by Inara]: a `var`, an extension member, or a generic function;
 * a function that cannot be called without arguments;
 * of a type that is not a subtype of the set's `of` type, nullability aside;
-* `suspend`, while the set is `@DISet(suspend = Forbid)`.
+* `suspend`, while the set is not `@DISet(suspend = true)`.
 
 Finally, a set annotation may only annotate a function or a property declared in an interface, and never a `private` one.
+
+[#recompiling]
+== Changing a set
+
+The code generated for a module lists the members of its sets, inherited ones included, as they are when it is compiled.
+Adding a member to a set, or removing one, is therefore a change to the module's binary interface, like adding a member: every module extending it must be recompiled to see it.
+
+Gradle does so when it builds your application, since the classpath changed.
+Only a module published in a library, then used with a newer version of a module it extends, can miss the change: see xref:guides:multi-module.adoc#publishing[multi-module projects].
 
 TIP: A set of `AutoCloseable` members closes every resource of a module at once, for instance in the `ApplicationStopped` event of the xref:guides:ktor.adoc[Ktor guide].

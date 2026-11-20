@@ -115,6 +115,17 @@ val app = AppModule(
 The application provides `NetworkModule` once, and every feature that requires it uses that one `HttpClient`.
 
 
+[#publishing]
+== Publishing a module that extends others
+
+The code generated for a module is based on the modules it extends, as they are when it is compiled.
+A library that publishes a module extending modules of other libraries must therefore be rebuilt when they change: a new member would be missing from its builders, and a new xref:core:sets.adoc[set] member would be missing from its sets.
+
+Most changes fail at compile time or at runtime, such as a member that the published module does not implement.
+A member added to a set, though, is silently missing until the published module is rebuilt.
+Make sure that applications use the versions of these modules that the library was built against, or newer versions that do not change their members.
+
+
 == Keeping wiring private
 
 A module interface that is `internal` cannot be seen from other Gradle modules, and neither can its builder.
