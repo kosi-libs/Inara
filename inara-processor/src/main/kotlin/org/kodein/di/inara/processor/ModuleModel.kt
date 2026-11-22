@@ -125,6 +125,11 @@ internal class ParentModel(
  * [isPartial] is true when at least one of [parents] is `@DIModule.Required`: the module then also
  * gets a [partClassName] class holding a binding for each of [partMembers] - every member of
  * [allMembers] but those pulled from a required parent.
+ *
+ * [dependencies] are the `@DIModule` ancestors that come from another compilation, with code generated
+ * by this version of Inara (see [hasCurrentGeneratedCode]): the generated code records their
+ * [signature] and checks at startup that they are still the ones it was compiled against (see
+ * `InaraSignatures`).
  */
 internal data class ModuleModel(
     val declaration: KSClassDeclaration,
@@ -142,7 +147,11 @@ internal data class ModuleModel(
     val isPartial: Boolean = false,
     val partClassName: ClassName? = null,
     val partMembers: List<MemberModel> = emptyList(),
+    val dependencies: List<ModuleDependency> = emptyList(),
 ) {
+    /** See [moduleSignature]. */
+    val signature: String by lazy { moduleSignature(this) }
+
     /** Whether the [partClassName] class has a second constructor, taking the already-built parents
      * the module provides: only for a `@DIModule(composed = true)` partial module providing at least
      * one `@DIModule` parent - with none, it would clash with the flattened constructor. */
@@ -633,6 +642,16 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
     val parentModelByDecl: Map<KSClassDeclaration, ParentModel> =
         parentDecls.zip(parentModels).toMap()
 
+    // The composed builder and the parent-swapping copy read the generated code of the parents: one
+    // from a library must have been generated against the modules this one is compiled against.
+    if (isComposed) {
+        checkReadModulesUpToDate(
+            classDecl, parentModels, cache.resolver,
+            currentSignature = { parseModule(it, logger, cache)?.signature },
+            reportError = ::reportError,
+        )
+    }
+
     /**
      * Validates [decl] (declared on [owner]) against every `@DIModule` member rule and, if it
      * passes, resolves its type as seen from [classDecl] (see [buildMember]). [isOwn] controls the
@@ -890,6 +909,17 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         }
     }.values.toList()
 
+    val dependencies = ancestorDeclarations
+        .filter { it.containingFile == null && it.isDIModule() && hasCurrentGeneratedCode(it, cache.resolver) }
+        .mapNotNull { ancestor ->
+            val ancestorModel = parseModule(ancestor, logger, cache) ?: return@mapNotNull null
+            ModuleDependency(
+                qualifiedName = ancestorModel.moduleClassName.canonicalName,
+                signature = ancestorModel.signature,
+                signatureProperty = signaturePropertyOf(ancestorModel.moduleClassName.packageName, ancestorModel.generatedBaseName),
+            )
+        }
+
     return ModuleModel(
         declaration = classDecl,
         moduleClassName = classDecl.toClassName(),
@@ -906,6 +936,7 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
         isPartial = isPartial,
         partClassName = if (isPartial) partClassNameOf(classDecl.packageName.asString(), classDecl.generatedBaseName()) else null,
         partMembers = if (isPartial) allMembers.filter { parentByMemberName[it.name]?.isRequired != true } else emptyList(),
+        dependencies = dependencies,
     )
 }
 

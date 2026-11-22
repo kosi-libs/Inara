@@ -182,7 +182,7 @@ class DIModuleCopyTest {
 
         // The implementation class mirrors the interface's visibility - internal here, so it can't
         // expose the internal InternalModule supertype.
-        assertTrue("@InternalInaraGeneration\ninternal class InaraInternalModule(" in generated, generated)
+        assertTrue("@InternalInaraGeneration\n@InaraGenerated(format = 1)\ninternal class InaraInternalModule(" in generated, generated)
         assertTrue(Regex("""internal fun InternalModule\.copyInternalModule\(\): InternalModule = InaraInternalModule\(""").containsMatchIn(generated), generated)
         assertTrue(
             Regex("""internal fun InternalModule\.copyInternalModule\(\s*secret""").containsMatchIn(generated),

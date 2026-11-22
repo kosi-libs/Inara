@@ -231,8 +231,10 @@ public annotation class DISet(
 /**
  * Opts into the parts of Inara's public API that exist only to support generated code -
  * [BindingImpls], [SuspendBindingImpls] and their public members, the `Inara<...>` module
- * implementation classes the processor emits, and the binding-holding properties of the
- * `<Module>Part` classes it emits for partial modules - and are not meant to be used directly.
+ * implementation classes the processor emits, the binding-holding properties of the
+ * `<Module>Part` classes it emits for partial modules, and the signature checks of modules extending
+ * modules of other libraries ([InaraGenerated], [InaraSignatures] and the `inaraSignatureOf<Module>`
+ * properties) - and are not meant to be used directly.
  */
 @RequiresOptIn
 @Retention(AnnotationRetention.BINARY)

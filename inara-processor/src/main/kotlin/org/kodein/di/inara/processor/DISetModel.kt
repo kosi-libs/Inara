@@ -60,9 +60,11 @@ internal data class SetModel(
  * Everything memoized for the lifetime of one processing round - KSP invalidates `KSNode`s between
  * rounds, so none of it may outlive `process()`. [modules] backs [parseModule] (so a module that is
  * also some `@DIFactory`'s `from` is validated, and its diagnostics reported, once). The set
- * annotations read through [setSpecOf] are also what [validateSetUses] checks the uses of.
+ * annotations read through [setSpecOf] are also what [validateSetUses] checks the uses of. [resolver]
+ * is the round's own, through which a module looks up the generated code of a library module it reads
+ * (see [checkReadModulesUpToDate]).
  */
-internal class RoundCache {
+internal class RoundCache(val resolver: Resolver) {
     val modules: MutableMap<String, ModuleModel?> = mutableMapOf()
     private val setSpecs = LinkedHashMap<String, SetSpec?>()
 

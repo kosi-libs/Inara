@@ -119,11 +119,47 @@ The application provides `NetworkModule` once, and every feature that requires i
 == Publishing a module that extends others
 
 The code generated for a module is based on the modules it extends, as they are when it is compiled.
-A library that publishes a module extending modules of other libraries must therefore be rebuilt when they change: a new member would be missing from its builders, and a new xref:core:sets.adoc[set] member would be missing from its sets.
+A library that publishes a module extending modules of other libraries must therefore be rebuilt when they change, even when the change looks compatible:
 
-Most changes fail at compile time or at runtime, such as a member that the published module does not implement.
-A member added to a set, though, is silently missing until the published module is rebuilt.
-Make sure that applications use the versions of these modules that the library was built against, or newer versions that do not change their members.
+* a new member is missing from the module's builders and copies, and calling it fails;
+* the binding of a new member with a default body is ignored, so that its default body always answers;
+* a new xref:core:sets.adoc[set] member is missing from the module's sets;
+* a removed member, or one whose type or parameters changed, breaks the code reading it, and so does a renamed parameter of a member with xref:core:arguments.adoc[several parameters];
+* a module that becomes xref:core:partial-modules.adoc[partial], or stops being so, is no longer read the same way;
+* a module compiled by another version of Inara may have generated code of another shape.
+
+Recompiling the application does not fix any of these: only rebuilding the library does.
+Publish a new version of the library whenever a module it extends changes, and make sure that applications use the versions of these modules it was built against.
+
+Inara records the modules of other libraries that a module was compiled against, and reports one that changed instead of running wrong code.
+
+
+=== At startup
+
+The generated code of a module checks, the first time the module is built, that every module of another library it extends is still the one it was compiled against.
+It throws otherwise:
+
+[source]
+----
+java.lang.IllegalStateException: 'com.example.business.BusinessModule' was compiled against another version of 'com.example.domain.DomainModule' than the one it runs with: recompile the library declaring 'com.example.business.BusinessModule' against it.
+----
+
+The check fails on any change to the members a module declares, to its `@DIModule` supertypes, to its `composed` argument or to the sets it lists, even one that would not break the generated code.
+A change to the body of a binding, or to a default implementation, never fails it.
+A module of a library built by another version of Inara is not checked: a composed module reading it fails to compile instead.
+
+
+=== At compile time
+
+A xref:core:composition.adoc[composed] module reads the generated code of its parents.
+When a parent comes from a library compiled against other versions of the modules it extends, compiling the composed module fails, with what changed:
+
+[source]
+----
+'BusinessModule' was compiled against another version of 'DomainModule' (member 'auditLog' added): recompile the library declaring 'BusinessModule' against the current 'DomainModule'.
+----
+
+It also fails when the parent was compiled by another version of Inara, or without Inara.
 
 
 == Keeping wiring private

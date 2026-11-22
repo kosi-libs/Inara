@@ -204,6 +204,7 @@ The code generated for a module lists the members of its sets, inherited ones in
 Adding a member to a set, or removing one, is therefore a change to the module's binary interface, like adding a member: every module extending it must be recompiled to see it.
 
 Gradle does so when it builds your application, since the classpath changed.
-Only a module published in a library, then used with a newer version of a module it extends, can miss the change: see xref:guides:multi-module.adoc#publishing[multi-module projects].
+Only a module published in a library, then used with a newer version of a module it extends, can miss the change.
+Inara then reports it, at compile time or at startup: see xref:guides:multi-module.adoc#publishing[multi-module projects].
 
 TIP: A set of `AutoCloseable` members closes every resource of a module at once, for instance in the `ApplicationStopped` event of the xref:guides:ktor.adoc[Ktor guide].

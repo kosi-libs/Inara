@@ -5,6 +5,7 @@ import com.google.devtools.ksp.symbol.KSType
 import com.google.devtools.ksp.symbol.Visibility
 import com.squareup.kotlinpoet.ANY
 import com.squareup.kotlinpoet.AnnotationSpec
+import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
@@ -34,6 +35,8 @@ private val BINDING_IMPLS_DELEGATE = ClassName("org.kodein.di.inara", "BindingIm
 private val SUSPEND_BINDING_IMPLS_DELEGATE = ClassName("org.kodein.di.inara", "SuspendBindingImpls").nestedClass("SuspendDelegate")
 private val INTERNAL_INARA_GENERATION = ClassName("org.kodein.di.inara", "InternalInaraGeneration")
 private val INARA_SETS = ClassName("org.kodein.di.inara", "InaraSets")
+private val INARA_GENERATED = ClassName("org.kodein.di.inara", "InaraGenerated")
+private val INARA_SIGNATURES = ClassName("org.kodein.di.inara", "InaraSignatures")
 
 /** `@file:OptIn(InternalInaraGeneration::class)` - added to every generated file so its `Inara<Module>`
  * class, and every `BindingImpls.Delegate` it builds, need no further opt-in. */
@@ -364,6 +367,12 @@ private fun parentSwapInheritedCode(
  * A partial module (see [ModuleModel.isPartial]) additionally gets its `<Module>Part` class - see
  * [buildPartType].
  *
+ * Every module exposes the hash of its [ModuleModel.signature] (see [buildSignatureProperty]), and its
+ * `Inara<Module>` class records the signatures of its library ancestors in `@InaraGenerated`, which
+ * the processor of a module extending it reads (see [checkReadModulesUpToDate]). When it has library
+ * ancestors, it checks at startup that they are still those it was compiled against (see
+ * [buildSignatureCheck]).
+ *
  * See [buildCopyFunctions], [buildShadowFunctions] and [buildSetFunctions] for the
  * `copy<Module>`, `shadow<Module>` and `setOf<Annotation>` function(s) appended after these.
  */
@@ -389,7 +398,14 @@ internal fun generateModuleFile(model: ModuleModel): FileSpec {
         sets = model.sets,
         originatingFiles = originatingFiles,
     )
-    fileBuilder.addType(typeSpec).addFunction(builderFun)
+    val checkFunction = signatureCheckFunctionOf(model)
+    val classSpec = typeSpec.toBuilder()
+        .addAnnotation(inaraGeneratedAnnotation(model))
+        .apply { if (checkFunction != null) addInitializerBlock(CodeBlock.of("%N()\n", checkFunction)) }
+        .build()
+    fileBuilder.addType(classSpec).addFunction(builderFun)
+    fileBuilder.addProperty(buildSignatureProperty(model))
+    buildSignatureCheck(model)?.let { (flag, function) -> fileBuilder.addProperty(flag).addFunction(function) }
 
     if (model.isComposed) {
         fileBuilder.addFunction(buildComposedBuilderFunction(model, generatedClassName))
@@ -644,6 +660,9 @@ private fun buildComposedBuilderFunction(
         }
         builderFun.addParameter(paramBuilder.build())
     }
+
+    // Before reading the parents' generated code, which may be out of date.
+    signatureCheckFunctionOf(model)?.let { builderFun.addStatement("%N()", it) }
 
     val callCode = CodeBlock.builder()
         .add("return %N(\n", generatedClassName)
@@ -1022,6 +1041,8 @@ private fun buildModuleOverrideCopyFunction(
         }
         funBuilder.addParameter(param.build())
     }
+    // Before reading the parents' generated code, which may be out of date.
+    signatureCheckFunctionOf(model)?.let { funBuilder.addStatement("%N()", it) }
 
     val callCode = CodeBlock.builder()
         .add("return %N(\n", generatedClassName)
@@ -1121,6 +1142,7 @@ private fun buildPartType(model: ModuleModel, originatingFiles: List<KSFile>): T
     for (file in originatingFiles) {
         classBuilder.addOriginatingKSFile(file)
     }
+    signatureCheckFunctionOf(model)?.let { classBuilder.addInitializerBlock(CodeBlock.of("%N()\n", it)) }
 
     if (fromParents) {
         for (parent in providedParents) {
@@ -1206,4 +1228,66 @@ private fun buildPartToStringFunction(model: ModuleModel): FunSpec {
         .returns(STRING)
         .addStatement("return %L", expression)
         .build()
+}
+
+/**
+ * `@InaraGenerated(format = …, dependencies = […])` on the `Inara<Module>` class: the version of the
+ * generated code, and the signature of each library ancestor (see [ModuleModel.dependencies]) as seen
+ * now - what the processor of a module reading this one compares with the ancestors it sees then.
+ */
+private fun inaraGeneratedAnnotation(model: ModuleModel): AnnotationSpec {
+    val dependencies = model.dependencies.map { CodeBlock.of("%S", "${it.qualifiedName}\n${it.signature}") }
+    return AnnotationSpec.builder(INARA_GENERATED)
+        .addMember("format = %L", GENERATION_FORMAT)
+        .apply { if (dependencies.isNotEmpty()) addMember("dependencies = [%L]", dependencies.joinToCode(", ")) }
+        .build()
+}
+
+/**
+ * `inaraSignatureOf<Module>`: the hash of the module's [ModuleModel.signature], as it is when the
+ * module is compiled. A getter rather than a `const`, which the compiler would copy into the code of
+ * the modules reading it: they must read the value of the module they run with.
+ */
+private fun buildSignatureProperty(model: ModuleModel): PropertySpec {
+    val property = signaturePropertyOf(model.moduleClassName.packageName, model.generatedBaseName)
+    return PropertySpec.builder(property.simpleName, STRING)
+        .apply { if (model.visibility == Visibility.INTERNAL) addModifiers(KModifier.INTERNAL) }
+        .addAnnotation(INTERNAL_INARA_GENERATION)
+        .getter(FunSpec.getterBuilder().addStatement("return %S", signatureHash(model.signature)).build())
+        .build()
+}
+
+/** The private function checking the signatures of [model]'s library ancestors - `null` when it has
+ * none (see [buildSignatureCheck]). */
+private fun signatureCheckFunctionOf(model: ModuleModel): String? =
+    if (model.dependencies.isEmpty()) null else "inaraCheckSignaturesOf${model.generatedBaseName}"
+
+/**
+ * For a module with library ancestors (see [ModuleModel.dependencies]): a private function checking,
+ * once, that each of them exposes the signature hash it had when this module was compiled (see
+ * `InaraSignatures.check`), and the private flag it is checked once with. It runs when the
+ * `Inara<Module>` class or the `<Module>Part` class is built, and before the composed builder or the
+ * parent-swapping copy read the generated code of the parents.
+ */
+private fun buildSignatureCheck(model: ModuleModel): Pair<PropertySpec, FunSpec>? {
+    val name = signatureCheckFunctionOf(model) ?: return null
+    val flag = PropertySpec.builder("inaraSignaturesCheckedOf${model.generatedBaseName}", BOOLEAN, KModifier.PRIVATE)
+        .mutable()
+        .initializer("false")
+        .build()
+    val function = FunSpec.builder(name)
+        .addModifiers(KModifier.PRIVATE)
+        .addStatement("if (%N) return", flag)
+        .apply {
+            for (dependency in model.dependencies) {
+                addStatement(
+                    "%T.check(%S, %S, %S, %M)",
+                    INARA_SIGNATURES, model.moduleClassName.canonicalName, dependency.qualifiedName,
+                    signatureHash(dependency.signature), dependency.signatureProperty,
+                )
+            }
+        }
+        .addStatement("%N = true", flag)
+        .build()
+    return flag to function
 }

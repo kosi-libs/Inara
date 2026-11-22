@@ -53,7 +53,7 @@ class DIModuleInheritanceTest {
         assertTrue("InaraDelegatedModule3" !in generated, generated)
         assertEquals(1, Regex("""class InaraModule3\(""").findAll(generated).count(), generated)
         assertTrue("@file:OptIn(InternalInaraGeneration::class)" in generated, generated)
-        assertTrue("@InternalInaraGeneration\npublic class InaraModule3(" in generated, generated)
+        assertTrue("@InternalInaraGeneration\n@InaraGenerated(format = 1)\npublic class InaraModule3(" in generated, generated)
         assertTrue("public val aBinding: Binding<Module3, Unit, TypeA>," in generated, generated)
         assertTrue("public val bBinding: Binding<Module3, Unit, TypeB>," in generated, generated)
         assertTrue("public val cBinding: Binding<Module3, Unit, TypeC>," in generated, generated)

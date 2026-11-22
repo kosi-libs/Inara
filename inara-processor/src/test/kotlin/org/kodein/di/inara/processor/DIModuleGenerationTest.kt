@@ -49,7 +49,7 @@ class DIModuleGenerationTest {
         val generated = compilation.generatedSource("sample", "InaraNetworkModule.kt")
 
         assertTrue("@file:OptIn(InternalInaraGeneration::class)" in generated, generated)
-        assertTrue("@InternalInaraGeneration\npublic class InaraNetworkModule(" in generated, generated)
+        assertTrue("@InternalInaraGeneration\n@InaraGenerated(format = 1)\npublic class InaraNetworkModule(" in generated, generated)
         assertTrue("public val baseUrlBinding: Binding<NetworkModule, Unit, String>" in generated, generated)
         assertTrue("public val httpClientBinding: Binding<NetworkModule, Unit, HttpClient>" in generated, generated)
         assertTrue("public val contextBinding: Binding<NetworkModule, Int, Context>" in generated, generated)

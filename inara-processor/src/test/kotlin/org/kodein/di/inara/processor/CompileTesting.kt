@@ -19,17 +19,24 @@ internal fun compile(vararg sources: SourceFile): CompileTestResult = compile(so
 /**
  * Same as the vararg overload, with [dependencies] - earlier compilations, e.g. a library - added to
  * the classpath: their declarations are then only seen compiled, never as source, exactly like a
- * declaration from another Gradle module.
+ * declaration from another Gradle module. Without [withProcessor], the sources are compiled without
+ * Inara's processor, like a library that doesn't run it.
  */
 @OptIn(ExperimentalCompilerApi::class)
-internal fun compile(sources: List<SourceFile>, dependencies: List<CompileTestResult> = emptyList()): CompileTestResult {
+internal fun compile(
+    sources: List<SourceFile>,
+    dependencies: List<CompileTestResult> = emptyList(),
+    withProcessor: Boolean = true,
+): CompileTestResult {
     val compilation = KotlinCompilation().apply {
         this.sources = sources
         this.jvmTarget = "17"
         inheritClassPath = true
         classpaths = dependencies.map { it.outputDirectory }
-        configureKsp {
-            symbolProcessorProviders += DIModuleProcessorProvider()
+        if (withProcessor) {
+            configureKsp {
+                symbolProcessorProviders += DIModuleProcessorProvider()
+            }
         }
     }
     return CompileTestResult(compilation, compilation.compile())

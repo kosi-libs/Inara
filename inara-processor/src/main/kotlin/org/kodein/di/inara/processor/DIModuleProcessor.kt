@@ -42,7 +42,7 @@ public class DIModuleProcessor(
         // Shared between the loops so a @DIFactory's `from` module is parsed (and its diagnostics
         // reported) once, not again per factory - see parseModule - and so every set annotation
         // read along the way has its uses checked at the end.
-        val cache = RoundCache()
+        val cache = RoundCache(resolver)
 
         for (symbol in resolver.getSymbolsWithAnnotation(DI_SET_ANNOTATION)) {
             if (!symbol.validate()) {
