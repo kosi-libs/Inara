@@ -125,6 +125,34 @@ class DIModuleIgnoredMemberTest {
     }
 
     @Test
+    fun defaultedContextFunction_isAbsentFromBuilder() {
+        val source = SourceFile.kotlin(
+            "IgnoredContext.kt",
+            """
+            package sample.ignored
+
+            import org.kodein.di.inara.DIModule
+
+            class Logger
+
+            @DIModule
+            interface ContextModule {
+                context(logger: Logger)
+                fun describe(): String = logger.toString()
+                val extra: Int
+            }
+            """
+        )
+
+        val compilation = compile(source)
+        assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
+
+        val generated = compilation.generatedSource("sample/ignored", "InaraContextModule.kt")
+        assertTrue("describe" !in generated, generated)
+        assertTrue("fun ContextModule(extra: Binding<ContextModule, Unit, Int>): ContextModule" in generated, generated)
+    }
+
+    @Test
     fun privateMember_isAbsentFromBuilder() {
         val source = SourceFile.kotlin(
             "IgnoredPrivate.kt",

@@ -711,6 +711,48 @@ class DIModuleValidationTest {
     }
 
     @Test
+    fun contextFunctionMember_isRejected() {
+        assertRejected(
+            "Context parameters are not supported: 'repository'.",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            class Logger
+            class Repository
+
+            @DIModule
+            interface ContextModule {
+                context(logger: Logger)
+                fun repository(): Repository
+            }
+            """
+        )
+    }
+
+    @Test
+    fun contextPropertyMember_isRejected() {
+        assertRejected(
+            "Context parameters are not supported: 'repository'.",
+            """
+            package sample.validation
+
+            import org.kodein.di.inara.DIModule
+
+            class Logger
+            class Repository
+
+            @DIModule
+            interface ContextModule {
+                context(logger: Logger)
+                val repository: Repository
+            }
+            """
+        )
+    }
+
+    @Test
     fun extensionMember_isRejected() {
         assertRejected(
             "Extension members are not supported",

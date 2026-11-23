@@ -91,7 +91,7 @@ dependencies {
     ksp("org.kodein.di.inara:inara-processor:{version}") // <4>
 }
 ----
-<1> Inara runs on KSP but does not install it: you apply the plugin yourself.
+<1> Inara runs on KSP 2.3.14 or later, but does not install it: you apply the plugin yourself.
 <2> Recommended: https://github.com/kosi-libs/KLG[KLG] keeps the last generated code in place when Inara reports an error, so that your IDE only shows that error.
 <3> The runtime: `Binding` types and annotations.
 <4> The processor that generates module implementations.

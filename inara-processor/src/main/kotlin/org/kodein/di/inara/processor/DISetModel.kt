@@ -206,7 +206,7 @@ internal fun validateSetUses(resolver: Resolver, sets: Collection<SetSpec>, logg
                     "@${spec.simpleName} may only annotate a function or a property declared in an interface.",
                     symbol,
                 )
-                (symbol as KSDeclaration).getVisibility() == Visibility.PRIVATE -> logger.error(
+                symbol.getVisibility() == Visibility.PRIVATE -> logger.error(
                     "@${spec.simpleName} may not annotate a private member: Inara never sees it.",
                     symbol,
                 )

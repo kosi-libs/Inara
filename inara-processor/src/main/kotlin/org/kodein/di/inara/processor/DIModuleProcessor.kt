@@ -1,5 +1,7 @@
 package org.kodein.di.inara.processor
 
+import com.google.devtools.ksp.ApiFeatures
+import com.google.devtools.ksp.buildApiFeatures
 import com.google.devtools.ksp.processing.CodeGenerator
 import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.processing.Resolver
@@ -39,6 +41,15 @@ public class DIModuleProcessor(
     // Errors are reported once all rounds are over - see DeferredErrorsLogger for why.
     private val logger = DeferredErrorsLogger(logger)
 
+    // Context parameters must be visible to be rejected (see parseMember and validateArgFunctions):
+    // with this off, KSP reports none and Inara would generate code that silently drops them.
+    // Backing fields change nothing for Inara - interface members have none - but KSP will
+    // eventually enable every feature regardless, so opting in now keeps the two in step.
+    override val apiFeatures: ApiFeatures = buildApiFeatures {
+        enableBackingFields = true
+        enableContextParameters = true
+    }
+
     override fun finish() {
         logger.flush()
     }
@@ -57,7 +68,7 @@ public class DIModuleProcessor(
         val cache = RoundCache(resolver)
 
         for (symbol in resolver.getSymbolsWithAnnotation(DI_SET_ANNOTATION)) {
-            if (!symbol.validate()) {
+            if (!symbol.validate(apiFeatures = apiFeatures)) {
                 deferred += symbol
                 continue
             }
@@ -67,7 +78,7 @@ public class DIModuleProcessor(
         }
 
         for (symbol in resolver.getSymbolsWithAnnotation(DI_MODULE_ANNOTATION)) {
-            if (!symbol.validate()) {
+            if (!symbol.validate(apiFeatures = apiFeatures)) {
                 deferred += symbol
                 continue
             }
@@ -89,7 +100,7 @@ public class DIModuleProcessor(
         val factorySymbols = resolver.getSymbolsWithAnnotation(DI_FACTORY_ANNOTATION) +
             resolver.getSymbolsWithAnnotation(DI_FACTORY_CONTAINER_ANNOTATION)
         for (symbol in factorySymbols) {
-            if (!symbol.validate()) {
+            if (!symbol.validate(apiFeatures = apiFeatures)) {
                 deferred += symbol
                 continue
             }

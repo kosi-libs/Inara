@@ -190,7 +190,7 @@ It rejects a `sets` argument that:
 
 It rejects a member that carries a set annotation, directly or through a declaration it overrides, when it is:
 
-* xref:ignored-members.adoc[ignored by Inara]: a `var`, an extension member, or a generic function;
+* xref:ignored-members.adoc[ignored by Inara]: a `var`, an extension member, a generic function, or a member with context parameters;
 * a function that cannot be called without arguments;
 * of a type that is not a subtype of the set's `of` type, nullability aside;
 * `suspend`, while the set is not `@DISet(suspend = true)`.

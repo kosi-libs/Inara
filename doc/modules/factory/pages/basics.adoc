@@ -83,6 +83,8 @@ public fun UsersControllerFactory.UsersController(module: NetworkModule): UsersC
 These `arg<Argument>` functions are the *only* declarations a `@DIFactory` object may contain.
 Anything else in the object is a compile error.
 
+An `arg<Argument>` function may not take context parameters either: the generated function calls it with no context to give.
+
 
 [#visibility]
 == Visibility

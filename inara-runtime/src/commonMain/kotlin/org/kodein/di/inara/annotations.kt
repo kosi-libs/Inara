@@ -210,8 +210,8 @@ public annotation class DIFactory(
  *
  * The annotation may not have a `SOURCE` retention, and its `@Target`, when declared, must include
  * `FUNCTION` or `PROPERTY`. It may only annotate a non-private function or property of an
- * interface, and such a member must be one Inara binds (not a `var`, an extension member or a
- * generic function), callable without arguments (a `val`, or a function whose every parameter is
+ * interface, and such a member must be one Inara binds (not a `var`, an extension member, a
+ * generic function or a member with context parameters), callable without arguments (a `val`, or a function whose every parameter is
  * `vararg` or has a default value), and typed as a subtype of [of] (nullable or not).
  *
  * @param of The element type of the generated `Set`. A generic type is star-projected

@@ -11,5 +11,6 @@ asciidoc:
   attributes:
     version: '0.3.0'
     klg-version: '0.1.0'
+    ksp-minimum: '2.3.14'
     kotlin-version: '2.4.21'
     ksp-version: '2.3.14'

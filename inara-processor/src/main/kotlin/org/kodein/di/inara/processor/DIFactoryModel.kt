@@ -583,6 +583,12 @@ private fun validateArgFunctions(
         }
         val paramName = name.removePrefix("arg").replaceFirstChar(Char::lowercaseChar)
 
+        // The generated function calls it with no context in scope, which could never compile.
+        if (fn.contextParameters.isNotEmpty()) {
+            reportError("'$name' may not take context parameters.", fn)
+            continue
+        }
+
         if (objVisibility == Visibility.PUBLIC) {
             if (fn.getVisibility() != Visibility.INTERNAL) {
                 reportError(
@@ -812,7 +818,7 @@ private fun resolveFactory(
         val internalUses = internalDeclarationsIn(paramType)
         val crossModuleUses = internalUses.filter { it.isCrossModule }
         if (crossModuleUses.isNotEmpty()) {
-            val names = crossModuleUses.mapNotNull { it.declaration.simpleName?.asString() }.distinct().sorted()
+            val names = crossModuleUses.map { it.declaration.simpleName.asString() }.distinct().sorted()
             val argParams = withType?.let { "with: ${it.toTypeName().simpleString()}" } ?: ""
             reportError(
                 "Cannot pass argument '$paramName' of '$buildsName' through as a parameter of the " +
@@ -827,7 +833,7 @@ private fun resolveFactory(
             continue
         }
         if (objVisibility == Visibility.PUBLIC && internalUses.isNotEmpty()) {
-            val names = internalUses.mapNotNull { it.declaration.simpleName?.asString() }.distinct().sorted()
+            val names = internalUses.map { it.declaration.simpleName.asString() }.distinct().sorted()
             val isAre = if (names.size == 1) "is" else "are"
             val itThem = if (names.size == 1) "it" else "them"
             reportError(

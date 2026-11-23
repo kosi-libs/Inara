@@ -661,9 +661,9 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
      * actually came from.
      *
      * A `var` (with both accessors defaulted, see [hasFullyDefaultAccessors]), an extension member,
-     * or a generic function is rejected only when it *lacks* a default implementation - `Binding`
-     * can't express any of the three regardless of default status (no setter, no extension
-     * receiver, no per-call type parameter), so a defaulted one is instead silently excluded from
+     * a generic function, or a member with context parameters is rejected only when it *lacks* a
+     * default implementation - `Binding` can't express any of the four regardless of default status
+     * (no setter, no extension receiver, no per-call type parameter, no context), so a defaulted one is instead silently excluded from
      * the module's bindable surface entirely: no `Binding` parameter, no override, `null` returned
      * without an error. Once a member is excluded this way, the *structural* rule below it
      * (visibility) no longer applies either - Inara never touches the member, so it's irrelevant to
@@ -727,6 +727,9 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
                 if (skipReason == null && decl.extensionReceiver != null) {
                     if (hasDefault) skipReason = "an extension member" else fail("Extension members are not supported: '$name'.")
                 }
+                if (skipReason == null && decl.contextParameters.isNotEmpty()) {
+                    if (hasDefault) skipReason = "a member with context parameters" else fail("Context parameters are not supported: '$name'.")
+                }
                 // `private` is already filtered upstream (own: parseModule's own-member loop,
                 // inherited: superDeclarationClosure), so this only ever catches `internal`.
                 if (skipReason == null && decl.getVisibility() != Visibility.PUBLIC) {
@@ -740,6 +743,9 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
                 }
                 if (skipReason == null && decl.typeParameters.isNotEmpty()) {
                     if (hasDefault) skipReason = "a generic function" else fail("Generic members are not supported: '$name'.")
+                }
+                if (skipReason == null && decl.contextParameters.isNotEmpty()) {
+                    if (hasDefault) skipReason = "a member with context parameters" else fail("Context parameters are not supported: '$name'.")
                 }
                 if (skipReason == null && decl.getVisibility() != Visibility.PUBLIC) {
                     fail("Non-public members are not supported: '$name'.")

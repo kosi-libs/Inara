@@ -19,7 +19,7 @@ dependencies {
     ksp("org.kodein.di.inara:inara-processor:{version}") // <4>
 }
 ----
-<1> Apply a KSP release that supports the Kotlin version you are using.
+<1> Apply KSP {ksp-minimum} or later, in a release that supports the Kotlin version you are using.
 <2> Recommended: KLG keeps the last generated code in place when Inara reports an error, so that your IDE only shows that error (see xref:core:setup.adoc#klg[]).
 <3> The runtime: `Binding` types and annotations.
 <4> The processor that generates module implementations.

@@ -1,10 +1,11 @@
 = Ignored members
 
-Three kinds of members cannot be represented by a `Binding`:
+Four kinds of members cannot be represented by a `Binding`:
 
 * `var` properties, since a binding has no setter;
 * extension members, since a binding has no extension receiver;
-* generic functions, since the type arguments of a binding are fixed per instance.
+* generic functions, since the type arguments of a binding are fixed per instance;
+* members with context parameters, since a binding receives no context.
 
 
 == With a default implementation

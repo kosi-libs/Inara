@@ -14,8 +14,13 @@ A normal dependency.
 | The KSP processor that generates module and factory implementations.
 |===
 
-IMPORTANT: Inara runs on KSP but does not install it in your project.
+[IMPORTANT]
+====
+Inara runs on KSP but does not install it in your project.
 You apply the KSP plugin yourself, alongside Inara.
+
+Inara needs KSP {ksp-minimum} or later: with an older release, the build fails with an error that says so.
+====
 
 
 [#klg]

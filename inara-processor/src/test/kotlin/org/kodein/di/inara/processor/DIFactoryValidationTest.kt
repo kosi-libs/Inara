@@ -1004,4 +1004,30 @@ class DIFactoryValidationTest {
             """
         )
     }
+
+    @Test
+    fun argFunctionWithContextParameters_isRejected() {
+        assertRejected(
+            "'argGreeting' may not take context parameters.",
+            """
+            package sample.factory
+
+            import org.kodein.di.inara.DIFactory
+            import org.kodein.di.inara.DIModule
+
+            class Locale
+
+            @DIModule
+            interface GreetingModule { val name: String }
+
+            class Greeter(val greeting: String)
+
+            @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+            internal object GreeterDIFactory {
+                context(locale: Locale)
+                fun GreetingModule.argGreeting(): String = "Hello " + name
+            }
+            """
+        )
+    }
 }

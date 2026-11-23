@@ -365,6 +365,25 @@ class DISetValidationTest {
     }
 
     @Test
+    fun ignoredContextMember_isRejected() {
+        assertRejected(
+            "'svc' is annotated with @Services, but Inara ignores a member with context parameters, so it can't belong to a set.",
+            source(
+                """
+                @DISet(Svc::class)
+                annotation class Services
+
+                @DIModule
+                interface M {
+                    context(name: String)
+                    @Services fun svc(): Svc = TODO()
+                }
+                """
+            ),
+        )
+    }
+
+    @Test
     fun functionRequiringArguments_isRejected() {
         assertRejected(
             "'svc' is annotated with @Services, but can't be called without arguments: 'id', 'name' have no default value.",
