@@ -4,7 +4,7 @@ coroutines = "1.11.0"               # https://github.com/Kotlin/kotlinx.coroutin
 kctfork = "0.14.0"                  # https://github.com/ZacSweers/kotlin-compile-testing/releases
 kotlin = "2.4.20"                   # https://kotlinlang.org/docs/releases.html#release-history
 kotlinPoet = "2.4.0"                # https://github.com/square/kotlinpoet/releases
-ksp = "2.3.12"                      # https://github.com/google/ksp/releases
+ksp = "2.3.14"                      # https://github.com/google/ksp/releases
 mavenPublish = "0.37.0"             # https://github.com/vanniktech/gradle-maven-publish-plugin/releases
 
 [plugins]

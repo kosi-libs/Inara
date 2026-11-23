@@ -34,8 +34,20 @@ import com.squareup.kotlinpoet.ksp.writeTo
  */
 public class DIModuleProcessor(
     private val codeGenerator: CodeGenerator,
-    private val logger: KSPLogger,
+    logger: KSPLogger,
 ) : SymbolProcessor {
+    // Errors are reported once all rounds are over - see DeferredErrorsLogger for why.
+    private val logger = DeferredErrorsLogger(logger)
+
+    override fun finish() {
+        logger.flush()
+    }
+
+    // Called instead of finish() when another processor reported an error.
+    override fun onError() {
+        logger.flush()
+    }
+
     override fun process(resolver: Resolver): List<KSAnnotated> {
         val deferred = mutableListOf<KSAnnotated>()
         // Round-scoped: KSP invalidates KSNodes between rounds, so this must not outlive process().
