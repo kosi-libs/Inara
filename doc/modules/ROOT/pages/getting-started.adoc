@@ -3,7 +3,7 @@
 This page takes a JVM project from nothing to a working module.
 For Kotlin Multiplatform projects, see xref:core:setup.adoc[].
 
-1. Apply the KSP plugin, and add both Inara artifacts:
+1. Apply the KSP and KLG plugins, and add both Inara artifacts:
 +
 [source,kotlin,subs="verbatim,attributes"]
 .build.gradle.kts
@@ -11,16 +11,18 @@ For Kotlin Multiplatform projects, see xref:core:setup.adoc[].
 plugins {
     kotlin("jvm") version "{kotlin-version}"
     id("com.google.devtools.ksp") version "{ksp-version}" // <1>
+    id("org.kodein.gradle.klg") version "{klg-version}" // <2>
 }
 
 dependencies {
-    implementation("org.kodein.di.inara:inara-runtime:{version}") // <2>
-    ksp("org.kodein.di.inara:inara-processor:{version}") // <3>
+    implementation("org.kodein.di.inara:inara-runtime:{version}") // <3>
+    ksp("org.kodein.di.inara:inara-processor:{version}") // <4>
 }
 ----
-<1> Apply the KSP plugin that corresponds to the Kotlin version you are using.
-<2> The runtime: `Binding` types and annotations.
-<3> The processor that generates module implementations.
+<1> Apply a KSP release that supports the Kotlin version you are using.
+<2> Recommended: KLG keeps the last generated code in place when Inara reports an error, so that your IDE only shows that error (see xref:core:setup.adoc#klg[]).
+<3> The runtime: `Binding` types and annotations.
+<4> The processor that generates module implementations.
 
 2. Declare a module as an interface annotated with `@DIModule`:
 +

@@ -83,16 +83,18 @@ The shortest setup that works, on a JVM project:
 plugins {
     kotlin("jvm")
     id("com.google.devtools.ksp") // <1>
+    id("org.kodein.gradle.klg") // <2>
 }
 
 dependencies {
-    implementation("org.kodein.di.inara:inara-runtime:{version}") // <2>
-    ksp("org.kodein.di.inara:inara-processor:{version}") // <3>
+    implementation("org.kodein.di.inara:inara-runtime:{version}") // <3>
+    ksp("org.kodein.di.inara:inara-processor:{version}") // <4>
 }
 ----
 <1> Inara runs on KSP but does not install it: you apply the plugin yourself.
-<2> The runtime: `Binding` types and annotations.
-<3> The processor that generates module implementations.
+<2> Recommended: https://github.com/kosi-libs/KLG[KLG] keeps the last generated code in place when Inara reports an error, so that your IDE only shows that error.
+<3> The runtime: `Binding` types and annotations.
+<4> The processor that generates module implementations.
 
 For Kotlin Multiplatform and the other setups, see the https://kosi-libs.org/inara/latest/core/setup.html[setup page].
 

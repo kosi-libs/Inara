@@ -18,6 +18,16 @@ IMPORTANT: Inara runs on KSP but does not install it in your project.
 You apply the KSP plugin yourself, alongside Inara.
 
 
+[#klg]
+== KLG
+
+Before running, KSP deletes everything it generated.
+When Inara reports an error, nothing is generated again: the build fails with that error only, but your IDE no longer finds the builders, `Part` classes and factory functions, and marks every use of them as an error.
+
+https://github.com/kosi-libs/KLG[KLG] is a Gradle plugin that keeps a copy of each successful KSP generation, and puts it back in place when KSP fails, so that your IDE only shows the error that matters.
+Inara works without it, but applying it to every project that runs Inara is recommended, as the samples of this page do.
+
+
 == Kotlin Multiplatform
 
 On a multiplatform project, declare your modules in `commonMain`.
@@ -31,6 +41,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompilationTask
 plugins {
     kotlin("multiplatform") version "{kotlin-version}"
     id("com.google.devtools.ksp") version "{ksp-version}"
+    id("org.kodein.gradle.klg") version "{klg-version}"
 }
 
 kotlin {
@@ -77,6 +88,7 @@ On a JVM-only project, KSP wires its generated sources into the compilation and 
 plugins {
     kotlin("jvm") version "{kotlin-version}"
     id("com.google.devtools.ksp") version "{ksp-version}"
+    id("org.kodein.gradle.klg") version "{klg-version}"
 }
 
 dependencies {

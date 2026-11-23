@@ -2,12 +2,14 @@
 atomicfu = "0.33.0"                 # https://github.com/Kotlin/kotlinx-atomicfu/releases
 coroutines = "1.11.0"               # https://github.com/Kotlin/kotlinx.coroutines/releases
 kctfork = "0.14.0"                  # https://github.com/ZacSweers/kotlin-compile-testing/releases
+klg = "0.1.0"                       # https://github.com/kosi-libs/KLG/releases
 kotlin = "2.4.20"                   # https://kotlinlang.org/docs/releases.html#release-history
 kotlinPoet = "2.4.0"                # https://github.com/square/kotlinpoet/releases
 ksp = "2.3.14"                      # https://github.com/google/ksp/releases
 mavenPublish = "0.37.0"             # https://github.com/vanniktech/gradle-maven-publish-plugin/releases
 
 [plugins]
+klg = { id = "org.kodein.gradle.klg", version.ref = "klg" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
