@@ -333,6 +333,74 @@ class DIFactoryValidationTest {
     }
 
     @Test
+    fun invalidFromModule_doesNotReportTheArgFunctions() {
+        // Pre-fix: with its only annotation unreadable, the object's arg functions were checked
+        // against no constructor at all, each reported as matching none - "for one of: .".
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Factory.kt",
+                """
+                package sample.factory
+
+                import org.kodein.di.inara.DIFactory
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface GreetingModule {
+                    val greeting: String
+                    fun <T> new(): T
+                }
+
+                class Greeter(val greeting: String)
+
+                @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+                internal object GreeterDIFactory {
+                    fun GreetingModule.argGreeting(): String = greeting
+                }
+                """
+            )
+        )
+
+        assertEquals(ExitCode.COMPILATION_ERROR, compilation.exitCode, compilation.messages)
+        assertTrue("Generic members are not supported: 'new'." in compilation.messages, compilation.messages)
+        assertTrue("does not match any constructor argument" !in compilation.messages, compilation.messages)
+    }
+
+    @Test
+    fun unreadableAnnotation_doesNotReportTheArgFunctionsMeantForIt() {
+        // The Shouter annotation is rejected, so 'argVolume' - meant for it - matches no remaining
+        // annotation: reporting that would only bury the actual error.
+        val compilation = compile(
+            SourceFile.kotlin(
+                "Factory.kt",
+                """
+                package sample.factory
+
+                import org.kodein.di.inara.DIFactory
+                import org.kodein.di.inara.DIModule
+
+                @DIModule
+                interface GreetingModule { val greeting: String }
+                interface NotAModule { val greeting: String }
+
+                class Greeter(val greeting: String)
+                class Shouter(val greeting: String, val volume: Int)
+
+                @DIFactory(builds = Greeter::class, from = GreetingModule::class)
+                @DIFactory(builds = Shouter::class, from = NotAModule::class)
+                internal object Factories {
+                    fun NotAModule.argVolume(): Int = 11
+                }
+                """
+            )
+        )
+
+        assertEquals(ExitCode.COMPILATION_ERROR, compilation.exitCode, compilation.messages)
+        assertTrue("must be a @DIModule interface: 'NotAModule' is not." in compilation.messages, compilation.messages)
+        assertTrue("does not match any constructor argument" !in compilation.messages, compilation.messages)
+    }
+
+    @Test
     fun nonDIModuleFrom_isRejected() {
         assertRejected(
             "must be a @DIModule interface",

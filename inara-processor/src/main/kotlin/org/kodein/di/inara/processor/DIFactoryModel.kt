@@ -350,9 +350,14 @@ internal fun parseFactories(
                 .orEmpty().filterIsInstance<KSAnnotation>()
         }
 
-    val contexts: List<FactoryContext> = annotations.mapNotNull {
+    val parsedContexts = annotations.map {
         parseFactoryContext(objDecl, it, objVisibility, cache, logger, ::reportError)
     }
+    // An annotation that can't be read - its own error, or its 'from' module's, is already reported -
+    // leaves the arg functions meant for it matching nothing. Checking them would only bury that error
+    // under false ones, and the object isn't generated anyway.
+    if (null in parsedContexts) return emptyList()
+    val contexts: List<FactoryContext> = parsedContexts.filterNotNull()
     val argFunctionMaps = validateArgFunctions(objDecl, contexts, objVisibility, ::reportError)
     val models = contexts.zip(argFunctionMaps).map { (context, argFunctions) ->
         resolveFactory(objDecl, objVisibility, context, argFunctions, ::reportError)
