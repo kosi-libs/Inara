@@ -11,7 +11,7 @@ plugins {
 
 allprojects {
     group = "org.kodein.di.inara"
-    version = "0.3.0"
+    version = "0.4.0"
 }
 
 val mavenPublishPluginId = libs.plugins.mavenPublish.get().pluginId
