@@ -41,6 +41,9 @@ kotlin {
         }
         commonMain.dependencies {
             implementation(projects.inaraRuntime)
+            // Modules of another Gradle module: what Inara generates when a module extends them can only
+            // be exercised from another compilation (see LibraryExtensions.kt).
+            implementation(projects.testsLibrary)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

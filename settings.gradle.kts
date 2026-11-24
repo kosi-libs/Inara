@@ -22,4 +22,5 @@ include(
     ":inara-runtime",
 
     ":tests",
+    ":tests-library",
 )
