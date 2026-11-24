@@ -303,12 +303,12 @@ class DIModuleShadowTest {
     }
 
     @Test
-    fun formerShadow_isStillGeneratedDeprecatedWithAnErrorPointingToShadowModule() {
+    fun formerShadow_isNoLongerGenerated() {
         val compilation = compile(
             SourceFile.kotlin(
                 "NetworkModule.kt",
                 """
-                package sample.shadow.deprecated
+                package sample.shadow.former
 
                 import org.kodein.di.inara.DIModule
 
@@ -322,14 +322,8 @@ class DIModuleShadowTest {
         )
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/shadow/deprecated", "InaraNetworkModule.kt")
-        for (replacement in listOf("shadowNetworkModule()", "shadowNetworkModule(baseUrl = baseUrl, timeout = timeout)")) {
-            assertTrue(
-                "replaceWith = ReplaceWith(\"$replacement\", \"sample.shadow.deprecated.shadowNetworkModule\")" in generated,
-                "$replacement\n$generated",
-            )
-        }
-        assertEquals(2, Regex("""level = DeprecationLevel\.ERROR,\s*\)\s*public fun NetworkModule\.shadow\(""").findAll(generated).count(), generated)
-        assertTrue("'shadow' is renamed 'shadowNetworkModule'" in generated, generated)
+        val generated = compilation.generatedSource("sample/shadow/former", "InaraNetworkModule.kt")
+        assertEquals(0, Regex("""fun NetworkModule\.shadow\(""").findAll(generated).count(), generated)
+        assertEquals(2, Regex("""fun NetworkModule\.shadowNetworkModule\(""").findAll(generated).count(), generated)
     }
 }

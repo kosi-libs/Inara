@@ -29,9 +29,6 @@ As with copies, a module can also call the shadow function of each of its `@DIMo
 NOTE: `appModule.shadowAppModule(/*...*/)` will be deprecated once companion extensions are stable in Kotlin (they are experimental in Kotlin 2.5).
 It will then be replaced by `AppModule.shadow(of = appModule, /*...*/)`, which is why a module member may not be named `of`.
 
-IMPORTANT: These functions used to all be named `shadow`, which is still generated, but deprecated with an error that offers its `shadow<Module>` replacement.
-The next version of Inara will no longer generate it.
-
 
 == How it differs from a copy
 

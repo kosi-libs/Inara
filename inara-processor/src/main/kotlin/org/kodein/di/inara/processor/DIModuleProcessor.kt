@@ -16,11 +16,10 @@ import com.squareup.kotlinpoet.ksp.writeTo
  * (`SuspendBinding` for `suspend` members) and a builder function named after the
  * interface. A `@DIModule(composed = true)` interface additionally gets a second builder overload
  * taking its `@DIModule` parents as built instances, plus a parent-swapping `copy<Module>`
- * overload. Every module also gets `copy<Module>` and `shadow<Module>` extension functions (and,
- * deprecated, the former `copy` and `shadow`), plus a `setOf<Annotation>()` extension per set
- * annotation (see `@DISet`) it or a `@DIModule` ancestor lists in `sets`. The
- * interface may extend any interface, not just other `@DIModule` ones - a plain supertype's members
- * are bound exactly like the module's own. See [parseModule] for the validation rules and
+ * overload. Every module also gets `copy<Module>` and `shadow<Module>` extension functions, plus a
+ * `setOf<Annotation>()` extension per set annotation (see `@DISet`) it or a `@DIModule` ancestor
+ * lists in `sets`. The interface may extend any interface, not just other `@DIModule` ones - a plain
+ * supertype's members are bound exactly like the module's own. See [parseModule] for the validation rules and
  * [generateModuleFile] for the generated shape(s).
  *
  * Every annotation class annotated with `@DISet` is validated on its own (see

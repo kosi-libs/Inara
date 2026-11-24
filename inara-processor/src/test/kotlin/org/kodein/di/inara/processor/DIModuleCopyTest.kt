@@ -247,7 +247,7 @@ class DIModuleCopyTest {
             ).containsMatchIn(generated),
             generated,
         )
-        val moduleOverrideCall = generated.substringAfter("copyModule3(module1: Module1 = this").substringBefore("@Deprecated")
+        val moduleOverrideCall = generated.substringAfter("copyModule3(module1: Module1 = this").substringBefore("fun Module3.shadowModule3")
         assertTrue("cBinding = if (this@copyModule3 is InaraModule3) BindingImpls.copyOf(this@copyModule3.cBinding) else BindingImpls.Delegate(this@copyModule3::class) { this@copyModule3.c }" in moduleOverrideCall, generated)
     }
 
@@ -463,12 +463,12 @@ class DIModuleCopyTest {
     }
 
     @Test
-    fun formerCopy_isStillGeneratedDeprecatedWithAnErrorPointingToCopyModule() {
+    fun formerCopy_isNoLongerGenerated() {
         val compilation = compile(
             SourceFile.kotlin(
                 "App.kt",
                 """
-                package sample.copy.deprecated
+                package sample.copy.former
 
                 import org.kodein.di.inara.DIModule
 
@@ -482,44 +482,10 @@ class DIModuleCopyTest {
         )
         assertEquals(ExitCode.OK, compilation.exitCode, compilation.messages)
 
-        val generated = compilation.generatedSource("sample/copy/deprecated", "InaraApp.kt")
-        val message = "message = \"'copy' is renamed 'copyApp': unlike 'copy', it can never be ambiguous with a parent module's " +
-            "function. The next version of Inara will no longer generate 'copy'.\""
-        val import = "\"sample.copy.deprecated.copyApp\""
-        for (replacement in listOf("copyApp()", "copyApp(greeting = greeting, name = name)", "copyApp(greeter = greeter)")) {
-            assertTrue(
-                Regex(
-                    Regex.escape("@Deprecated(") + "\\s*" + Regex.escape(message) + ",\\s*" +
-                        Regex.escape("replaceWith = ReplaceWith(\"$replacement\", $import),") + "\\s*" +
-                        Regex.escape("level = DeprecationLevel.ERROR,") + "\\s*\\)\\s*" + Regex.escape("public fun App.copy(")
-                ).containsMatchIn(generated),
-                "$replacement\n$generated",
-            )
-        }
-        assertEquals(3, Regex("""fun App\.copy\(""").findAll(generated).count(), generated)
+        val generated = compilation.generatedSource("sample/copy/former", "InaraApp.kt")
+        assertEquals(0, Regex("""fun App\.copy\(""").findAll(generated).count(), generated)
         assertEquals(3, Regex("""fun App\.copyApp\(""").findAll(generated).count(), generated)
-    }
-
-    @Test
-    fun callingFormerCopy_isACompileError() {
-        val compilation = compile(
-            SourceFile.kotlin(
-                "Caller.kt",
-                """
-                package sample.copy.deprecated
-
-                import org.kodein.di.inara.Binding
-                import org.kodein.di.inara.DIModule
-
-                @DIModule
-                interface Caller { val name: String }
-
-                fun use(caller: Caller) = caller.copy(name = Binding.value("x"))
-                """
-            )
-        )
-        assertEquals(ExitCode.COMPILATION_ERROR, compilation.exitCode, compilation.messages)
-        assertTrue("'copy' is renamed 'copyCaller'" in compilation.messages, compilation.messages)
+        assertTrue("@Deprecated" !in generated, generated)
     }
 
     @Test
@@ -563,7 +529,7 @@ class DIModuleCopyTest {
     }
 
     @Test
-    fun membersNamedCopyAndShadow_areAllowedAndHideTheDeprecatedFunctions() {
+    fun membersNamedCopyAndShadow_areAllowed() {
         val results = runHarness(
             SourceFile.kotlin(
                 "Members.kt",

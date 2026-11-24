@@ -689,57 +689,15 @@ private fun buildComposedBuilderFunction(
     return builderFun.addCode(callCode).build()
 }
 
-private val DEPRECATED = ClassName("kotlin", "Deprecated")
 private val SUPPRESS = ClassName("kotlin", "Suppress")
-private val REPLACE_WITH = ClassName("kotlin", "ReplaceWith")
-private val DEPRECATION_LEVEL = ClassName("kotlin", "DeprecationLevel")
+
+/** The receiver of the extension function [functionName], labeled for use in its default values. */
+private fun receiverOf(functionName: String): CodeBlock = CodeBlock.of("this@%L", functionName)
 
 /**
- * One name a module's copy or shadow functions are emitted under: [name] itself - its receiver
- * labeled `this@<name>` in every default value - and, for the former `copy` / `shadow` name only,
- * [replacedBy]: the `copy<Module>` / `shadow<Module>` name the deprecated function points to.
- */
-private class FunctionName(val name: String, val replacedBy: String? = null) {
-    val receiver: CodeBlock get() = CodeBlock.of("this@%L", name)
-}
-
-/** `<functionName>(a = a, b = b, ...)`: a call passing each of [parameterNames] through by name. */
-private fun forwardingCall(functionName: String, parameterNames: List<String>): CodeBlock =
-    CodeBlock.of("%L(%L)", functionName, parameterNames.map { CodeBlock.of("%N = %N", it, it) }.joinToCode(", "))
-
-/**
- * Adds, when [name] is a former name, `@Deprecated(level = ERROR)` pointing to its replacement: the
- * call to [name]'s `copy<Module>` / `shadow<Module>` counterpart with every one of [parameterNames]
- * passed through by name, imported from [packageName].
- *
- * A module may have a member named `copy` or `shadow`, which then hides the deprecated function -
- * and, for a member function without parameters, makes Kotlin warn that the generated extension is
- * shadowed. That warning is suppressed, so that it never fails a build treating warnings as errors.
- */
-private fun FunSpec.Builder.deprecatedIfRenamed(name: FunctionName, parameterNames: List<String>, packageName: String): FunSpec.Builder {
-    val newName = name.replacedBy ?: return this
-    val import = if (packageName.isEmpty()) newName else "$packageName.$newName"
-    addAnnotation(AnnotationSpec.builder(SUPPRESS).addMember("%S", "EXTENSION_SHADOWED_BY_MEMBER").build())
-    return addAnnotation(
-        AnnotationSpec.builder(DEPRECATED)
-            .addMember(
-                "message = %S",
-                "'${name.name}' is renamed '$newName': unlike '${name.name}', it can never be ambiguous with a parent module's " +
-                    "function. The next version of Inara will no longer generate '${name.name}'.",
-            )
-            .addMember("replaceWith = %T(%S, %S)", REPLACE_WITH, forwardingCall(newName, parameterNames).toString(), import)
-            .addMember("level = %T.ERROR", DEPRECATION_LEVEL)
-            .build()
-    )
-}
-
-/**
- * Emits every copy function for [model] under its own name, `copy<Module>` (see
- * [copyFunctionName]), then again under the former name `copy`, each deprecated with an error that
- * points to its `copy<Module>` counterpart - the next version of Inara no longer generates those.
- * Every module's copy functions used to share the name `copy`, so a call on a child module naming
- * only inherited members matched a parent's `copy` as well as the child's own, and could not be
- * resolved. Each name gets:
+ * Emits every copy function for [model], all named `copy<Module>` (see [copyFunctionName]): a
+ * name shared by every module's copy functions would make a call on a child module naming only
+ * inherited members match a parent's copy as well as the child's own. They are:
  * - a no-argument overload that builds a fresh `Inara<Module>` holding a copy of every binding, with
  *   the same defaults as the member-override overload. Always emitted - it is also what keeps a bare
  *   `copy<Module>()` call from being ambiguous between the overloads.
@@ -756,20 +714,14 @@ private fun FunSpec.Builder.deprecatedIfRenamed(name: FunctionName, parameterNam
  */
 internal fun buildCopyFunctions(model: ModuleModel): List<FunSpec> {
     val name = copyFunctionName(model.simpleName)
-    return buildCopyFunctions(model, FunctionName(name)) +
-        buildCopyFunctions(model, FunctionName("copy", replacedBy = name))
-}
-
-private fun buildCopyFunctions(model: ModuleModel, name: FunctionName): List<FunSpec> {
     val moduleClassName = model.moduleClassName
     val generatedClassName = inaraName(model.generatedBaseName)
     val selfGeneratedClass = ClassName(moduleClassName.packageName, generatedClassName)
 
-    val noArgCopy = FunSpec.builder(name.name)
+    val noArgCopy = FunSpec.builder(name)
         .receiver(moduleClassName)
         .returns(moduleClassName)
         .apply { if (model.visibility == Visibility.INTERNAL) addModifiers(KModifier.INTERNAL) }
-        .deprecatedIfRenamed(name, emptyList(), moduleClassName.packageName)
         .addCode(
             CodeBlock.builder()
                 .add("return %N(\n", generatedClassName)
@@ -778,7 +730,7 @@ private fun buildCopyFunctions(model: ModuleModel, name: FunctionName): List<Fun
                     for (member in model.allMembers) {
                         addStatement(
                             "%N = %L,", "${member.name}Binding",
-                            storedBindingOrDelegateCode(member, name.receiver, selfGeneratedClass),
+                            storedBindingOrDelegateCode(member, receiverOf(name), selfGeneratedClass),
                         )
                     }
                 }
@@ -802,7 +754,7 @@ private fun buildCopyFunctions(model: ModuleModel, name: FunctionName): List<Fun
 }
 
 /**
- * The copy overload that lets any individual member's binding be overridden, emitted under [name].
+ * The copy overload that lets any individual member's binding be overridden, named [name].
  *
  * Every parameter defaults to a copy of the binding the receiver currently holds for that member
  * (see [storedBindingOrDelegateCode]): a copy of `<receiver>.<member>Binding` when the receiver is the
@@ -819,19 +771,18 @@ private fun buildMemberOverrideCopyFunction(
     selfGeneratedClass: ClassName,
     members: List<MemberModel>,
     visibility: Visibility,
-    name: FunctionName,
+    name: String,
 ): FunSpec {
-    val funBuilder = FunSpec.builder(name.name)
+    val funBuilder = FunSpec.builder(name)
         .receiver(moduleClassName)
         .returns(moduleClassName)
-        .deprecatedIfRenamed(name, members.map { it.name }, moduleClassName.packageName)
     if (visibility == Visibility.INTERNAL) {
         funBuilder.addModifiers(KModifier.INTERNAL)
     }
 
     for (member in members) {
         val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, member))
-        paramBuilder.defaultValue(storedBindingOrDelegateCode(member, name.receiver, selfGeneratedClass))
+        paramBuilder.defaultValue(storedBindingOrDelegateCode(member, receiverOf(name), selfGeneratedClass))
         funBuilder.addParameter(paramBuilder.build())
     }
 
@@ -851,9 +802,8 @@ private fun buildMemberOverrideCopyFunction(
 }
 
 /**
- * Emits every shadow function for [model] under its own name, `shadow<Module>` (see
- * [shadowFunctionName]), then again under the former name `shadow`, deprecated with an error exactly
- * like the former `copy` (see [buildCopyFunctions]). Each name gets:
+ * Emits every shadow function for [model], all named `shadow<Module>` (see [shadowFunctionName]),
+ * for the same reason as [buildCopyFunctions]. They are:
  * - a no-argument overload that returns the receiver unchanged. Always emitted.
  * - an overload taking one `Binding`/`SuspendBinding` per member in [ModuleModel.allMembers],
  *   building the `Inara<Module>` class. Only emitted when there is at least one member. See
@@ -865,19 +815,13 @@ private fun buildMemberOverrideCopyFunction(
  */
 internal fun buildShadowFunctions(model: ModuleModel): List<FunSpec> {
     val name = shadowFunctionName(model.simpleName)
-    return buildShadowFunctions(model, FunctionName(name)) +
-        buildShadowFunctions(model, FunctionName("shadow", replacedBy = name))
-}
-
-private fun buildShadowFunctions(model: ModuleModel, name: FunctionName): List<FunSpec> {
     val moduleClassName = model.moduleClassName
     val generatedClassName = inaraName(model.generatedBaseName)
 
-    val noArgShadow = FunSpec.builder(name.name)
+    val noArgShadow = FunSpec.builder(name)
         .receiver(moduleClassName)
         .returns(moduleClassName)
         .apply { if (model.visibility == Visibility.INTERNAL) addModifiers(KModifier.INTERNAL) }
-        .deprecatedIfRenamed(name, emptyList(), moduleClassName.packageName)
         .addStatement("return this")
         .build()
 
@@ -891,7 +835,7 @@ private fun buildShadowFunctions(model: ModuleModel, name: FunctionName): List<F
 }
 
 /**
- * The shadow overload that lets any individual member's binding be overridden, emitted under [name].
+ * The shadow overload that lets any individual member's binding be overridden, named [name].
  *
  * Every parameter defaults to a current-value delegate over the receiver (see
  * [delegateBindingCode]) - always, even when the receiver is the generated implementation, since
@@ -905,19 +849,18 @@ private fun buildMemberShadowFunction(
     generatedClassName: String,
     members: List<MemberModel>,
     visibility: Visibility,
-    name: FunctionName,
+    name: String,
 ): FunSpec {
-    val funBuilder = FunSpec.builder(name.name)
+    val funBuilder = FunSpec.builder(name)
         .receiver(moduleClassName)
         .returns(moduleClassName)
-        .deprecatedIfRenamed(name, members.map { it.name }, moduleClassName.packageName)
     if (visibility == Visibility.INTERNAL) {
         funBuilder.addModifiers(KModifier.INTERNAL)
     }
 
     for (member in members) {
         val paramBuilder = ParameterSpec.builder(member.name, bindingTypeOf(moduleClassName, member))
-        paramBuilder.defaultValue(delegateBindingCode(member, name.receiver))
+        paramBuilder.defaultValue(delegateBindingCode(member, receiverOf(name)))
         funBuilder.addParameter(paramBuilder.build())
     }
 
@@ -1007,8 +950,7 @@ internal fun buildSetFunctions(model: ModuleModel): List<FunSpec> = model.sets.f
 }
 
 /**
- * The copy overload that lets a whole `@DIModule` parent be swapped out at once, emitted under
- * [name]: one parameter per parent, each defaulting to the receiver itself, building the same
+ * The copy overload that lets a whole `@DIModule` parent be swapped out at once, named [name]: one parameter per parent, each defaulting to the receiver itself, building the same
  * `Inara<Module>` as every other builder/copy.
  *
  * An inherited member's binding comes from its (possibly swapped) parent - see
@@ -1020,14 +962,13 @@ private fun buildModuleOverrideCopyFunction(
     model: ModuleModel,
     generatedClassName: String,
     selfGeneratedClass: ClassName,
-    name: FunctionName,
+    name: String,
 ): FunSpec {
     val ownMemberNames = model.ownMembers.mapTo(mutableSetOf()) { it.name }
 
-    val funBuilder = FunSpec.builder(name.name)
+    val funBuilder = FunSpec.builder(name)
         .receiver(model.moduleClassName)
         .returns(model.moduleClassName)
-        .deprecatedIfRenamed(name, model.parents.map { it.paramName }, model.moduleClassName.packageName)
     if (model.visibility == Visibility.INTERNAL) {
         funBuilder.addModifiers(KModifier.INTERNAL)
     }
@@ -1050,10 +991,10 @@ private fun buildModuleOverrideCopyFunction(
         .apply {
             for (member in model.allMembers) {
                 val valueCode = if (member.name in ownMemberNames) {
-                    storedBindingOrDelegateCode(member, name.receiver, selfGeneratedClass)
+                    storedBindingOrDelegateCode(member, receiverOf(name), selfGeneratedClass)
                 } else {
                     val parent = model.parentByMemberName.getValue(member.name)
-                    parentSwapInheritedCode(member, parent, selfGeneratedClass, name.receiver)
+                    parentSwapInheritedCode(member, parent, selfGeneratedClass, receiverOf(name))
                 }
                 addStatement("%N = %L,", "${member.name}Binding", valueCode)
             }

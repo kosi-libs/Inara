@@ -49,13 +49,6 @@ val copiedServer: ServerModule = app.copyServerModule(port = Binding.value(8080)
 
 Because each function carries the name of the module it builds, a call always says which one it builds, and never matches the function of another module.
 
-[IMPORTANT]
-====
-These functions used to all be named `copy`, which made a call ambiguous when it named only inherited members: it matched the parent's `copy` as well as the module's own.
-`copy` is still generated, but deprecated with an error that offers its `copy<Module>` replacement.
-The next version of Inara will no longer generate it.
-====
-
 
 [#copied-bindings-have-their-own-state]
 == Copied bindings have their own state

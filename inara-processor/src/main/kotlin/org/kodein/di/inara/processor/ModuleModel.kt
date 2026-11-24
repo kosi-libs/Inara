@@ -670,8 +670,7 @@ private fun parseModuleUncached(classDecl: KSClassDeclaration, logger: KSPLogger
      * it. The naming-identity rules above stay unconditional regardless: a `Binding`-suffixed,
      * `of`-named or `arg<Argument>`-shaped member could still collide with the generated class's own
      * naming scheme, with a generated function's parameter, or with a `@DIFactory` object's expected
-     * extension-function convention, even while unbound. A member named `copy` or `shadow` is
-     * allowed: it only hides the deprecated functions of these names, which no call can use anyway.
+     * extension-function convention, even while unbound.
      *
      * A function's parameter count and any vararg parameter are unrestricted - see [ParameterModel]
      * and `ModuleFileGenerator` for how more than one parameter is wrapped into a generated data
